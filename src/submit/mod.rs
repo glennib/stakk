@@ -237,9 +237,7 @@ pub async fn create_submission_plan<F: Forge>(
 
     let mut bookmark_plans = Vec::new();
 
-    for (i, (segment, pr_result)) in
-        analysis.segments.iter().zip(pr_results).enumerate()
-    {
+    for (i, (segment, pr_result)) in analysis.segments.iter().zip(pr_results).enumerate() {
         let bookmark_name = bookmark_names[i].clone();
 
         let base = if i == 0 {
@@ -260,11 +258,10 @@ pub async fn create_submission_plan<F: Forge>(
             })
             .unwrap_or_else(|| bookmark_name.clone());
 
-        let existing_pr =
-            pr_result.map_err(|source| SubmitError::PrLookupFailed {
-                bookmark: bookmark_name.clone(),
-                source,
-            })?;
+        let existing_pr = pr_result.map_err(|source| SubmitError::PrLookupFailed {
+            bookmark: bookmark_name.clone(),
+            source,
+        })?;
 
         let needs_base_update = existing_pr.as_ref().is_some_and(|pr| pr.base_ref != base);
 
@@ -375,13 +372,12 @@ pub async fn execute_submission_plan<R: JjRunner, F: Forge>(
                 .map(|pr| (bp.bookmark_name.clone(), pr.number, bp.base.clone()))
         })
         .map(|(name, number, base)| async move {
-            forge
-                .update_pr_base(number, &base)
-                .await
-                .map_err(|source| SubmitError::BaseUpdateFailed {
+            forge.update_pr_base(number, &base).await.map_err(|source| {
+                SubmitError::BaseUpdateFailed {
                     bookmark: name,
                     source,
-                })
+                }
+            })
         })
         .collect();
     let base_results = futures::future::join_all(base_update_futures).await;
