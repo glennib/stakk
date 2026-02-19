@@ -1,0 +1,140 @@
+# CLAUDE.md — jack
+
+> **IMPORTANT**: Agents MUST update this file as part of every planning step.
+> This includes: recording progress on milestones, documenting new patterns or
+> conventions discovered during development, updating principles when they
+> evolve, noting architectural decisions made during implementation, and keeping
+> the current status accurate. Treat this file as the living source of truth for
+> how we build jack.
+
+## Project Overview
+
+**jack** is a Rust rewrite of [jj-stack](https://github.com/keanemind/jj-stack)
+— a CLI tool that bridges Jujutsu (`jj`) bookmarks to GitHub stacked pull
+requests. It is not a jj wrapper; it complements jj by turning local bookmark
+state into coherent GitHub PRs with correct stacking order.
+
+See [ANALYSIS.md](ANALYSIS.md) for full research and [ROADMAP.md](ROADMAP.md)
+for milestones.
+
+## Current Status
+
+- **Milestone 0 (Project Skeleton)**: Not started — only a bare `main.rs` and
+  `Cargo.toml` with edition 2024 exist.
+
+## Development Principles
+
+### 1. Never call git directly
+
+All git operations go through `jj` commands (`jj git push`, `jj git remote
+list`, `jj git fetch`, etc.). No `git` CLI calls, no `git2`, no `gix`. This
+single rule makes jj workspaces and non-colocated repos work automatically with
+zero special-case handling.
+
+### 2. Shell out to jj, don't link jj-lib
+
+The `jj` CLI is the stable interface. `jj-lib` is pre-1.0 and subject to
+breaking changes. We shell out to `jj` and parse JSON/structured output with
+serde. Always pass `--config 'ui.paginate=never'` to avoid pager issues.
+
+### 3. Forge trait from day one
+
+GitHub is the first implementation, but all forge interaction goes through a
+`Forge` trait. The core submission logic must never import GitHub-specific types
+directly — only the trait.
+
+### 4. Idempotent operations
+
+Re-running any command must be safe. `submit` updates existing PRs rather than
+creating duplicates. Stack comments are identified by embedded metadata so they
+can be updated in place.
+
+### 5. Boring solutions over clever abstractions
+
+Prefer simple, obvious code. Three similar lines are better than a premature
+abstraction. Don't design for hypothetical future requirements. Each abstraction
+must justify itself with a concrete current need.
+
+### 6. Minimum viable at each milestone
+
+Each milestone in [ROADMAP.md](ROADMAP.md) produces something testable and
+usable. Don't gold-plate early milestones with features from later ones.
+
+### 7. Test with fixtures
+
+Capture real `jj` and GitHub API output as test fixtures. Tests should run
+without a live jj repo or GitHub access. This makes CI fast and deterministic.
+
+## Architecture
+
+```
+src/
+├── main.rs          # CLI entry point (clap)
+├── cli/             # clap subcommand definitions
+├── jj/              # jj CLI interface — all VCS ops go here
+├── forge/           # Forge trait + GitHub implementation (octocrab)
+├── graph/           # Change graph construction (ChangeGraph, BookmarkSegment, BranchStack)
+├── submit/          # Three-phase submission (analyze → plan → execute)
+└── error.rs         # Error types (thiserror)
+```
+
+There is intentionally no `git/` module.
+
+## Key Dependencies
+
+| Crate | Purpose |
+|-------|---------|
+| `clap` (v4, derive) | CLI framework |
+| `serde` + `serde_json` | Parse jj JSON output, GitHub API responses |
+| `tokio` | Async runtime (required by octocrab) |
+| `octocrab` | GitHub API client |
+| `thiserror` | Error type definitions |
+| `anyhow` | Error propagation with context |
+| `inquire` | Interactive bookmark selection |
+| `indicatif` | Progress bars/spinners |
+| `miette` | User-facing error diagnostics (later milestone) |
+
+## Conventions
+
+### Rust
+
+- Edition 2024.
+- Use `cargo nextest run` for testing, not `cargo test`.
+- Prefer `cargo run --bin jack` and `cargo build --bin jack` over `-p jack`.
+- Find built binaries with:
+  `cargo build --release --message-format json | jq -r 'select(.executable | . == null | not) | .executable'`
+
+### Version Control
+
+- This repo uses `jj` (Jujutsu) for version control. Prefer `jj` over `git`.
+- Before starting a new logical piece of work, verify a clean slate with
+  `jj status`. If the current change is not empty, prompt the user or run
+  `jj new`.
+
+### Error Handling
+
+- Use `thiserror` for defining error enums in library code.
+- Use `anyhow` for error propagation in application/CLI code.
+- Provide context on errors: `thing.do_it().context("failed to do thing")?`.
+- User-facing error messages should be clear and actionable.
+
+### jj Interface
+
+- Always run jj with `--config 'ui.paginate=never'`.
+- Use `--template` for structured/JSON output where available.
+- Define serde structs for every piece of jj output we consume.
+- Paginate large output (100 items at a time) to avoid memory issues.
+
+## Patterns Discovered
+
+(This section is updated as we build. Record patterns, gotchas, and decisions
+made during implementation here.)
+
+- *None yet — project is at skeleton stage.*
+
+## Decisions Log
+
+(Record significant architectural or design decisions here with date and
+rationale.)
+
+- *None yet — project is at skeleton stage.*
