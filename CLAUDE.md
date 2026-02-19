@@ -19,8 +19,8 @@ for milestones.
 
 ## Current Status
 
-- **Milestone 0 (Project Skeleton)**: Not started — only a bare `main.rs` and
-  `Cargo.toml` with edition 2024 exist.
+- **Milestone 0 (Project Skeleton)**: In progress — CLI skeleton with `submit`
+  and `auth` subcommands, error types, placeholder modules, CI workflow.
 
 ## Development Principles
 
@@ -103,6 +103,18 @@ There is intentionally no `git/` module.
 - Prefer `cargo run --bin jack` and `cargo build --bin jack` over `-p jack`.
 - Find built binaries with:
   `cargo build --release --message-format json | jq -r 'select(.executable | . == null | not) | .executable'`
+- **Never use `#[allow(...)]`**. Use `#[expect(..., reason = "...")]` instead,
+  which requires a reason and warns when the expectation becomes unnecessary.
+
+### Formatting
+
+- `rustfmt.toml` uses nightly-only options (`format_strings`, `group_imports`,
+  `imports_granularity`, `wrap_comments`, `doc_comment_code_block_width`).
+- Run `mise run fmt:nightly` (or `cargo +nightly fmt --all`) for full
+  formatting locally. CI uses stable `fmt:check` which silently ignores
+  nightly-only options.
+- If `mise` tools are missing from PATH after installation, run
+  `mise install` to refresh.
 
 ### Version Control
 
@@ -130,11 +142,20 @@ There is intentionally no `git/` module.
 (This section is updated as we build. Record patterns, gotchas, and decisions
 made during implementation here.)
 
-- *None yet — project is at skeleton stage.*
+- Use `#[expect(..., reason = "...")]` instead of `#[allow(...)]` — it warns
+  when the suppressed lint no longer fires, preventing stale suppressions.
 
 ## Decisions Log
 
 (Record significant architectural or design decisions here with date and
 rationale.)
 
-- *None yet — project is at skeleton stage.*
+- **2026-02-19**: `auth setup` instead of `auth help` — avoids ambiguity with
+  clap's built-in `--help`.
+- **2026-02-19**: `Option<Commands>` for no-subcommand — clean upgrade path to
+  M6 interactive mode without removing a clap attribute.
+- **2026-02-19**: `#[tokio::main]` from day one — tokio is a required
+  dependency (octocrab). Adding the async runtime now avoids restructuring
+  main.rs later.
+- **2026-02-19**: `#[expect]` over `#[allow]` — requires a reason and warns
+  when the expectation becomes unnecessary.

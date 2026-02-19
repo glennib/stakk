@@ -1,0 +1,9 @@
+style_edition = "2024"
+
+doc_comment_code_block_width = 60
+format_code_in_doc_comments = true
+format_strings = true
+group_imports = "StdExternalCrate"
+imports_granularity = "Item"
+newline_style = "Unix"
+wrap_comments = true
