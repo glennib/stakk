@@ -60,21 +60,32 @@ async fn show_status() -> Result<()> {
         println!("Remote: {} {}{}", remote.name, remote.url, github);
     }
 
-    let bookmarks = jj
-        .get_my_bookmarks()
+    let change_graph = graph::build_change_graph(&jj)
         .await
-        .context("failed to list bookmarks")?;
-    if bookmarks.is_empty() {
-        println!("No bookmarks found (matching mine() ~ trunk()).");
+        .context("failed to build change graph")?;
+
+    if change_graph.stacks.is_empty() {
+        println!("\nNo bookmark stacks found.");
     } else {
-        println!("\nBookmarks:");
-        for b in &bookmarks {
-            let synced = if b.synced { " [synced]" } else { "" };
+        println!("\nStacks ({} found):", change_graph.stacks.len());
+        for (i, stack) in change_graph.stacks.iter().enumerate() {
+            println!("  Stack {}:", i + 1);
+            for segment in &stack.segments {
+                let names = segment.bookmark_names.join(", ");
+                let commit_count = segment.commits.len();
+                let desc = segment
+                    .commits
+                    .first()
+                    .map(|c| c.description.trim())
+                    .unwrap_or("(no description)");
+                println!("    {names} ({commit_count} commit(s)): {desc}");
+            }
+        }
+
+        if change_graph.excluded_bookmark_count > 0 {
             println!(
-                "  {} (commit {}, change {}){synced}",
-                b.name,
-                &b.commit_id[..12.min(b.commit_id.len())],
-                &b.change_id[..12.min(b.change_id.len())],
+                "\n  ({} bookmark(s) excluded due to merge commits)",
+                change_graph.excluded_bookmark_count,
             );
         }
     }

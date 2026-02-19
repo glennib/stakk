@@ -77,10 +77,6 @@ impl<R: JjRunner> Jj<R> {
     }
 
     /// Get log entries for a revision range, paginated.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "will be used in graph milestone")
-    )]
     pub async fn get_branch_changes_paginated(
         &self,
         trunk: &str,

@@ -63,19 +63,19 @@ relationships without errors.
 
 Port the core graph-building algorithms from jj-stack.
 
-- [ ] Define data types: `ChangeGraph`, `BookmarkSegment`, `BranchStack`
-- [ ] Port `buildChangeGraph()`:
+- [x] Define data types: `ChangeGraph`, `BookmarkSegment`, `BranchStack`
+- [x] Port `buildChangeGraph()`:
   - Iterate bookmarks
   - Traverse each toward trunk with pagination
   - Discover segments (groups of commits under each bookmark)
   - Build child→parent adjacency list
   - Detect and exclude merge commits (tainting)
   - Identify leaf bookmarks
-- [ ] Port `groupSegmentsIntoStacks()`:
+- [x] Port `groupSegmentsIntoStacks()`:
   - Walk from each leaf to root via adjacency list
   - Produce one `BranchStack` per leaf
-- [ ] Port topological sort (Kahn's algorithm) for display ordering
-- [ ] Tests matching jj-stack's test cases:
+- [x] Port topological sort (Kahn's algorithm) for display ordering
+- [x] Tests matching jj-stack's test cases:
   - Simple linear stack (A → B → C)
   - Complex branching (shared ancestors, multiple children)
   - Merge commit exclusion

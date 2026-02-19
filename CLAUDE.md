@@ -23,6 +23,17 @@ for milestones.
 - **Milestone 1 (jj Interface Layer)**: Complete — `Jj<R>` struct with
   `JjRunner` trait, serde types for jj JSON output, GitHub URL parsing,
   6 public methods, 32 unit/integration tests.
+- **Milestone 2 (Change Graph Construction)**: Complete — `ChangeGraph`,
+  `BookmarkSegment`, `BranchStack` types, `build_change_graph()` with
+  paginated traversal, merge-commit tainting, `topological_sort()`,
+  14 unit/integration tests, CLI displays stacks.
+
+## Testing
+
+- **Unit/integration tests**: `cargo nextest run --all-targets` (47 tests).
+- **Manual testing repo**: `../jack-testing/` (github.com/glennib/jack-testing).
+  A jj repo with pre-built bookmark stacks for end-to-end verification.
+  Run jack from within that directory to test against real jj output.
 
 ## Development Principles
 
@@ -167,6 +178,9 @@ made during implementation here.)
 - `jj abandon` reverts the working copy to match the parent. If you have
   uncommitted edits in the working copy, use `jj new` first or `jj undo`
   to recover.
+- Graph traversal uses `"trunk()"` as the revset base (not the branch name
+  like `"main"`). This lets jj resolve the trunk commit automatically
+  regardless of what the default branch is called.
 
 ## Decisions Log
 

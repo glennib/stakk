@@ -17,10 +17,6 @@ pub struct CommitData {
 /// Author/committer signature.
 #[derive(Debug, Clone, Deserialize)]
 pub struct Signature {
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "deserialized for completeness, used later")
-    )]
     pub name: String,
     #[expect(dead_code, reason = "deserialized for completeness, used later")]
     pub email: String,
@@ -69,24 +65,26 @@ pub struct BookmarkEntryRaw {
 pub struct Bookmark {
     pub name: String,
     pub commit_id: String,
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "used in later milestones for submission")
+    )]
     pub change_id: String,
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "used in later milestones for status display")
+    )]
     pub synced: bool,
 }
 
 /// Processed log entry for public API.
 #[derive(Debug, Clone)]
 pub struct LogEntry {
-    #[cfg_attr(not(test), expect(dead_code, reason = "used in graph milestone"))]
     pub commit_id: String,
-    #[expect(dead_code, reason = "used in graph milestone")]
     pub change_id: String,
-    #[expect(dead_code, reason = "used in graph milestone")]
     pub description: String,
-    #[expect(dead_code, reason = "used in graph milestone")]
     pub parents: Vec<String>,
-    #[expect(dead_code, reason = "used in graph milestone")]
     pub author: Signature,
-    #[cfg_attr(not(test), expect(dead_code, reason = "used in graph milestone"))]
     pub local_bookmark_names: Vec<String>,
     pub remote_bookmark_names: Vec<String>,
 }
