@@ -60,48 +60,48 @@ mod tests {
 
     #[test]
     fn https_with_git_suffix() {
-        let result = parse_github_url("https://github.com/glennib/jack.git");
+        let result = parse_github_url("https://github.com/glennib/stakk.git");
         assert_eq!(
             result,
             Some(GitHubRepo {
                 owner: "glennib".into(),
-                repo: "jack".into(),
+                repo: "stakk".into(),
             })
         );
     }
 
     #[test]
     fn https_without_git_suffix() {
-        let result = parse_github_url("https://github.com/glennib/jack");
+        let result = parse_github_url("https://github.com/glennib/stakk");
         assert_eq!(
             result,
             Some(GitHubRepo {
                 owner: "glennib".into(),
-                repo: "jack".into(),
+                repo: "stakk".into(),
             })
         );
     }
 
     #[test]
     fn ssh_with_git_suffix() {
-        let result = parse_github_url("git@github.com:glennib/jack.git");
+        let result = parse_github_url("git@github.com:glennib/stakk.git");
         assert_eq!(
             result,
             Some(GitHubRepo {
                 owner: "glennib".into(),
-                repo: "jack".into(),
+                repo: "stakk".into(),
             })
         );
     }
 
     #[test]
     fn ssh_without_git_suffix() {
-        let result = parse_github_url("git@github.com:glennib/jack");
+        let result = parse_github_url("git@github.com:glennib/stakk");
         assert_eq!(
             result,
             Some(GitHubRepo {
                 owner: "glennib".into(),
-                repo: "jack".into(),
+                repo: "stakk".into(),
             })
         );
     }

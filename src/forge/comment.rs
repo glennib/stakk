@@ -11,11 +11,11 @@ use serde::Serialize;
 use super::Comment;
 
 /// Prefix for the metadata HTML comment.
-const COMMENT_DATA_PREFIX: &str = "<!--- JACK_STACK: ";
+const COMMENT_DATA_PREFIX: &str = "<!--- STAKK_STACK: ";
 const COMMENT_DATA_POSTFIX: &str = " --->";
 /// Unicode left arrow used to mark the current PR in the stack list.
 const STACK_COMMENT_THIS_PR: &str = "\u{2190} this PR";
-const STACK_COMMENT_FOOTER: &str = "*Created with [jack](https://github.com/glennib/jack)*";
+const STACK_COMMENT_FOOTER: &str = "*Created with [stakk](https://github.com/glennib/stakk)*";
 
 /// Metadata embedded in stack comments as base64-encoded JSON.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -66,7 +66,7 @@ pub fn format_stack_comment(data: &StackCommentData, current_index: usize) -> St
 
 /// Find the existing stack comment among a list of comments.
 ///
-/// Detects by the `JACK_STACK` metadata prefix on the first line.
+/// Detects by the `STAKK_STACK` metadata prefix on the first line.
 pub fn find_stack_comment(comments: &[Comment]) -> Option<&Comment> {
     comments
         .iter()

@@ -12,7 +12,7 @@ use crate::cli::Cli;
 use crate::cli::Commands;
 use crate::cli::auth::AuthCommands;
 use crate::cli::submit::SubmitArgs;
-use crate::error::JackError;
+use crate::error::StakkError;
 use crate::forge::Forge;
 use crate::jj::Jj;
 use crate::jj::remote::parse_github_url;
@@ -26,7 +26,7 @@ async fn main() {
     }
 }
 
-async fn run() -> Result<(), JackError> {
+async fn run() -> Result<(), StakkError> {
     let cli = Cli::parse();
 
     match cli.command {
@@ -49,7 +49,7 @@ async fn run() -> Result<(), JackError> {
     Ok(())
 }
 
-async fn auth_test() -> Result<(), JackError> {
+async fn auth_test() -> Result<(), StakkError> {
     let auth_token = auth::resolve_token().await?;
     println!("Authentication source: {}", auth_token.source);
 
@@ -65,19 +65,19 @@ async fn auth_test() -> Result<(), JackError> {
 }
 
 fn auth_setup() {
-    println!("jack resolves GitHub authentication in this order:\n");
+    println!("stakk resolves GitHub authentication in this order:\n");
     println!("  1. GitHub CLI:    Run `gh auth login` to authenticate.");
     println!("                    This is the recommended method.\n");
     println!("  2. GITHUB_TOKEN:  Set the GITHUB_TOKEN environment variable");
     println!("                    to a personal access token with `repo` scope.\n");
     println!("  3. GH_TOKEN:      Set the GH_TOKEN environment variable");
     println!("                    (same as GITHUB_TOKEN, alternative name).\n");
-    println!("To verify: run `jack auth test`");
+    println!("To verify: run `stakk auth test`");
 }
 
 /// Submit a bookmark as a stacked pull request using the three-phase pipeline:
 /// analyze, plan, execute.
-async fn submit_bookmark(args: &SubmitArgs) -> Result<(), JackError> {
+async fn submit_bookmark(args: &SubmitArgs) -> Result<(), StakkError> {
     let pb = indicatif::ProgressBar::new_spinner();
     pb.enable_steady_tick(std::time::Duration::from_millis(120));
 
@@ -136,7 +136,7 @@ async fn submit_bookmark(args: &SubmitArgs) -> Result<(), JackError> {
 /// Returns the remote name and parsed `GitHubRepo`.
 async fn resolve_github_remote(
     preferred: Option<&str>,
-) -> Result<(String, jj::remote::GitHubRepo), JackError> {
+) -> Result<(String, jj::remote::GitHubRepo), StakkError> {
     let jj = Jj::new(RealJjRunner);
     let remotes = jj.get_git_remote_list().await?;
 
@@ -145,12 +145,12 @@ async fn resolve_github_remote(
             if let Some(repo) = parse_github_url(&remote.url) {
                 return Ok((remote.name.clone(), repo));
             }
-            return Err(JackError::RemoteNotGithub {
+            return Err(StakkError::RemoteNotGithub {
                 name: name.to_string(),
                 url: remote.url.clone(),
             });
         }
-        return Err(JackError::RemoteNotFound {
+        return Err(StakkError::RemoteNotFound {
             name: name.to_string(),
         });
     }
@@ -161,10 +161,10 @@ async fn resolve_github_remote(
         }
     }
 
-    Err(JackError::NoGithubRemote)
+    Err(StakkError::NoGithubRemote)
 }
 
-async fn show_status() -> Result<(), JackError> {
+async fn show_status() -> Result<(), StakkError> {
     let pb = indicatif::ProgressBar::new_spinner();
     pb.enable_steady_tick(std::time::Duration::from_millis(120));
     pb.set_message("Loading repository status...");

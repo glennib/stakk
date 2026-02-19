@@ -13,7 +13,7 @@ use self::types::BookmarkSegment;
 use self::types::BranchStack;
 use self::types::ChangeGraph;
 use self::types::SegmentCommit;
-use crate::error::JackError;
+use crate::error::StakkError;
 use crate::jj::Jj;
 use crate::jj::runner::JjRunner;
 use crate::jj::types::Bookmark;
@@ -34,7 +34,7 @@ struct TraversalResult {
 /// Discovers all user bookmarks, traverses each toward trunk to find segments,
 /// builds an adjacency list, detects merge commits, identifies leaves, and
 /// groups segments into stacks.
-pub async fn build_change_graph<R: JjRunner>(jj: &Jj<R>) -> Result<ChangeGraph, JackError> {
+pub async fn build_change_graph<R: JjRunner>(jj: &Jj<R>) -> Result<ChangeGraph, StakkError> {
     let bookmarks = jj.get_my_bookmarks().await?;
 
     // Collect user bookmark names so traversal can filter out non-user bookmarks
@@ -131,7 +131,7 @@ async fn traverse_and_discover_segments<R: JjRunner>(
     fully_collected: &HashSet<String>,
     tainted_change_ids: &mut HashSet<String>,
     user_bookmark_names: &HashSet<String>,
-) -> Result<TraversalResult, JackError> {
+) -> Result<TraversalResult, StakkError> {
     let mut segments: Vec<BookmarkSegment> = Vec::new();
     let mut current_segment: Option<BookmarkSegment> = None;
     let mut last_seen_commit: Option<String> = None;
@@ -210,7 +210,7 @@ async fn traverse_and_discover_segments<R: JjRunner>(
                 // Commit before any bookmark — shouldn't happen because the
                 // first entry in trunk()..bookmark should be the bookmark
                 // commit itself.
-                return Err(JackError::Graph {
+                return Err(StakkError::Graph {
                     message: format!(
                         "encountered change {} before any bookmark while traversing from bookmark \
                          '{}'",

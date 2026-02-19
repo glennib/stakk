@@ -6,9 +6,9 @@ use crate::forge::ForgeError;
 use crate::jj::JjError;
 use crate::submit::SubmitError;
 
-/// Errors that can occur in jack.
+/// Errors that can occur in stakk.
 #[derive(Debug, Error, Diagnostic)]
-pub enum JackError {
+pub enum StakkError {
     /// An error from interacting with the jj CLI.
     #[error(transparent)]
     #[diagnostic(transparent)]

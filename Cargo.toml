@@ -1,14 +1,14 @@
 [package]
-name = "jack"
+name = "stakk"
 version = "0.1.0"
 edition = "2024"
-repository = "https://github.com/glennib/jack"
+repository = "https://github.com/glennib/stakk"
 description = "A CLI tool that bridges Jujutsu (jj) bookmarks to GitHub stacked pull requests"
 license = "MIT OR Apache-2.0"
 authors = ["Glenn Bitar <glennbitar@gmail.com>"]
 
 [[bin]]
-name = "jack"
+name = "stakk"
 path = "src/main.rs"
 
 [dependencies]

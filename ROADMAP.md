@@ -1,6 +1,6 @@
-# Roadmap: jack
+# Roadmap: stakk
 
-Incremental milestones for building jack, a Rust rewrite of jj-stack. Each
+Incremental milestones for building stakk, a Rust rewrite of jj-stack. Each
 milestone builds on the previous and produces something testable.
 
 See [ANALYSIS.md](ANALYSIS.md) for the full research behind these decisions.
@@ -30,7 +30,7 @@ Set up the project structure and dependencies.
   makes workspaces and non-colocated repos work automatically (see
   [ANALYSIS.md, section 7](ANALYSIS.md#7-workspaces-and-non-colocated-repos)).
 
-**Done when**: `jack --help`, `jack submit --help`, and `jack auth --help` all
+**Done when**: `stakk --help`, `stakk submit --help`, and `stakk auth --help` all
 print usage information (even outside a jj repo).
 
 ---
@@ -54,7 +54,7 @@ Shell out to `jj` and parse JSON output into typed Rust structs.
 - [x] Remote URL parsing: extract owner/repo from HTTPS and SSH GitHub URLs
 - [x] Tests with captured jj output fixtures
 
-**Done when**: Can run `jack` in a jj repo and have it list bookmarks and their
+**Done when**: Can run `stakk` in a jj repo and have it list bookmarks and their
 relationships without errors.
 
 ---
@@ -81,7 +81,7 @@ Port the core graph-building algorithms from jj-stack.
   - Merge commit exclusion
   - Multiple bookmarks on one change
 
-**Done when**: Given a jj repo with bookmarks, `jack` correctly identifies all
+**Done when**: Given a jj repo with bookmarks, `stakk` correctly identifies all
 stacks and can print them.
 
 ---
@@ -93,11 +93,11 @@ stacks and can print them.
   2. `GITHUB_TOKEN` env var
   3. `GH_TOKEN` env var
 - [x] Validate token via GitHub API (octocrab)
-- [x] `jack auth test` — prints success/failure with username
-- [x] `jack auth setup` — prints setup instructions
+- [x] `stakk auth test` — prints success/failure with username
+- [x] `stakk auth setup` — prints setup instructions
 - [x] Clear error messages when auth fails
 
-**Done when**: `jack auth test` reports the authenticated GitHub user.
+**Done when**: `stakk auth test` reports the authenticated GitHub user.
 
 ---
 
@@ -124,7 +124,7 @@ Design a trait abstraction so the core logic is forge-agnostic.
 - [x] PR creation with title + body
 - [x] PR base branch updates
 
-**Done when**: Can create a PR on GitHub from jack, with a stack comment.
+**Done when**: Can create a PR on GitHub from stakk, with a stack comment.
 
 ---
 
@@ -147,12 +147,12 @@ Port the core submission workflow.
   - Update PR bases
   - Create new PRs (bottom to top)
   - Create/update stack comments on all PRs
-- [x] `jack submit <bookmark>` — full end-to-end submission
+- [x] `stakk submit <bookmark>` — full end-to-end submission
 - [x] `--dry-run` flag — show plan without executing
 - [x] `--remote` flag — specify which remote to push to (default: `origin`)
 - [x] Progress output during execution (indicatif)
 
-**Done when**: Can run `jack submit my-bookmark` and have it push, create PRs,
+**Done when**: Can run `stakk submit my-bookmark` and have it push, create PRs,
 set correct bases, and add stack comments — matching jj-stack's behavior.
 
 ---
@@ -173,7 +173,7 @@ set correct bases, and add stack comments — matching jj-stack's behavior.
 - [x] Configurable default branch detection — already done since M2;
   `get_default_branch()` uses `trunk()` revset, not hardcoded names.
 - [x] Better error messages with miette diagnostics (`Diagnostic` derives on
-  `JjError`, `AuthError`, `ForgeError`, `JackError`; help text on actionable
+  `JjError`, `AuthError`, `ForgeError`, `StakkError`; help text on actionable
   variants; `main()` extracts and prints diagnostic help)
 - [x] Handle non-user bookmarks gracefully (filter `local_bookmark_names` to
   only user-owned bookmarks during traversal; non-user bookmarks don't create
@@ -182,13 +182,13 @@ set correct bases, and add stack comments — matching jj-stack's behavior.
 - [x] Added `futures` and `miette` dependencies
 
 **Done when**: README is polished and publishable, all known jj-stack issues
-are addressed in jack.
+are addressed in stakk.
 
 ---
 
 ## Milestone 7: Interactive Mode
 
-Default behavior when `jack` is run with no arguments.
+Default behavior when `stakk` is run with no arguments.
 
 - [ ] Build change graph and display stacks as ASCII tree
 - [ ] Colorized output for stack display (bookmark names, commit summaries,
@@ -197,7 +197,7 @@ Default behavior when `jack` is run with no arguments.
 - [ ] After selection, run the three-phase submission for that bookmark
 - [ ] Handle the case where multiple bookmarks point to the same change
 
-**Done when**: Running `jack` with no args shows stacks and lets the user pick
+**Done when**: Running `stakk` with no args shows stacks and lets the user pick
 a bookmark to submit.
 
 ---
@@ -208,14 +208,14 @@ a bookmark to submit.
 - [ ] Fork workflow (push to fork remote, create PR against upstream)
 - [ ] Stack comments showing PR titles instead of bookmark names (low priority
   — GitHub already renders PR links nicely in comments)
-- [ ] Config file support (`.jack.toml` or similar) for per-repo settings:
+- [ ] Config file support (`.stakk.toml` or similar) for per-repo settings:
   - Default remote
   - Default branch override
   - GitHub Enterprise URL
   - Draft PR default
 - [ ] Second forge implementation (Forgejo or GitLab) using the forge trait
 
-**Done when**: jack covers all common stacked-PR workflows across GitHub
+**Done when**: stakk covers all common stacked-PR workflows across GitHub
 configurations.
 
 ---
@@ -234,13 +234,13 @@ Replace with concrete `thiserror` + `miette::Diagnostic` error types.
 - [x] Replace `anyhow::Result` returns in `analyze_submission`,
   `create_submission_plan`, and `execute_submission_plan` with
   `Result<T, SubmitError>`.
-- [x] In `main.rs`, `run()` returns `Result<(), JackError>`. `main()`
+- [x] In `main.rs`, `run()` returns `Result<(), StakkError>`. `main()`
   converts errors into `miette::Report` at the boundary. This replaces the
   manual `print_diagnostic_help` function — miette's report renderer
   automatically walks `diagnostic_source()` and renders help, codes, etc.
   from every level in the chain.
 - [x] Remove `anyhow` from `Cargo.toml` — zero anyhow usage anywhere.
-- [x] Verify `#[diagnostic(transparent)]` on `JackError` variants correctly
+- [x] Verify `#[diagnostic(transparent)]` on `StakkError` variants correctly
   forwards diagnostic metadata from inner errors through the full chain.
 
 **Pattern**: Concrete error types (`thiserror` + `Diagnostic`) all the way
@@ -256,13 +256,13 @@ automatically.
 
 ## Sidequest: Integration Test Harness
 
-Binary-level integration tests that exercise the real `jack` binary against a
+Binary-level integration tests that exercise the real `stakk` binary against a
 real `jj` repo (no mocks).
 
 - [ ] Test harness that creates a temporary jj repo in `/tmp/` with `jj init`
 - [ ] Fixture setup: create commits, bookmarks, bookmark stacks, synced and
   unsynced bookmarks (no remote needed initially — test local-only behavior)
-- [ ] Run the compiled `jack` binary against the fixture repo and assert on
+- [ ] Run the compiled `stakk` binary against the fixture repo and assert on
   stdout/stderr
 - [ ] Teardown: clean up the temp directory after tests
 - [ ] Integrate into `cargo nextest run` (as integration tests in `tests/`)

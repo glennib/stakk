@@ -1,6 +1,6 @@
-# jack
+# stakk
 
-**jack** bridges [Jujutsu](https://github.com/jj-vcs/jj) bookmarks to GitHub
+**stakk** bridges [Jujutsu](https://github.com/jj-vcs/jj) bookmarks to GitHub
 stacked pull requests.
 
 It is not a jj wrapper. It complements jj by reading your local bookmark state
@@ -10,12 +10,12 @@ idempotent updates.
 
 ## Origins
 
-jack is inspired by [jj-stack](https://github.com/keanemind/jj-stack), a
+stakk is inspired by [jj-stack](https://github.com/keanemind/jj-stack), a
 TypeScript/ReScript CLI that does the same job. jj-stack's core algorithms —
 change graph construction, segment grouping, topological ordering — directly
-informed jack's design.
+informed stakk's design.
 
-jack reimplements these ideas in Rust to address architectural limitations
+stakk reimplements these ideas in Rust to address architectural limitations
 that made certain improvements difficult in jj-stack: workspace and
 non-colocated repo support, concurrent API calls, draft PRs, PR bodies from
 commit descriptions, and structured error diagnostics.
@@ -23,22 +23,22 @@ commit descriptions, and structured error diagnostics.
 ## Installation
 
 > **TODO**: Distribution is not yet set up. For now, clone the repository and
-> build from source with `cargo build --release --bin jack`.
+> build from source with `cargo build --release --bin stakk`.
 
 ## Quick start
 
 ```
 # See your bookmark stacks
-jack
+stakk
 
 # Submit a bookmark (and its ancestors) as stacked PRs
-jack submit my-feature
+stakk submit my-feature
 
 # Preview what would happen without doing anything
-jack submit my-feature --dry-run
+stakk submit my-feature --dry-run
 
 # Create PRs as drafts
-jack submit my-feature --draft
+stakk submit my-feature --draft
 ```
 
 ## How stacking works
@@ -53,7 +53,7 @@ trunk
               └── feat-ui  ← bookmark 3
 ```
 
-When you run `jack submit feat-ui`, jack:
+When you run `stakk submit feat-ui`, stakk:
 
 1. **Analyzes** the change graph to find the stack containing `feat-ui` and
    all its ancestors (`feat-auth`, `feat-api`, `feat-ui`).
@@ -80,12 +80,12 @@ together:
 3. **https://github.com/you/repo/pull/3 ← this PR**
 ```
 
-Re-running `jack submit` is always safe — it updates existing PRs rather
+Re-running `stakk submit` is always safe — it updates existing PRs rather
 than creating duplicates.
 
 ## Usage
 
-### `jack` (no arguments)
+### `stakk` (no arguments)
 
 Shows repository status: default branch, remotes, and all bookmark stacks
 with their commit summaries.
@@ -102,7 +102,7 @@ Stacks (2 found):
     fix-typo (1 commit(s)): fix typo in README
 ```
 
-### `jack submit <bookmark>`
+### `stakk submit <bookmark>`
 
 Submit a bookmark and all its ancestors as stacked PRs.
 
@@ -118,14 +118,14 @@ For segments with multiple commits, descriptions are joined with `---`
 separators. Bodies are only set on PR creation — manually edited PR bodies
 are never overwritten.
 
-### `jack auth test`
+### `stakk auth test`
 
 Validate that GitHub authentication is working and print the authenticated
 username.
 
-### `jack auth setup`
+### `stakk auth setup`
 
-Print instructions for setting up authentication. jack resolves a GitHub
+Print instructions for setting up authentication. stakk resolves a GitHub
 token in this order:
 
 1. **GitHub CLI** (`gh auth token`) — recommended
@@ -134,8 +134,8 @@ token in this order:
 
 ## Design
 
-jack never calls `git` directly. All git operations go through `jj`
-subcommands (`jj git push`, `jj git remote list`, etc.). This means jack
+stakk never calls `git` directly. All git operations go through `jj`
+subcommands (`jj git push`, `jj git remote list`, etc.). This means stakk
 works automatically in jj workspaces and non-colocated repositories — two
 cases where calling `git` directly fails.
 

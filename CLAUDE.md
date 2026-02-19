@@ -1,15 +1,15 @@
-# CLAUDE.md — jack
+# CLAUDE.md — stakk
 
 > **IMPORTANT**: Agents MUST update this file as part of every planning step.
 > This includes: recording progress on milestones, documenting new patterns or
 > conventions discovered during development, updating principles when they
 > evolve, noting architectural decisions made during implementation, and keeping
 > the current status accurate. Treat this file as the living source of truth for
-> how we build jack.
+> how we build stakk.
 
 ## Project Overview
 
-**jack** is a Rust rewrite of [jj-stack](https://github.com/keanemind/jj-stack)
+**stakk** is a Rust rewrite of [jj-stack](https://github.com/keanemind/jj-stack)
 — a CLI tool that bridges Jujutsu (`jj`) bookmarks to GitHub stacked pull
 requests. It is not a jj wrapper; it complements jj by turning local bookmark
 state into coherent GitHub PRs with correct stacking order.
@@ -28,8 +28,8 @@ for milestones.
   paginated traversal, merge-commit tainting, `topological_sort()`,
   14 unit/integration tests, CLI displays stacks.
 - **Milestone 3 (GitHub Authentication)**: Complete — `auth::resolve_token()`
-  with priority cascade (gh CLI → GITHUB_TOKEN → GH_TOKEN), `jack auth test`
-  validates token and prints username, `jack auth setup` prints instructions,
+  with priority cascade (gh CLI → GITHUB_TOKEN → GH_TOKEN), `stakk auth test`
+  validates token and prints username, `stakk auth setup` prints instructions,
   4 unit tests.
 - **Milestone 4 (Forge Trait & GitHub Implementation)**: Complete — `Forge`
   trait with 8 async methods, `GitHubForge` implementation using octocrab,
@@ -46,7 +46,7 @@ for milestones.
   descriptions, concurrent API calls, progress spinners, non-user bookmark
   filtering, miette diagnostics, dependency upgrades, README. 85 total tests.
 - **Sidequest (Replace anyhow)**: Complete — `SubmitError` enum with
-  `Diagnostic` derives, `JackError` aggregates all error types, `main()`
+  `Diagnostic` derives, `StakkError` aggregates all error types, `main()`
   uses `miette::Report` for rendering, zero `anyhow` usage.
 
 ## Testing
@@ -54,7 +54,7 @@ for milestones.
 - **Unit/integration tests**: `cargo nextest run --all-targets` (85 tests).
 - **Manual testing repo**: `../jack-testing/` (github.com/glennib/jack-testing).
   A jj repo with pre-built bookmark stacks for end-to-end verification.
-  Run jack from within that directory to test against real jj output.
+  Run stakk from within that directory to test against real jj output.
 
 ## Development Principles
 
@@ -101,8 +101,8 @@ without a live jj repo or GitHub access. This makes CI fast and deterministic.
 
 ### 8. No jj-stack compatibility
 
-jj-stack compatibility is explicitly a non-goal. jack uses its own comment
-metadata format (`JACK_STACK` prefix), its own serde field naming (snake_case),
+jj-stack compatibility is explicitly a non-goal. stakk uses its own comment
+metadata format (`STAKK_STACK` prefix), its own serde field naming (snake_case),
 and its own comment footer. Do not reference jj-stack's format, data
 structures, or conventions in code or documentation.
 
@@ -148,7 +148,7 @@ There is intentionally no `git/` module.
 
 - Edition 2024.
 - Use `cargo nextest run` for testing, not `cargo test`.
-- Prefer `cargo run --bin jack` and `cargo build --bin jack` over `-p jack`.
+- Prefer `cargo run --bin stakk` and `cargo build --bin stakk` over `-p stakk`.
 - Find built binaries with:
   `cargo build --release --message-format json | jq -r 'select(.executable | . == null | not) | .executable'`
 - **Never use `#[allow(...)]`**. Use `#[expect(..., reason = "...")]` instead,
@@ -248,7 +248,7 @@ made during implementation here.)
   network call) and testable.
 - `try_gh_cli()` returns `Ok(None)` for "gh not installed" and "gh not
   authenticated" — both are expected fallthrough cases, not errors.
-- Stack comment metadata uses `JACK_STACK` prefix (not jj-stack's prefix).
+- Stack comment metadata uses `STAKK_STACK` prefix (not jj-stack's prefix).
   jj-stack compatibility is not a goal.
 - Three-phase submission (analyze → plan → execute) keeps business logic
   testable with mock `Forge` and `JjRunner`. `main.rs` is the composition
@@ -275,7 +275,7 @@ made during implementation here.)
   expansion. Workaround: embed actionable text in the `#[error(...)]`
   message directly for field-based variants; use `#[diagnostic(help(...))]`
   only on unit or tuple variants.
-- `main()` converts `JackError` to `miette::Report` for rendering. miette's
+- `main()` converts `StakkError` to `miette::Report` for rendering. miette's
   graphical report handler walks `diagnostic_source()` automatically to
   show help from any error in the chain (e.g. `SubmitError::PushFailed`
   wrapping `JjError::NotFound` with its help text).
@@ -312,8 +312,8 @@ rationale.)
 - **2026-02-19**: Forge-agnostic types (`PullRequest`, `Comment`,
   `CreatePrParams`) in `forge/mod.rs` alongside the trait — `GitHubForge`
   maps between octocrab types and these.
-- **2026-02-19**: jj-stack compatibility is explicitly a non-goal. jack uses
-  its own `JACK_STACK` comment prefix and snake_case serde fields.
+- **2026-02-19**: jj-stack compatibility is explicitly a non-goal. stakk uses
+  its own `STAKK_STACK` comment prefix and snake_case serde fields.
 - **2026-02-19**: Minimal `submit_bookmark()` wiring in main.rs for M4 —
   temporary scaffolding replaced by full three-phase submission in M5.
 - **2026-02-19**: Three-phase submission uses `anyhow::Result` (not
@@ -337,10 +337,15 @@ rationale.)
   on error enums, but `anyhow` remains for propagation. `main()` extracts
   help from the root cause via `downcast_ref`.
 - **2026-02-19**: `run()` extracted from `main()` — `main()` converts errors
-  to `miette::Report` for display, `run()` returns `Result<(), JackError>`.
+  to `miette::Report` for display, `run()` returns `Result<(), StakkError>`.
 - **2026-02-19**: Zero `anyhow` — concrete error types (`thiserror` +
   `Diagnostic`) all the way up. `SubmitError` in `submit/mod.rs` with
-  per-variant context (bookmark name, PR number). `JackError` in `error.rs`
+  per-variant context (bookmark name, PR number). `StakkError` in `error.rs`
   aggregates all error types with `#[diagnostic(transparent)]`. Remote
   resolution errors (`RemoteNotGithub`, `RemoteNotFound`, `NoGithubRemote`)
-  added to `JackError` to replace `anyhow::bail!()` in `main.rs`.
+  added to `StakkError` to replace `anyhow::bail!()` in `main.rs`.
+- **2026-02-19**: Renamed from `jack` to `stakk` — the name `jack` was
+  already taken on crates.io. `stakk` reflects the stacking concept and is
+  available. All references updated: crate name, binary name, error types
+  (`JackError` → `StakkError`), comment metadata prefix (`JACK_STACK` →
+  `STAKK_STACK`), documentation, and user-facing strings.

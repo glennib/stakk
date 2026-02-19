@@ -360,11 +360,11 @@ mod tests {
 
     #[test]
     fn parse_git_remote_list_single() {
-        let input = "origin git@github.com:glennib/jack.git\n";
+        let input = "origin git@github.com:glennib/stakk.git\n";
         let remotes = parse_git_remote_list(input);
         assert_eq!(remotes.len(), 1);
         assert_eq!(remotes[0].name, "origin");
-        assert_eq!(remotes[0].url, "git@github.com:glennib/jack.git");
+        assert_eq!(remotes[0].url, "git@github.com:glennib/stakk.git");
     }
 
     #[test]
@@ -420,7 +420,7 @@ mod tests {
             handler: |args: &[&str]| {
                 assert_eq!(args[0], "git");
                 assert_eq!(args[1], "remote");
-                Ok("origin git@github.com:glennib/jack.git\n".to_string())
+                Ok("origin git@github.com:glennib/stakk.git\n".to_string())
             },
         };
         let jj = Jj::new(runner);

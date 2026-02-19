@@ -7,7 +7,7 @@ use clap::Subcommand;
 use crate::cli::auth::AuthArgs;
 use crate::cli::submit::SubmitArgs;
 
-/// jack — bridge Jujutsu bookmarks to GitHub stacked pull requests.
+/// stakk — bridge Jujutsu bookmarks to GitHub stacked pull requests.
 #[derive(Debug, Parser)]
 #[command(version, about)]
 pub struct Cli {

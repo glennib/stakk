@@ -1,4 +1,4 @@
-# Analysis: jj-stack and the Rust Rewrite (jack)
+# Analysis: jj-stack and the Rust Rewrite (stakk)
 
 This document captures a thorough analysis of
 [jj-stack](https://github.com/keanemind/jj-stack) — what it does, how it
@@ -259,7 +259,7 @@ The original jj-stack called `git remote get-url origin` directly, which broke
 in workspaces (no `.git` directory) and would also break in non-colocated repos
 (no `.git` at all). The fork fixed remotes by using `jj git remote list`.
 
-For jack, we take this further: **all git-related operations go through `jj`
+For stakk, we take this further: **all git-related operations go through `jj`
 commands**, never through `git` or git libraries directly. This means:
 
 - `jj git remote list` — read remote URLs
@@ -331,7 +331,7 @@ GitHub API responses, deserialize automatically.
 
 ## 7. Workspaces and Non-Colocated Repos
 
-This is a critical design consideration for jack. jj supports two repo layouts
+This is a critical design consideration for stakk. jj supports two repo layouts
 that jj-stack cannot handle:
 
 ### jj Workspaces
@@ -358,7 +358,7 @@ However, `jj git remote list`, `jj git push`, `jj git fetch`, and all other
 `jj git` subcommands work correctly because jj knows where its internal git
 store is.
 
-### Design principle for jack
+### Design principle for stakk
 
 **Never call `git` directly. Never use git libraries. Always go through `jj`.**
 
@@ -387,12 +387,12 @@ These are areas where the Rust rewrite can do better than jj-stack:
 11. **Forge trait abstraction** — GitHub first, but designed so
     Forgejo/GitLab/etc. can be added later.
 12. **Single static binary** — no runtime dependencies (Node.js, npm).
-13. **Config file** — `.jack.toml` or similar for per-repo settings.
+13. **Config file** — `.stakk.toml` or similar for per-repo settings.
 14. **Structured error messages** — using miette for clear diagnostics.
 
-## 9. Comparison: jj-stack vs jack
+## 9. Comparison: jj-stack vs stakk
 
-| Dimension | jj-stack (current) | jack (goal) |
+| Dimension | jj-stack (current) | stakk (goal) |
 |---|---|---|
 | Language | TypeScript + ReScript | Rust (single binary) |
 | Distribution | npm install | Static binary (cargo-binstall, GitHub releases) |
@@ -413,7 +413,7 @@ These are areas where the Rust rewrite can do better than jj-stack:
 | PR base updates | Sequential | Parallel where possible |
 | Interactive UI | React/Ink | inquire (lightweight) |
 | Error messages | Basic console output | Structured diagnostics (miette) |
-| Config file | None | `.jack.toml` or similar |
+| Config file | None | `.stakk.toml` or similar |
 | Non-user bookmarks | Crashes | Handled gracefully |
 | `--help` | Requires jj repo | Works anywhere |
 | Merge commits | Excluded (correct) | Excluded (same) |

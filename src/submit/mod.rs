@@ -28,7 +28,7 @@ use crate::jj::runner::JjRunner;
 pub enum SubmitError {
     /// Target bookmark was not found in any stack.
     #[error(
-        "bookmark '{bookmark}' not found in any stack — run `jack` with no arguments to see \
+        "bookmark '{bookmark}' not found in any stack — run `stakk` with no arguments to see \
          available stacks"
     )]
     BookmarkNotFound { bookmark: String },
@@ -1018,9 +1018,9 @@ mod tests {
         let comments = forge.created_comments.lock().unwrap();
         // One stack comment per PR.
         assert_eq!(comments.len(), 2);
-        // Comments should contain JACK_STACK metadata.
-        assert!(comments[0].1.contains("JACK_STACK"));
-        assert!(comments[1].1.contains("JACK_STACK"));
+        // Comments should contain STAKK_STACK metadata.
+        assert!(comments[0].1.contains("STAKK_STACK"));
+        assert!(comments[1].1.contains("STAKK_STACK"));
     }
 
     #[tokio::test]
