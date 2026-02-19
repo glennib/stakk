@@ -155,6 +155,20 @@ There is intentionally no `git/` module.
 - Define serde structs for every piece of jj output we consume.
 - Paginate large output (100 items at a time) to avoid memory issues.
 
+## Workflow
+
+### Starting a milestone
+
+- Before planning, summarize the milestone requirements from ROADMAP.md to the
+  user so they can confirm scope before any planning agent is launched.
+
+### Completing a milestone
+
+- Mark all checklist items as `[x]` in ROADMAP.md.
+- Present the user with a summary: what was built, what was tested, and why the
+  "done when" criteria are satisfied.
+- Update the "Current Status" section in this file.
+
 ## Patterns Discovered
 
 (This section is updated as we build. Record patterns, gotchas, and decisions
