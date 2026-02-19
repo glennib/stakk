@@ -203,6 +203,25 @@ configurations.
 
 ---
 
+## Sidequest: Integration Test Harness
+
+Binary-level integration tests that exercise the real `jack` binary against a
+real `jj` repo (no mocks).
+
+- [ ] Test harness that creates a temporary jj repo in `/tmp/` with `jj init`
+- [ ] Fixture setup: create commits, bookmarks, bookmark stacks, synced and
+  unsynced bookmarks (no remote needed initially — test local-only behavior)
+- [ ] Run the compiled `jack` binary against the fixture repo and assert on
+  stdout/stderr
+- [ ] Teardown: clean up the temp directory after tests
+- [ ] Integrate into `cargo nextest run` (as integration tests in `tests/`)
+
+**Goal**: Catch regressions in the actual binary behavior that unit tests with
+mock runners can't detect (template strings, jj CLI interface changes, output
+formatting, etc.).
+
+---
+
 ## Design Principles
 
 Throughout all milestones:

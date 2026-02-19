@@ -124,6 +124,11 @@ There is intentionally no `git/` module.
 - Before starting a new logical piece of work, verify a clean slate with
   `jj status`. If the current change is not empty, prompt the user or run
   `jj new`.
+- Use `jj commit -m "message"` to finalize a change (describes and creates a
+  new empty working copy in one step). Alternatively `jj describe -m` then
+  `jj new`.
+- Use `jj tug` to move the main bookmark forward to `@-` after committing.
+- Push with `jj git push --bookmark main`.
 
 ### Error Handling
 
