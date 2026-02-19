@@ -5,6 +5,7 @@
 //! 2. `GITHUB_TOKEN` environment variable
 //! 3. `GH_TOKEN` environment variable
 
+use miette::Diagnostic;
 use thiserror::Error;
 
 /// How the token was obtained.
@@ -36,9 +37,10 @@ pub struct AuthToken {
 }
 
 /// Errors from authentication resolution.
-#[derive(Debug, Error)]
+#[derive(Debug, Error, Diagnostic)]
 pub enum AuthError {
-    #[error("no GitHub authentication found; run `gh auth login` or set GITHUB_TOKEN/GH_TOKEN")]
+    #[error("no GitHub authentication found")]
+    #[diagnostic(help("Run `gh auth login` or set GITHUB_TOKEN/GH_TOKEN"))]
     NoAuthFound,
 
     #[error("failed to run `gh auth token`: {0}")]
@@ -141,8 +143,12 @@ mod tests {
     fn auth_error_no_auth_found_is_actionable() {
         let err = AuthError::NoAuthFound;
         let msg = err.to_string();
-        assert!(msg.contains("gh auth login"));
-        assert!(msg.contains("GITHUB_TOKEN"));
-        assert!(msg.contains("GH_TOKEN"));
+        assert!(msg.contains("no GitHub authentication found"));
+        // Actionable advice is in the miette diagnostic help.
+        let help = miette::Diagnostic::help(&err).expect("NoAuthFound should have diagnostic help");
+        let help_text = help.to_string();
+        assert!(help_text.contains("gh auth login"));
+        assert!(help_text.contains("GITHUB_TOKEN"));
+        assert!(help_text.contains("GH_TOKEN"));
     }
 }

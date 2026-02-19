@@ -6,10 +6,11 @@
 pub mod comment;
 pub mod github;
 
+use miette::Diagnostic;
 use thiserror::Error;
 
 /// Errors from forge operations.
-#[derive(Debug, Error)]
+#[derive(Debug, Error, Diagnostic)]
 pub enum ForgeError {
     #[error("API error: {message}")]
     Api { message: String },
@@ -18,7 +19,10 @@ pub enum ForgeError {
     #[error("PR not found: #{number}")]
     PrNotFound { number: u64 },
 
-    #[error("authentication failed: {message}")]
+    #[error(
+        "authentication failed: {message}; your token may have expired — run `gh auth login` to \
+         re-authenticate"
+    )]
     AuthFailed { message: String },
 
     #[expect(dead_code, reason = "used in later milestones for rate limit handling")]

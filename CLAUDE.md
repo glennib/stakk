@@ -42,10 +42,14 @@ for milestones.
   without executing, `--remote` flag overrides push remote. `indicatif`
   spinner for progress output. 15 new tests (5 Phase 1, 5 Phase 2, 5 Phase 3),
   77 total tests.
+- **Milestone 6 (Polish & QoL)**: In progress — `--draft` flag, PR body from
+  descriptions, concurrent API calls, progress spinners, non-user bookmark
+  filtering, miette diagnostics, dependency upgrades. 85 total tests. README
+  is the remaining item.
 
 ## Testing
 
-- **Unit/integration tests**: `cargo nextest run --all-targets` (77 tests).
+- **Unit/integration tests**: `cargo nextest run --all-targets` (85 tests).
 - **Manual testing repo**: `../jack-testing/` (github.com/glennib/jack-testing).
   A jj repo with pre-built bookmark stacks for end-to-end verification.
   Run jack from within that directory to test against real jj output.
@@ -132,8 +136,9 @@ There is intentionally no `git/` module.
 | `thiserror` | Error type definitions |
 | `anyhow` | Error propagation with context |
 | `inquire` | Interactive bookmark selection (later milestone) |
-| `indicatif` | Progress bars/spinners (later milestone) |
-| `miette` | User-facing error diagnostics (later milestone) |
+| `futures` | Concurrent async operations (`join_all`) |
+| `indicatif` | Progress bars/spinners |
+| `miette` | User-facing error diagnostics (`Diagnostic` derives) |
 
 ## Conventions
 
@@ -250,6 +255,23 @@ made during implementation here.)
 - `resolve_github_remote()` stays in `main.rs` — it's CLI orchestration
   that creates a `Jj<RealJjRunner>` internally and is not part of the
   submission logic.
+- `futures::future::join_all` for concurrent forge operations — simpler than
+  `FuturesUnordered`, sufficient for small numbers of concurrent calls.
+- `build_pr_body()` handles single-commit (strip title) and multi-commit
+  (join with `---`) cases. Returns `None` for empty/title-only descriptions.
+- PR body is only set on creation, not on update — avoids overwriting
+  manually-edited PR bodies.
+- Non-user bookmarks on commits are filtered during traversal using a
+  `HashSet<String>` of user bookmark names. This prevents spurious segment
+  boundaries from bookmarks belonging to other users.
+- miette `#[diagnostic(help(...))]` on struct variants with named fields
+  causes false-positive `unused_assignments` warnings from the macro
+  expansion. Workaround: embed actionable text in the `#[error(...)]`
+  message directly for field-based variants; use `#[diagnostic(help(...))]`
+  only on unit or tuple variants.
+- `main()` uses `anyhow::Error::downcast_ref()` to check for specific
+  error types and print miette diagnostic help. This avoids full miette
+  report rendering while still surfacing actionable advice.
 
 ## Decisions Log
 
@@ -294,3 +316,15 @@ rationale.)
 - **2026-02-19**: `--remote` flag serves dual purpose — selects which
   remote jj pushes to AND which remote URL resolves the GitHub owner/repo.
   `resolve_github_remote(Some("name"))` validates it's a GitHub URL.
+- **2026-02-19**: PR body only set on creation — `execute_submission_plan`
+  passes `bp.body.clone()` to `CreatePrParams` but does not update the body
+  of existing PRs. This prevents overwriting user-edited PR descriptions.
+- **2026-02-19**: `--draft` threaded via `SubmissionPlan.draft` — stored
+  once on the plan, read during PR creation. Simpler than per-bookmark draft.
+- **2026-02-19**: Concurrent API calls use `join_all` not `FuturesUnordered`
+  — simpler, sufficient for the small number of concurrent operations.
+- **2026-02-19**: miette at presentation layer only — `Diagnostic` derived
+  on error enums, but `anyhow` remains for propagation. `main()` extracts
+  help from the root cause via `downcast_ref`.
+- **2026-02-19**: `run()` extracted from `main()` — `main()` handles error
+  display (chain + diagnostic help), `run()` returns `anyhow::Result`.

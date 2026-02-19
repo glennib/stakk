@@ -8,6 +8,7 @@ pub mod remote;
 pub mod runner;
 pub mod types;
 
+use miette::Diagnostic;
 use thiserror::Error;
 
 use crate::jj::runner::JjRunner;
@@ -18,7 +19,7 @@ use crate::jj::types::LogEntry;
 use crate::jj::types::LogEntryRaw;
 
 /// Errors from interacting with `jj`.
-#[derive(Debug, Error)]
+#[derive(Debug, Error, Diagnostic)]
 pub enum JjError {
     /// The `jj` command exited with a non-zero status.
     #[error("jj command failed: {stderr}")]
@@ -33,6 +34,7 @@ pub enum JjError {
 
     /// `jj` binary not found.
     #[error("could not run jj: {0}")]
+    #[diagnostic(help("Make sure jj is installed and available on your PATH"))]
     NotFound(std::io::Error),
 
     /// Could not determine the default branch.

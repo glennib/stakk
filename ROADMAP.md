@@ -161,18 +161,25 @@ set correct bases, and add stack comments — matching jj-stack's behavior.
 
 - [ ] Write a comprehensive README (project overview, installation, usage
   examples, how stacking works, comparison with alternatives)
-- [ ] Concurrent PR creation and concurrent comment updates during Phase 3
-  (use `join_all` / `FuturesUnordered` where ordering doesn't matter)
-- [ ] Progress output during Phase 1 & 2 (there's a noticeable pause before
-  the plan is printed — investigate whether it's graph building, forge queries,
-  or auth resolution, and add spinner/status updates to stderr)
-- [ ] Parallel GitHub API calls where dependencies allow (check existing PRs
-  concurrently)
-- [ ] `--draft` flag for creating PRs as drafts
-- [ ] PR body populated from full jj change descriptions (not just title)
-- [ ] Configurable default branch detection (don't hardcode names)
-- [ ] Better error messages with miette diagnostics
-- [ ] Handle non-user bookmarks gracefully (filter, don't crash)
+- [x] Concurrent PR lookups, base updates, and comment operations during
+  Phase 2 & 3 (using `futures::future::join_all`)
+- [x] Progress output during Phase 1 & 2 (indicatif spinner with status
+  messages for auth, remote, graph, analysis, and PR lookups)
+- [x] `--draft` flag for creating PRs as drafts
+- [x] PR body populated from full jj change descriptions (not just title).
+  Single commit: body is everything after the title line. Multiple commits:
+  descriptions joined with `---` separators. Only set on creation (don't
+  overwrite manually-edited PR bodies).
+- [x] Configurable default branch detection — already done since M2;
+  `get_default_branch()` uses `trunk()` revset, not hardcoded names.
+- [x] Better error messages with miette diagnostics (`Diagnostic` derives on
+  `JjError`, `AuthError`, `ForgeError`, `JackError`; help text on actionable
+  variants; `main()` extracts and prints diagnostic help)
+- [x] Handle non-user bookmarks gracefully (filter `local_bookmark_names` to
+  only user-owned bookmarks during traversal; non-user bookmarks don't create
+  segment boundaries)
+- [x] Upgraded all dependencies to latest versions (including indicatif 0.18)
+- [x] Added `futures` and `miette` dependencies
 
 **Done when**: README is polished and publishable, all known jj-stack issues
 are addressed in jack.
@@ -208,6 +215,40 @@ a bookmark to submit.
 
 **Done when**: jack covers all common stacked-PR workflows across GitHub
 configurations.
+
+---
+
+## Sidequest: Replace anyhow with concrete error types
+
+Remove `anyhow` from non-`main` code. Currently `submit/mod.rs` uses
+`anyhow::Result` with `.context()` for three public functions
+(`analyze_submission`, `create_submission_plan`, `execute_submission_plan`).
+Replace with concrete `thiserror` + `miette::Diagnostic` error types.
+
+- [ ] Define `SubmitError` enum in `submit/mod.rs` with variants for each
+  failure mode: bookmark not found, segment has no bookmark name, forge
+  errors (`#[from] ForgeError`), jj push errors (`#[from] JjError`), comment
+  errors. Derive `Diagnostic` with actionable help text.
+- [ ] Replace `anyhow::Result` returns in `analyze_submission`,
+  `create_submission_plan`, and `execute_submission_plan` with
+  `Result<T, SubmitError>`.
+- [ ] In `main.rs`, use `miette::Result<()>` as the return type from `run()`.
+  Convert errors into `miette::Report` at the boundary. This replaces the
+  manual `print_diagnostic_help` function — miette's report renderer
+  automatically walks `diagnostic_source()` and renders help, codes, etc.
+  from every level in the chain.
+- [ ] Remove `anyhow` from `Cargo.toml` if no longer used anywhere.
+- [ ] Verify `#[diagnostic(transparent)]` on `JackError` variants correctly
+  forwards diagnostic metadata from inner errors through the full chain.
+
+**Pattern**: Concrete error types (`thiserror` + `Diagnostic`) all the way
+up; `miette::Report` only at the `main()` boundary. This gives the best of
+both worlds: matchable/dowcastable errors in library code, rich CLI
+diagnostics at the top level.
+
+**Goal**: Zero `anyhow` usage. Every error is a concrete type with
+`Diagnostic` metadata. `main() -> miette::Result<()>` renders everything
+automatically.
 
 ---
 

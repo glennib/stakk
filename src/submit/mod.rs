@@ -17,6 +17,7 @@ use crate::forge::comment::find_stack_comment;
 use crate::forge::comment::format_stack_comment;
 use crate::graph::types::BookmarkSegment;
 use crate::graph::types::ChangeGraph;
+use crate::graph::types::SegmentCommit;
 use crate::jj::Jj;
 use crate::jj::runner::JjRunner;
 
@@ -43,6 +44,8 @@ pub struct BookmarkPlan {
     pub base: String,
     /// PR title (derived from first commit description).
     pub title: String,
+    /// PR body built from commit descriptions, if any.
+    pub body: Option<String>,
     /// Existing PR if one was found on GitHub.
     pub existing_pr: Option<PullRequest>,
     /// Whether the bookmark needs pushing.
@@ -60,6 +63,8 @@ pub struct SubmissionPlan {
     pub bookmark_plans: Vec<BookmarkPlan>,
     /// The remote name to push to.
     pub remote: String,
+    /// Whether to create PRs as drafts.
+    pub draft: bool,
 }
 
 /// Phase 3 output: what was actually done.
@@ -107,6 +112,38 @@ pub fn analyze_submission(
 }
 
 // ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/// Build a PR body from segment commit descriptions.
+///
+/// - Single commit: lines after the first (the title line) become the body.
+/// - Multiple commits: concatenate all descriptions with `---` separators.
+/// - If the result is empty or whitespace-only, returns `None`.
+fn build_pr_body(commits: &[SegmentCommit]) -> Option<String> {
+    if commits.is_empty() {
+        return None;
+    }
+
+    let body = if commits.len() == 1 {
+        // Single commit: strip the first line (title) and use the rest.
+        let desc = commits[0].description.trim();
+        let rest = desc.lines().skip(1).collect::<Vec<_>>().join("\n");
+        rest.trim().to_string()
+    } else {
+        // Multiple commits: concatenate all descriptions.
+        let parts: Vec<&str> = commits
+            .iter()
+            .map(|c| c.description.trim())
+            .filter(|d: &&str| !d.is_empty())
+            .collect();
+        parts.join("\n\n---\n\n")
+    };
+
+    if body.is_empty() { None } else { Some(body) }
+}
+
+// ---------------------------------------------------------------------------
 // Phase 2: Planning
 // ---------------------------------------------------------------------------
 
@@ -118,24 +155,36 @@ pub async fn create_submission_plan<F: Forge>(
     analysis: &SubmissionAnalysis,
     forge: &F,
     remote: &str,
+    draft: bool,
 ) -> Result<SubmissionPlan> {
+    // Collect bookmark names for concurrent PR lookup.
+    let bookmark_names: Vec<String> = analysis
+        .segments
+        .iter()
+        .map(|seg| {
+            seg.bookmark_names
+                .first()
+                .cloned()
+                .context("segment has no bookmark name")
+        })
+        .collect::<Result<_>>()?;
+
+    // Concurrently check for existing PRs for all bookmarks.
+    let pr_futures: Vec<_> = bookmark_names
+        .iter()
+        .map(|name| forge.find_pr_for_branch(name))
+        .collect();
+    let pr_results = futures::future::join_all(pr_futures).await;
+
     let mut bookmark_plans = Vec::new();
 
     for (i, segment) in analysis.segments.iter().enumerate() {
-        let bookmark_name = segment
-            .bookmark_names
-            .first()
-            .context("segment has no bookmark name")?
-            .clone();
+        let bookmark_name = bookmark_names[i].clone();
 
         let base = if i == 0 {
             analysis.default_branch.clone()
         } else {
-            analysis.segments[i - 1]
-                .bookmark_names
-                .first()
-                .context("parent segment has no bookmark name")?
-                .clone()
+            bookmark_names[i - 1].clone()
         };
 
         let title = segment
@@ -150,19 +199,23 @@ pub async fn create_submission_plan<F: Forge>(
             })
             .unwrap_or_else(|| bookmark_name.clone());
 
-        let existing_pr = forge
-            .find_pr_for_branch(&bookmark_name)
-            .await
-            .with_context(|| format!("failed to check for existing PR for '{bookmark_name}'"))?;
+        let existing_pr = pr_results[i]
+            .as_ref()
+            .map_err(|e| anyhow::anyhow!("{e}"))
+            .with_context(|| format!("failed to check for existing PR for '{bookmark_name}'"))?
+            .clone();
 
         let needs_base_update = existing_pr.as_ref().is_some_and(|pr| pr.base_ref != base);
 
         let needs_create = existing_pr.is_none();
 
+        let body = build_pr_body(&segment.commits);
+
         bookmark_plans.push(BookmarkPlan {
             bookmark_name,
             base,
             title,
+            body,
             existing_pr,
             needs_push: true,
             needs_create,
@@ -173,6 +226,7 @@ pub async fn create_submission_plan<F: Forge>(
     Ok(SubmissionPlan {
         bookmark_plans,
         remote: remote.to_string(),
+        draft,
     })
 }
 
@@ -182,9 +236,10 @@ pub async fn create_submission_plan<F: Forge>(
 
 impl fmt::Display for SubmissionPlan {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let draft_label = if self.draft { ", draft" } else { "" };
         writeln!(
             f,
-            "Submission plan ({} bookmark(s), remote: {}):",
+            "Submission plan ({} bookmark(s), remote: {}{draft_label}):",
             self.bookmark_plans.len(),
             self.remote,
         )?;
@@ -244,21 +299,32 @@ pub async fn execute_submission_plan<R: JjRunner, F: Forge>(
         }
     }
 
-    // Step 2: Update bases for existing PRs, then create new PRs.
+    // Step 2a: Concurrently update bases for existing PRs that need it.
+    pb.set_message("Updating PR bases...");
+    let base_update_futures: Vec<_> = plan
+        .bookmark_plans
+        .iter()
+        .filter(|bp| bp.needs_base_update)
+        .filter_map(|bp| {
+            bp.existing_pr
+                .as_ref()
+                .map(|pr| (bp.bookmark_name.clone(), pr.number, bp.base.clone()))
+        })
+        .map(|(name, number, base)| async move {
+            forge
+                .update_pr_base(number, &base)
+                .await
+                .with_context(|| format!("failed to update PR base for '{name}'"))
+        })
+        .collect();
+    let base_results = futures::future::join_all(base_update_futures).await;
+    for result in base_results {
+        result?;
+    }
+
+    // Step 2b: Create new PRs sequentially (base branch must exist first).
     for bp in &plan.bookmark_plans {
         let pr = if let Some(existing) = &bp.existing_pr {
-            if bp.needs_base_update {
-                pb.set_message(format!(
-                    "Updating base of PR #{}: {} -> {}",
-                    existing.number, existing.base_ref, bp.base,
-                ));
-                forge
-                    .update_pr_base(existing.number, &bp.base)
-                    .await
-                    .with_context(|| {
-                        format!("failed to update PR base for '{}'", bp.bookmark_name,)
-                    })?;
-            }
             pb.println(format!(
                 "  Existing PR #{}: {}",
                 existing.number, existing.html_url,
@@ -271,8 +337,8 @@ pub async fn execute_submission_plan<R: JjRunner, F: Forge>(
                     title: bp.title.clone(),
                     head: bp.bookmark_name.clone(),
                     base: bp.base.clone(),
-                    body: None,
-                    draft: false,
+                    body: bp.body.clone(),
+                    draft: plan.draft,
                 })
                 .await
                 .with_context(|| format!("failed to create PR for '{}'", bp.bookmark_name))?;
@@ -287,36 +353,47 @@ pub async fn execute_submission_plan<R: JjRunner, F: Forge>(
         });
     }
 
-    // Step 3: Create/update stack comments on all PRs.
+    // Step 3: Concurrently create/update stack comments on all PRs.
+    pb.set_message("Updating stack comments...");
     let comment_data = StackCommentData {
         version: 0,
         stack: stack_entries.clone(),
     };
 
-    for (i, entry) in stack_entries.iter().enumerate() {
-        pb.set_message(format!("Updating stack comment on PR #{}", entry.pr_number,));
+    let comment_futures: Vec<_> = stack_entries
+        .iter()
+        .enumerate()
+        .map(|(i, entry)| {
+            let body = format_stack_comment(&comment_data, i);
+            let pr_number = entry.pr_number;
+            async move {
+                let existing_comments = forge
+                    .list_comments(pr_number)
+                    .await
+                    .with_context(|| format!("failed to list comments on PR #{pr_number}"))?;
 
-        let body = format_stack_comment(&comment_data, i);
-        let existing_comments = forge
-            .list_comments(entry.pr_number)
-            .await
-            .with_context(|| format!("failed to list comments on PR #{}", entry.pr_number,))?;
-
-        if let Some(existing) = find_stack_comment(&existing_comments) {
-            forge
-                .update_comment(existing.id, &body)
-                .await
-                .with_context(|| {
-                    format!("failed to update stack comment on PR #{}", entry.pr_number,)
-                })?;
-        } else {
-            forge
-                .create_comment(entry.pr_number, &body)
-                .await
-                .with_context(|| {
-                    format!("failed to create stack comment on PR #{}", entry.pr_number,)
-                })?;
-        }
+                if let Some(existing) = find_stack_comment(&existing_comments) {
+                    forge
+                        .update_comment(existing.id, &body)
+                        .await
+                        .with_context(|| {
+                            format!("failed to update stack comment on PR #{pr_number}")
+                        })?;
+                } else {
+                    forge
+                        .create_comment(pr_number, &body)
+                        .await
+                        .with_context(|| {
+                            format!("failed to create stack comment on PR #{pr_number}")
+                        })?;
+                }
+                Ok::<(), anyhow::Error>(())
+            }
+        })
+        .collect();
+    let comment_results = futures::future::join_all(comment_futures).await;
+    for result in comment_results {
+        result?;
     }
 
     pb.finish_and_clear();
@@ -641,7 +718,7 @@ mod tests {
         };
 
         let forge = MockForge::new();
-        let plan = create_submission_plan(&analysis, &forge, "origin")
+        let plan = create_submission_plan(&analysis, &forge, "origin", false)
             .await
             .unwrap();
 
@@ -666,7 +743,7 @@ mod tests {
 
         let forge = MockForge::new().with_existing_pr("feat-a", make_pr(42, "feat-a", "main"));
 
-        let plan = create_submission_plan(&analysis, &forge, "origin")
+        let plan = create_submission_plan(&analysis, &forge, "origin", false)
             .await
             .unwrap();
 
@@ -693,7 +770,7 @@ mod tests {
             .with_existing_pr("feat-a", make_pr(10, "feat-a", "main"))
             .with_existing_pr("feat-b", make_pr(11, "feat-b", "main"));
 
-        let plan = create_submission_plan(&analysis, &forge, "origin")
+        let plan = create_submission_plan(&analysis, &forge, "origin", false)
             .await
             .unwrap();
 
@@ -719,7 +796,7 @@ mod tests {
 
         let forge = MockForge::new().with_existing_pr("feat-a", make_pr(10, "feat-a", "main"));
 
-        let plan = create_submission_plan(&analysis, &forge, "origin")
+        let plan = create_submission_plan(&analysis, &forge, "origin", false)
             .await
             .unwrap();
 
@@ -735,6 +812,7 @@ mod tests {
                     bookmark_name: "feat-a".to_string(),
                     base: "main".to_string(),
                     title: "feature a".to_string(),
+                    body: None,
                     existing_pr: None,
                     needs_push: true,
                     needs_create: true,
@@ -744,6 +822,7 @@ mod tests {
                     bookmark_name: "feat-b".to_string(),
                     base: "feat-a".to_string(),
                     title: "feature b".to_string(),
+                    body: None,
                     existing_pr: Some(make_pr(42, "feat-b", "main")),
                     needs_push: true,
                     needs_create: false,
@@ -751,6 +830,7 @@ mod tests {
                 },
             ],
             remote: "origin".to_string(),
+            draft: false,
         };
 
         let output = plan.to_string();
@@ -773,6 +853,7 @@ mod tests {
                     bookmark_name: "feat-a".to_string(),
                     base: "main".to_string(),
                     title: "feature a".to_string(),
+                    body: None,
                     existing_pr: None,
                     needs_push: true,
                     needs_create: true,
@@ -782,6 +863,7 @@ mod tests {
                     bookmark_name: "feat-b".to_string(),
                     base: "feat-a".to_string(),
                     title: "feature b".to_string(),
+                    body: None,
                     existing_pr: None,
                     needs_push: true,
                     needs_create: true,
@@ -789,6 +871,7 @@ mod tests {
                 },
             ],
             remote: "origin".to_string(),
+            draft: false,
         };
 
         let (runner, _push_calls) = MockJjRunner::new();
@@ -814,12 +897,14 @@ mod tests {
                 bookmark_name: "feat-a".to_string(),
                 base: "develop".to_string(),
                 title: "feature a".to_string(),
+                body: None,
                 existing_pr: Some(make_pr(42, "feat-a", "main")),
                 needs_push: true,
                 needs_create: false,
                 needs_base_update: true,
             }],
             remote: "origin".to_string(),
+            draft: false,
         };
 
         let (runner, _push_calls) = MockJjRunner::new();
@@ -841,6 +926,7 @@ mod tests {
                     bookmark_name: "feat-a".to_string(),
                     base: "main".to_string(),
                     title: "feature a".to_string(),
+                    body: None,
                     existing_pr: None,
                     needs_push: true,
                     needs_create: true,
@@ -850,6 +936,7 @@ mod tests {
                     bookmark_name: "feat-b".to_string(),
                     base: "feat-a".to_string(),
                     title: "feature b".to_string(),
+                    body: None,
                     existing_pr: None,
                     needs_push: true,
                     needs_create: true,
@@ -857,6 +944,7 @@ mod tests {
                 },
             ],
             remote: "origin".to_string(),
+            draft: false,
         };
 
         let (runner, _push_calls) = MockJjRunner::new();
@@ -892,12 +980,14 @@ mod tests {
                 bookmark_name: "feat-a".to_string(),
                 base: "main".to_string(),
                 title: "feature a".to_string(),
+                body: None,
                 existing_pr: Some(make_pr(50, "feat-a", "main")),
                 needs_push: true,
                 needs_create: false,
                 needs_base_update: false,
             }],
             remote: "origin".to_string(),
+            draft: false,
         };
 
         let (runner, _push_calls) = MockJjRunner::new();
@@ -929,6 +1019,7 @@ mod tests {
                     bookmark_name: "feat-a".to_string(),
                     base: "main".to_string(),
                     title: "feature a".to_string(),
+                    body: None,
                     existing_pr: None,
                     needs_push: true,
                     needs_create: true,
@@ -938,6 +1029,7 @@ mod tests {
                     bookmark_name: "feat-b".to_string(),
                     base: "feat-a".to_string(),
                     title: "feature b".to_string(),
+                    body: None,
                     existing_pr: None,
                     needs_push: true,
                     needs_create: true,
@@ -945,6 +1037,7 @@ mod tests {
                 },
             ],
             remote: "my-remote".to_string(),
+            draft: false,
         };
 
         let (runner, push_calls) = MockJjRunner::new();
@@ -957,5 +1050,120 @@ mod tests {
         assert_eq!(calls.len(), 2);
         assert_eq!(calls[0], ("feat-a".to_string(), "my-remote".to_string()));
         assert_eq!(calls[1], ("feat-b".to_string(), "my-remote".to_string()));
+    }
+
+    #[test]
+    fn plan_display_shows_draft() {
+        let plan = SubmissionPlan {
+            bookmark_plans: vec![BookmarkPlan {
+                bookmark_name: "feat-a".to_string(),
+                base: "main".to_string(),
+                title: "feature a".to_string(),
+                body: None,
+                existing_pr: None,
+                needs_push: true,
+                needs_create: true,
+                needs_base_update: false,
+            }],
+            remote: "origin".to_string(),
+            draft: true,
+        };
+
+        let output = plan.to_string();
+        assert!(
+            output.contains("draft"),
+            "expected 'draft' in plan display: {output}"
+        );
+    }
+
+    #[tokio::test]
+    async fn execute_creates_draft_prs() {
+        let plan = SubmissionPlan {
+            bookmark_plans: vec![BookmarkPlan {
+                bookmark_name: "feat-a".to_string(),
+                base: "main".to_string(),
+                title: "feature a".to_string(),
+                body: None,
+                existing_pr: None,
+                needs_push: true,
+                needs_create: true,
+                needs_base_update: false,
+            }],
+            remote: "origin".to_string(),
+            draft: true,
+        };
+
+        let (runner, _push_calls) = MockJjRunner::new();
+        let jj = Jj::new(runner);
+        let forge = MockForge::new();
+
+        execute_submission_plan(&plan, &jj, &forge).await.unwrap();
+
+        let created = forge.created_prs.lock().unwrap();
+        assert_eq!(created.len(), 1);
+        assert!(created[0].draft, "expected PR to be created as draft");
+    }
+
+    // -----------------------------------------------------------------------
+    // build_pr_body tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn build_pr_body_single_commit_with_body() {
+        let commits = vec![SegmentCommit {
+            commit_id: "c1".to_string(),
+            change_id: "ch1".to_string(),
+            description: "Add feature X\n\nThis adds feature X with foo and bar.".to_string(),
+            author_name: "Test".to_string(),
+        }];
+
+        let body = build_pr_body(&commits);
+        assert_eq!(
+            body.as_deref(),
+            Some("This adds feature X with foo and bar.")
+        );
+    }
+
+    #[test]
+    fn build_pr_body_single_commit_title_only() {
+        let commits = vec![SegmentCommit {
+            commit_id: "c1".to_string(),
+            change_id: "ch1".to_string(),
+            description: "Add feature X".to_string(),
+            author_name: "Test".to_string(),
+        }];
+
+        let body = build_pr_body(&commits);
+        assert_eq!(body, None);
+    }
+
+    #[test]
+    fn build_pr_body_multiple_commits() {
+        let commits = vec![
+            SegmentCommit {
+                commit_id: "c1".to_string(),
+                change_id: "ch1".to_string(),
+                description: "First commit".to_string(),
+                author_name: "Test".to_string(),
+            },
+            SegmentCommit {
+                commit_id: "c2".to_string(),
+                change_id: "ch2".to_string(),
+                description: "Second commit".to_string(),
+                author_name: "Test".to_string(),
+            },
+        ];
+
+        let body = build_pr_body(&commits);
+        assert_eq!(
+            body.as_deref(),
+            Some("First commit\n\n---\n\nSecond commit")
+        );
+    }
+
+    #[test]
+    fn build_pr_body_empty() {
+        let body = build_pr_body(&[]);
+        assert_eq!(body, None);
     }
 }

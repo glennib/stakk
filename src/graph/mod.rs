@@ -37,6 +37,10 @@ struct TraversalResult {
 pub async fn build_change_graph<R: JjRunner>(jj: &Jj<R>) -> Result<ChangeGraph, JackError> {
     let bookmarks = jj.get_my_bookmarks().await?;
 
+    // Collect user bookmark names so traversal can filter out non-user bookmarks
+    // that appear on commits (e.g. bookmarks from other users).
+    let user_bookmark_names: HashSet<String> = bookmarks.iter().map(|b| b.name.clone()).collect();
+
     let mut fully_collected: HashSet<String> = HashSet::new();
     let mut adjacency_list: HashMap<String, String> = HashMap::new();
     let mut segments: HashMap<String, BookmarkSegment> = HashMap::new();
@@ -49,9 +53,14 @@ pub async fn build_change_graph<R: JjRunner>(jj: &Jj<R>) -> Result<ChangeGraph, 
             continue;
         }
 
-        let result =
-            traverse_and_discover_segments(bookmark, jj, &fully_collected, &mut tainted_change_ids)
-                .await?;
+        let result = traverse_and_discover_segments(
+            bookmark,
+            jj,
+            &fully_collected,
+            &mut tainted_change_ids,
+            &user_bookmark_names,
+        )
+        .await?;
 
         if result.excluded {
             excluded_bookmark_count += 1;
@@ -121,6 +130,7 @@ async fn traverse_and_discover_segments<R: JjRunner>(
     jj: &Jj<R>,
     fully_collected: &HashSet<String>,
     tainted_change_ids: &mut HashSet<String>,
+    user_bookmark_names: &HashSet<String>,
 ) -> Result<TraversalResult, JackError> {
     let mut segments: Vec<BookmarkSegment> = Vec::new();
     let mut current_segment: Option<BookmarkSegment> = None;
@@ -156,16 +166,23 @@ async fn traverse_and_discover_segments<R: JjRunner>(
                 });
             }
 
-            // Check if this commit has bookmarks (segment boundary).
-            if !change.local_bookmark_names.is_empty() {
+            // Filter to only user-owned bookmarks on this commit.
+            let user_bookmarks: Vec<String> = change
+                .local_bookmark_names
+                .iter()
+                .filter(|name| user_bookmark_names.contains(*name))
+                .cloned()
+                .collect();
+
+            // Check if this commit has user bookmarks (segment boundary).
+            if !user_bookmarks.is_empty() {
                 // Finish current segment if any.
                 if let Some(seg) = current_segment.take() {
                     segments.push(seg);
                 }
 
                 // Check if any bookmark on this change was already collected.
-                if change
-                    .local_bookmark_names
+                if user_bookmarks
                     .iter()
                     .any(|name| fully_collected.contains(name))
                 {
@@ -175,7 +192,7 @@ async fn traverse_and_discover_segments<R: JjRunner>(
 
                 // Start new segment.
                 current_segment = Some(BookmarkSegment {
-                    bookmark_names: change.local_bookmark_names.clone(),
+                    bookmark_names: user_bookmarks,
                     change_id: change.change_id.clone(),
                     commits: Vec::new(),
                 });
@@ -949,5 +966,85 @@ mod tests {
         assert_eq!(stacks[0].segments[0].change_id, "a_leaf");
         assert_eq!(stacks[1].segments[0].change_id, "m_leaf");
         assert_eq!(stacks[2].segments[0].change_id, "z_leaf");
+    }
+
+    /// Non-user bookmarks on a commit are filtered out; segment uses only
+    /// user-owned bookmarks.
+    ///
+    /// Commit c_x has bookmarks [bm_user, bm_other]. Only bm_user is returned
+    /// by get_my_bookmarks(), so the segment should contain only bm_user.
+    #[tokio::test]
+    async fn non_user_bookmarks_filtered_from_segment() {
+        let runner = MockJjRunner {
+            handler: |args: &[&str]| {
+                if args[0] == "bookmark" {
+                    // Only bm_user belongs to the user.
+                    return Ok(bookmark_json("bm_user", "c_x", "ch_x"));
+                }
+
+                let revset = args[2];
+                if revset.contains("c_x") {
+                    // The commit has both a user bookmark and a non-user
+                    // bookmark.
+                    return Ok(log_entry_json(
+                        "c_x",
+                        "ch_x",
+                        &["trunk_c"],
+                        &["bm_user", "bm_other"],
+                    ));
+                }
+
+                Ok(String::new())
+            },
+        };
+
+        let jj = Jj::new(runner);
+        let graph = build_change_graph(&jj).await.unwrap();
+
+        assert_eq!(graph.segments.len(), 1);
+        let seg = graph.segments.get("ch_x").unwrap();
+        assert_eq!(seg.bookmark_names, vec!["bm_user"]);
+    }
+
+    /// A commit with only non-user bookmarks is treated as unbookmarked
+    /// (no segment boundary).
+    ///
+    /// trunk -> c_other(bm_other) -> c_user(bm_user)
+    /// Only bm_user is the user's bookmark. c_other has only bm_other, so
+    /// it should be treated as an unbookmarked commit within bm_user's segment.
+    #[tokio::test]
+    async fn only_non_user_bookmarks_no_segment_boundary() {
+        let runner = MockJjRunner {
+            handler: |args: &[&str]| {
+                if args[0] == "bookmark" {
+                    return Ok(bookmark_json("bm_user", "c_user", "ch_user"));
+                }
+
+                let revset = args[2];
+                if revset.contains("c_user") {
+                    let lines = [
+                        log_entry_json("c_user", "ch_user", &["c_other"], &["bm_user"]),
+                        // bm_other is not a user bookmark → no segment boundary.
+                        log_entry_json("c_other", "ch_other", &["trunk_c"], &["bm_other"]),
+                    ];
+                    return Ok(lines.join("\n"));
+                }
+
+                Ok(String::new())
+            },
+        };
+
+        let jj = Jj::new(runner);
+        let graph = build_change_graph(&jj).await.unwrap();
+
+        // Only one segment (bm_user), containing both commits.
+        assert_eq!(graph.segments.len(), 1);
+        assert_eq!(graph.stacks.len(), 1);
+
+        let seg = graph.segments.get("ch_user").unwrap();
+        assert_eq!(seg.bookmark_names, vec!["bm_user"]);
+        assert_eq!(seg.commits.len(), 2);
+        assert_eq!(seg.commits[0].commit_id, "c_user");
+        assert_eq!(seg.commits[1].commit_id, "c_other");
     }
 }

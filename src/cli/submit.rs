@@ -10,6 +10,10 @@ pub struct SubmitArgs {
     #[arg(long)]
     pub dry_run: bool,
 
+    /// Create pull requests as drafts.
+    #[arg(long)]
+    pub draft: bool,
+
     /// Git remote to push to.
     #[arg(long, default_value = "origin")]
     pub remote: String,
