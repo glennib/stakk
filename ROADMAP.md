@@ -191,6 +191,8 @@ are addressed in jack.
 Default behavior when `jack` is run with no arguments.
 
 - [ ] Build change graph and display stacks as ASCII tree
+- [ ] Colorized output for stack display (bookmark names, commit summaries,
+  PR status indicators, etc.)
 - [ ] Interactive bookmark selection using `inquire`
 - [ ] After selection, run the three-phase submission for that bookmark
 - [ ] Handle the case where multiple bookmarks point to the same change
