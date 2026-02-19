@@ -6,15 +6,13 @@ mod graph;
 mod jj;
 mod submit;
 
-use anyhow::Context;
-use anyhow::Result;
-use anyhow::bail;
 use clap::Parser;
 
 use crate::cli::Cli;
 use crate::cli::Commands;
 use crate::cli::auth::AuthCommands;
 use crate::cli::submit::SubmitArgs;
+use crate::error::JackError;
 use crate::forge::Forge;
 use crate::jj::Jj;
 use crate::jj::remote::parse_github_url;
@@ -23,42 +21,12 @@ use crate::jj::runner::RealJjRunner;
 #[tokio::main]
 async fn main() {
     if let Err(e) = run().await {
-        let mut chain = e.chain();
-        // Print the top-level error.
-        eprintln!("error: {}", chain.next().unwrap());
-        // Print any context chain.
-        for cause in chain {
-            eprintln!("  caused by: {cause}");
-        }
-        // If any error in the chain implements miette::Diagnostic, print help.
-        print_diagnostic_help(&e);
+        eprintln!("{:?}", miette::Report::new(e));
         std::process::exit(1);
     }
 }
 
-/// Print miette diagnostic help if any error in the chain has one.
-fn print_diagnostic_help(err: &anyhow::Error) {
-    // Try downcasting to each error type that implements Diagnostic.
-    if let Some(diag) = err.downcast_ref::<crate::jj::JjError>() {
-        if let Some(help) = miette::Diagnostic::help(diag) {
-            eprintln!("  help: {help}");
-        }
-    } else if let Some(diag) = err.downcast_ref::<crate::auth::AuthError>() {
-        if let Some(help) = miette::Diagnostic::help(diag) {
-            eprintln!("  help: {help}");
-        }
-    } else if let Some(diag) = err.downcast_ref::<crate::forge::ForgeError>() {
-        if let Some(help) = miette::Diagnostic::help(diag) {
-            eprintln!("  help: {help}");
-        }
-    } else if let Some(diag) = err.downcast_ref::<crate::error::JackError>()
-        && let Some(help) = miette::Diagnostic::help(diag)
-    {
-        eprintln!("  help: {help}");
-    }
-}
-
-async fn run() -> Result<()> {
+async fn run() -> Result<(), JackError> {
     let cli = Cli::parse();
 
     match cli.command {
@@ -81,22 +49,16 @@ async fn run() -> Result<()> {
     Ok(())
 }
 
-async fn auth_test() -> Result<()> {
-    let auth_token = auth::resolve_token()
-        .await
-        .context("failed to resolve GitHub authentication")?;
+async fn auth_test() -> Result<(), JackError> {
+    let auth_token = auth::resolve_token().await?;
     println!("Authentication source: {}", auth_token.source);
 
     let (_, github_repo) = resolve_github_remote(None).await?;
 
     let forge =
-        forge::github::GitHubForge::new(&auth_token.token, github_repo.owner, github_repo.repo)
-            .context("failed to create GitHub client")?;
+        forge::github::GitHubForge::new(&auth_token.token, github_repo.owner, github_repo.repo)?;
 
-    let username = forge
-        .get_authenticated_user()
-        .await
-        .context("failed to validate GitHub token")?;
+    let username = forge.get_authenticated_user().await?;
     println!("Authenticated as: {username}");
 
     Ok(())
@@ -115,7 +77,7 @@ fn auth_setup() {
 
 /// Submit a bookmark as a stacked pull request using the three-phase pipeline:
 /// analyze, plan, execute.
-async fn submit_bookmark(args: &SubmitArgs) -> Result<()> {
+async fn submit_bookmark(args: &SubmitArgs) -> Result<(), JackError> {
     let pb = indicatif::ProgressBar::new_spinner();
     pb.enable_steady_tick(std::time::Duration::from_millis(120));
 
@@ -123,9 +85,7 @@ async fn submit_bookmark(args: &SubmitArgs) -> Result<()> {
     let jj = Jj::new(RealJjRunner);
 
     // Resolve auth and remote.
-    let auth_token = auth::resolve_token()
-        .await
-        .context("failed to resolve GitHub authentication")?;
+    let auth_token = auth::resolve_token().await?;
 
     pb.set_message("Resolving GitHub remote...");
     let (remote_name, github_repo) = resolve_github_remote(Some(&args.remote)).await?;
@@ -134,31 +94,22 @@ async fn submit_bookmark(args: &SubmitArgs) -> Result<()> {
         &auth_token.token,
         github_repo.owner.clone(),
         github_repo.repo.clone(),
-    )
-    .context("failed to create GitHub client")?;
+    )?;
 
     // Build the change graph.
     pb.set_message("Building change graph...");
-    let change_graph = graph::build_change_graph(&jj)
-        .await
-        .context("failed to build change graph")?;
+    let change_graph = graph::build_change_graph(&jj).await?;
 
     pb.set_message("Detecting default branch...");
-    let default_branch = jj
-        .get_default_branch()
-        .await
-        .context("failed to detect default branch")?;
+    let default_branch = jj.get_default_branch().await?;
 
     // Phase 1: Analyze.
     pb.set_message("Analyzing submission...");
-    let analysis = submit::analyze_submission(&args.bookmark, &change_graph, &default_branch)
-        .context("failed to analyze submission")?;
+    let analysis = submit::analyze_submission(&args.bookmark, &change_graph, &default_branch)?;
 
     // Phase 2: Plan.
     pb.set_message("Checking for existing pull requests...");
-    let plan = submit::create_submission_plan(&analysis, &forge, &remote_name, args.draft)
-        .await
-        .context("failed to create submission plan")?;
+    let plan = submit::create_submission_plan(&analysis, &forge, &remote_name, args.draft).await?;
 
     pb.finish_and_clear();
 
@@ -170,9 +121,7 @@ async fn submit_bookmark(args: &SubmitArgs) -> Result<()> {
     }
 
     // Phase 3: Execute.
-    let result = submit::execute_submission_plan(&plan, &jj, &forge)
-        .await
-        .context("failed to execute submission plan")?;
+    let result = submit::execute_submission_plan(&plan, &jj, &forge).await?;
 
     println!("\nSubmitted {} bookmark(s).", result.stack_entries.len());
 
@@ -187,21 +136,23 @@ async fn submit_bookmark(args: &SubmitArgs) -> Result<()> {
 /// Returns the remote name and parsed `GitHubRepo`.
 async fn resolve_github_remote(
     preferred: Option<&str>,
-) -> Result<(String, jj::remote::GitHubRepo)> {
+) -> Result<(String, jj::remote::GitHubRepo), JackError> {
     let jj = Jj::new(RealJjRunner);
-    let remotes = jj
-        .get_git_remote_list()
-        .await
-        .context("failed to list git remotes")?;
+    let remotes = jj.get_git_remote_list().await?;
 
     if let Some(name) = preferred {
         if let Some(remote) = remotes.iter().find(|r| r.name == name) {
             if let Some(repo) = parse_github_url(&remote.url) {
                 return Ok((remote.name.clone(), repo));
             }
-            bail!("remote '{name}' is not a GitHub URL: {}", remote.url);
+            return Err(JackError::RemoteNotGithub {
+                name: name.to_string(),
+                url: remote.url.clone(),
+            });
         }
-        bail!("remote '{name}' not found");
+        return Err(JackError::RemoteNotFound {
+            name: name.to_string(),
+        });
     }
 
     for remote in &remotes {
@@ -210,29 +161,21 @@ async fn resolve_github_remote(
         }
     }
 
-    bail!("no GitHub remote found; is this a GitHub repository?")
+    Err(JackError::NoGithubRemote)
 }
 
-async fn show_status() -> Result<()> {
+async fn show_status() -> Result<(), JackError> {
     let pb = indicatif::ProgressBar::new_spinner();
     pb.enable_steady_tick(std::time::Duration::from_millis(120));
     pb.set_message("Loading repository status...");
 
     let jj = Jj::new(RealJjRunner);
 
-    let default_branch = jj
-        .get_default_branch()
-        .await
-        .context("failed to detect default branch")?;
+    let default_branch = jj.get_default_branch().await?;
 
-    let remotes = jj
-        .get_git_remote_list()
-        .await
-        .context("failed to list git remotes")?;
+    let remotes = jj.get_git_remote_list().await?;
 
-    let change_graph = graph::build_change_graph(&jj)
-        .await
-        .context("failed to build change graph")?;
+    let change_graph = graph::build_change_graph(&jj).await?;
 
     pb.finish_and_clear();
 

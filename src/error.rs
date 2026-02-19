@@ -4,6 +4,7 @@ use thiserror::Error;
 use crate::auth::AuthError;
 use crate::forge::ForgeError;
 use crate::jj::JjError;
+use crate::submit::SubmitError;
 
 /// Errors that can occur in jack.
 #[derive(Debug, Error, Diagnostic)]
@@ -23,7 +24,25 @@ pub enum JackError {
     #[diagnostic(transparent)]
     Auth(#[from] AuthError),
 
+    /// An error from the submission pipeline.
+    #[error(transparent)]
+    #[diagnostic(transparent)]
+    Submit(#[from] SubmitError),
+
     /// An error in change graph construction.
     #[error("graph error: {message}")]
     Graph { message: String },
+
+    /// The specified remote is not a GitHub URL.
+    #[error("remote '{name}' is not a GitHub URL: {url}")]
+    RemoteNotGithub { name: String, url: String },
+
+    /// The specified remote was not found.
+    #[error("remote '{name}' not found")]
+    RemoteNotFound { name: String },
+
+    /// No GitHub remote was found on this repository.
+    #[error("no GitHub remote found")]
+    #[diagnostic(help("Make sure this repository has a GitHub remote configured"))]
+    NoGithubRemote,
 }

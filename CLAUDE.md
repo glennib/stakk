@@ -134,7 +134,7 @@ There is intentionally no `git/` module.
 | `base64` | Stack comment metadata encoding |
 | `http` | HTTP status codes for error mapping |
 | `thiserror` | Error type definitions |
-| `anyhow` | Error propagation with context |
+| `miette` | User-facing error diagnostics |
 | `inquire` | Interactive bookmark selection (later milestone) |
 | `futures` | Concurrent async operations (`join_all`) |
 | `indicatif` | Progress bars/spinners |
@@ -176,10 +176,14 @@ There is intentionally no `git/` module.
 
 ### Error Handling
 
-- Use `thiserror` for defining error enums in library code.
-- Use `anyhow` for error propagation in application/CLI code.
-- Provide context on errors: `thing.do_it().context("failed to do thing")?`.
+- Use `thiserror` + `miette::Diagnostic` for defining error enums everywhere.
+- Concrete error types all the way up; `miette::Report` only at the `main()`
+  boundary for rendering.
+- No `anyhow` — every error is a concrete type with `Diagnostic` metadata.
 - User-facing error messages should be clear and actionable.
+- Use `#[diagnostic(help(...))]` on unit/tuple variants for actionable advice.
+  For struct variants with named fields, embed advice in `#[error(...)]` to
+  avoid false-positive `unused_assignments` warnings from the macro.
 
 ### jj Interface
 
@@ -269,9 +273,13 @@ made during implementation here.)
   expansion. Workaround: embed actionable text in the `#[error(...)]`
   message directly for field-based variants; use `#[diagnostic(help(...))]`
   only on unit or tuple variants.
-- `main()` uses `anyhow::Error::downcast_ref()` to check for specific
-  error types and print miette diagnostic help. This avoids full miette
-  report rendering while still surfacing actionable advice.
+- `main()` converts `JackError` to `miette::Report` for rendering. miette's
+  graphical report handler walks `diagnostic_source()` automatically to
+  show help from any error in the chain (e.g. `SubmitError::PushFailed`
+  wrapping `JjError::NotFound` with its help text).
+- `SubmitError` uses `#[source]` on `ForgeError`/`JjError` fields — miette
+  automatically treats `#[source]` fields that implement `Diagnostic` as
+  diagnostic sources, walking the chain to render help from inner errors.
 
 ## Decisions Log
 
@@ -326,5 +334,11 @@ rationale.)
 - **2026-02-19**: miette at presentation layer only — `Diagnostic` derived
   on error enums, but `anyhow` remains for propagation. `main()` extracts
   help from the root cause via `downcast_ref`.
-- **2026-02-19**: `run()` extracted from `main()` — `main()` handles error
-  display (chain + diagnostic help), `run()` returns `anyhow::Result`.
+- **2026-02-19**: `run()` extracted from `main()` — `main()` converts errors
+  to `miette::Report` for display, `run()` returns `Result<(), JackError>`.
+- **2026-02-19**: Zero `anyhow` — concrete error types (`thiserror` +
+  `Diagnostic`) all the way up. `SubmitError` in `submit/mod.rs` with
+  per-variant context (bookmark name, PR number). `JackError` in `error.rs`
+  aggregates all error types with `#[diagnostic(transparent)]`. Remote
+  resolution errors (`RemoteNotGithub`, `RemoteNotFound`, `NoGithubRemote`)
+  added to `JackError` to replace `anyhow::bail!()` in `main.rs`.

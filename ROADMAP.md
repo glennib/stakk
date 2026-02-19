@@ -225,20 +225,20 @@ Remove `anyhow` from non-`main` code. Currently `submit/mod.rs` uses
 (`analyze_submission`, `create_submission_plan`, `execute_submission_plan`).
 Replace with concrete `thiserror` + `miette::Diagnostic` error types.
 
-- [ ] Define `SubmitError` enum in `submit/mod.rs` with variants for each
+- [x] Define `SubmitError` enum in `submit/mod.rs` with variants for each
   failure mode: bookmark not found, segment has no bookmark name, forge
   errors (`#[from] ForgeError`), jj push errors (`#[from] JjError`), comment
   errors. Derive `Diagnostic` with actionable help text.
-- [ ] Replace `anyhow::Result` returns in `analyze_submission`,
+- [x] Replace `anyhow::Result` returns in `analyze_submission`,
   `create_submission_plan`, and `execute_submission_plan` with
   `Result<T, SubmitError>`.
-- [ ] In `main.rs`, use `miette::Result<()>` as the return type from `run()`.
-  Convert errors into `miette::Report` at the boundary. This replaces the
+- [x] In `main.rs`, `run()` returns `Result<(), JackError>`. `main()`
+  converts errors into `miette::Report` at the boundary. This replaces the
   manual `print_diagnostic_help` function — miette's report renderer
   automatically walks `diagnostic_source()` and renders help, codes, etc.
   from every level in the chain.
-- [ ] Remove `anyhow` from `Cargo.toml` if no longer used anywhere.
-- [ ] Verify `#[diagnostic(transparent)]` on `JackError` variants correctly
+- [x] Remove `anyhow` from `Cargo.toml` — zero anyhow usage anywhere.
+- [x] Verify `#[diagnostic(transparent)]` on `JackError` variants correctly
   forwards diagnostic metadata from inner errors through the full chain.
 
 **Pattern**: Concrete error types (`thiserror` + `Diagnostic`) all the way

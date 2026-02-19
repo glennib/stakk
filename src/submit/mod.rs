@@ -5,11 +5,12 @@
 
 use std::fmt;
 
-use anyhow::Context;
-use anyhow::Result;
+use miette::Diagnostic;
+use thiserror::Error;
 
 use crate::forge::CreatePrParams;
 use crate::forge::Forge;
+use crate::forge::ForgeError;
 use crate::forge::PullRequest;
 use crate::forge::comment::StackCommentData;
 use crate::forge::comment::StackEntry;
@@ -19,7 +20,63 @@ use crate::graph::types::BookmarkSegment;
 use crate::graph::types::ChangeGraph;
 use crate::graph::types::SegmentCommit;
 use crate::jj::Jj;
+use crate::jj::JjError;
 use crate::jj::runner::JjRunner;
+
+/// Errors from the submission pipeline.
+#[derive(Debug, Error, Diagnostic)]
+pub enum SubmitError {
+    /// Target bookmark was not found in any stack.
+    #[error(
+        "bookmark '{bookmark}' not found in any stack — run `jack` with no arguments to see \
+         available stacks"
+    )]
+    BookmarkNotFound { bookmark: String },
+
+    /// A segment in the change graph has no bookmark name.
+    #[error("segment has no bookmark name")]
+    SegmentMissingBookmark,
+
+    /// Failed to look up an existing PR for a bookmark.
+    #[error("failed to check for existing PR for '{bookmark}'")]
+    PrLookupFailed {
+        bookmark: String,
+        #[source]
+        source: ForgeError,
+    },
+
+    /// Failed to push a bookmark to the remote.
+    #[error("failed to push bookmark '{bookmark}'")]
+    PushFailed {
+        bookmark: String,
+        #[source]
+        source: JjError,
+    },
+
+    /// Failed to update the base branch of an existing PR.
+    #[error("failed to update PR base for '{bookmark}'")]
+    BaseUpdateFailed {
+        bookmark: String,
+        #[source]
+        source: ForgeError,
+    },
+
+    /// Failed to create a new PR.
+    #[error("failed to create PR for '{bookmark}'")]
+    PrCreateFailed {
+        bookmark: String,
+        #[source]
+        source: ForgeError,
+    },
+
+    /// Failed to create or update a stack comment on a PR.
+    #[error("failed to manage stack comment on PR #{pr_number}")]
+    CommentFailed {
+        pr_number: u64,
+        #[source]
+        source: ForgeError,
+    },
+}
 
 // ---------------------------------------------------------------------------
 // Types
@@ -86,7 +143,7 @@ pub fn analyze_submission(
     target_bookmark: &str,
     change_graph: &ChangeGraph,
     default_branch: &str,
-) -> Result<SubmissionAnalysis> {
+) -> Result<SubmissionAnalysis, SubmitError> {
     let stack = change_graph
         .stacks
         .iter()
@@ -95,7 +152,9 @@ pub fn analyze_submission(
                 .iter()
                 .any(|seg| seg.bookmark_names.contains(&target_bookmark.to_string()))
         })
-        .with_context(|| format!("bookmark '{target_bookmark}' not found in any stack"))?;
+        .ok_or_else(|| SubmitError::BookmarkNotFound {
+            bookmark: target_bookmark.to_string(),
+        })?;
 
     let target_index = stack
         .segments
@@ -156,7 +215,7 @@ pub async fn create_submission_plan<F: Forge>(
     forge: &F,
     remote: &str,
     draft: bool,
-) -> Result<SubmissionPlan> {
+) -> Result<SubmissionPlan, SubmitError> {
     // Collect bookmark names for concurrent PR lookup.
     let bookmark_names: Vec<String> = analysis
         .segments
@@ -165,9 +224,9 @@ pub async fn create_submission_plan<F: Forge>(
             seg.bookmark_names
                 .first()
                 .cloned()
-                .context("segment has no bookmark name")
+                .ok_or(SubmitError::SegmentMissingBookmark)
         })
-        .collect::<Result<_>>()?;
+        .collect::<Result<_, _>>()?;
 
     // Concurrently check for existing PRs for all bookmarks.
     let pr_futures: Vec<_> = bookmark_names
@@ -178,7 +237,9 @@ pub async fn create_submission_plan<F: Forge>(
 
     let mut bookmark_plans = Vec::new();
 
-    for (i, segment) in analysis.segments.iter().enumerate() {
+    for (i, (segment, pr_result)) in
+        analysis.segments.iter().zip(pr_results).enumerate()
+    {
         let bookmark_name = bookmark_names[i].clone();
 
         let base = if i == 0 {
@@ -199,11 +260,11 @@ pub async fn create_submission_plan<F: Forge>(
             })
             .unwrap_or_else(|| bookmark_name.clone());
 
-        let existing_pr = pr_results[i]
-            .as_ref()
-            .map_err(|e| anyhow::anyhow!("{e}"))
-            .with_context(|| format!("failed to check for existing PR for '{bookmark_name}'"))?
-            .clone();
+        let existing_pr =
+            pr_result.map_err(|source| SubmitError::PrLookupFailed {
+                bookmark: bookmark_name.clone(),
+                source,
+            })?;
 
         let needs_base_update = existing_pr.as_ref().is_some_and(|pr| pr.base_ref != base);
 
@@ -283,7 +344,7 @@ pub async fn execute_submission_plan<R: JjRunner, F: Forge>(
     plan: &SubmissionPlan,
     jj: &Jj<R>,
     forge: &F,
-) -> Result<SubmissionResult> {
+) -> Result<SubmissionResult, SubmitError> {
     let pb = indicatif::ProgressBar::new_spinner();
     pb.enable_steady_tick(std::time::Duration::from_millis(120));
 
@@ -295,7 +356,10 @@ pub async fn execute_submission_plan<R: JjRunner, F: Forge>(
             pb.set_message(format!("Pushing bookmark: {}", bp.bookmark_name));
             jj.push_bookmark(&bp.bookmark_name, &plan.remote)
                 .await
-                .with_context(|| format!("failed to push bookmark '{}'", bp.bookmark_name))?;
+                .map_err(|source| SubmitError::PushFailed {
+                    bookmark: bp.bookmark_name.clone(),
+                    source,
+                })?;
         }
     }
 
@@ -314,7 +378,10 @@ pub async fn execute_submission_plan<R: JjRunner, F: Forge>(
             forge
                 .update_pr_base(number, &base)
                 .await
-                .with_context(|| format!("failed to update PR base for '{name}'"))
+                .map_err(|source| SubmitError::BaseUpdateFailed {
+                    bookmark: name,
+                    source,
+                })
         })
         .collect();
     let base_results = futures::future::join_all(base_update_futures).await;
@@ -341,7 +408,10 @@ pub async fn execute_submission_plan<R: JjRunner, F: Forge>(
                     draft: plan.draft,
                 })
                 .await
-                .with_context(|| format!("failed to create PR for '{}'", bp.bookmark_name))?;
+                .map_err(|source| SubmitError::PrCreateFailed {
+                    bookmark: bp.bookmark_name.clone(),
+                    source,
+                })?;
             pb.println(format!("  Created PR #{}: {}", pr.number, pr.html_url,));
             pr
         };
@@ -370,24 +440,20 @@ pub async fn execute_submission_plan<R: JjRunner, F: Forge>(
                 let existing_comments = forge
                     .list_comments(pr_number)
                     .await
-                    .with_context(|| format!("failed to list comments on PR #{pr_number}"))?;
+                    .map_err(|source| SubmitError::CommentFailed { pr_number, source })?;
 
                 if let Some(existing) = find_stack_comment(&existing_comments) {
                     forge
                         .update_comment(existing.id, &body)
                         .await
-                        .with_context(|| {
-                            format!("failed to update stack comment on PR #{pr_number}")
-                        })?;
+                        .map_err(|source| SubmitError::CommentFailed { pr_number, source })?;
                 } else {
                     forge
                         .create_comment(pr_number, &body)
                         .await
-                        .with_context(|| {
-                            format!("failed to create stack comment on PR #{pr_number}")
-                        })?;
+                        .map_err(|source| SubmitError::CommentFailed { pr_number, source })?;
                 }
-                Ok::<(), anyhow::Error>(())
+                Ok::<(), SubmitError>(())
             }
         })
         .collect();
