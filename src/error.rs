@@ -1,5 +1,7 @@
 use thiserror::Error;
 
+use crate::jj::JjError;
+
 /// Errors that can occur in jack.
 #[expect(
     dead_code,
@@ -8,8 +10,8 @@ use thiserror::Error;
 #[derive(Debug, Error)]
 pub enum JackError {
     /// An error from interacting with the jj CLI.
-    #[error("jj error: {message}")]
-    Jj { message: String },
+    #[error(transparent)]
+    Jj(#[from] JjError),
 
     /// An error from the forge (e.g. GitHub API).
     #[error("forge error: {message}")]

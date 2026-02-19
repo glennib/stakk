@@ -19,8 +19,10 @@ for milestones.
 
 ## Current Status
 
-- **Milestone 0 (Project Skeleton)**: In progress — CLI skeleton with `submit`
-  and `auth` subcommands, error types, placeholder modules, CI workflow.
+- **Milestone 0 (Project Skeleton)**: Complete.
+- **Milestone 1 (jj Interface Layer)**: Complete — `Jj<R>` struct with
+  `JjRunner` trait, serde types for jj JSON output, GitHub URL parsing,
+  6 public methods, 32 unit/integration tests.
 
 ## Development Principles
 
@@ -144,6 +146,16 @@ made during implementation here.)
 
 - Use `#[expect(..., reason = "...")]` instead of `#[allow(...)]` — it warns
   when the suppressed lint no longer fires, preventing stale suppressions.
+- When a field/method is dead in the bin target but used in tests, use
+  `#[cfg_attr(not(test), expect(dead_code, reason = "..."))]` to satisfy both
+  `--all-targets` clippy and `-D warnings`.
+- jj template strings for JSON output use NDJSON (one JSON object per line)
+  with `\n` separator in the template. Parse with `lines()` + per-line
+  `serde_json::from_str`.
+- `jj git remote list` outputs plain text (`name url` per line), not JSON.
+  Parse with simple string splitting.
+- `trunk()` remote bookmarks include an internal `@git` entry — filter it
+  out when detecting the default branch.
 
 ## Decisions Log
 
@@ -159,3 +171,9 @@ rationale.)
   main.rs later.
 - **2026-02-19**: `#[expect]` over `#[allow]` — requires a reason and warns
   when the expectation becomes unnecessary.
+- **2026-02-19**: Generic `Jj<R: JjRunner>` over `dyn JjRunner` — avoids
+  `async_trait` dependency, zero-cost dispatch, works with edition 2024's
+  native async fn in traits.
+- **2026-02-19**: NDJSON templates over array-based JSON — simpler parsing
+  (line-by-line), natural pagination boundary, no need to accumulate large
+  JSON arrays in memory.

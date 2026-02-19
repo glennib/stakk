@@ -11,11 +11,11 @@ See [ANALYSIS.md](ANALYSIS.md) for the full research behind these decisions.
 
 Set up the project structure and dependencies.
 
-- [ ] `Cargo.toml` with initial dependencies: clap, serde, serde_json, tokio,
+- [x] `Cargo.toml` with initial dependencies: clap, serde, serde_json, tokio,
   thiserror, anyhow
-- [ ] Basic clap CLI with subcommands: `submit`, `auth`
-- [ ] Error types module with thiserror
-- [ ] Module structure:
+- [x] Basic clap CLI with subcommands: `submit`, `auth`
+- [x] Error types module with thiserror
+- [x] Module structure:
   ```
   src/
   ├── main.rs          # CLI entry point
@@ -39,9 +39,9 @@ print usage information (even outside a jj repo).
 
 Shell out to `jj` and parse JSON output into typed Rust structs.
 
-- [ ] Define serde structs for jj output: bookmarks, log entries, commit
+- [x] Define serde structs for jj output: bookmarks, log entries, commit
   metadata
-- [ ] Implement functions:
+- [x] Implement functions:
   - `get_my_bookmarks()` — `jj bookmark list --revisions "mine() ~ trunk()"`
   - `get_branch_changes_paginated()` — `jj log` with pagination (100 at a
     time)
@@ -50,9 +50,9 @@ Shell out to `jj` and parse JSON output into typed Rust structs.
   - `get_default_branch()` — detect from trunk() remote bookmarks
   - `push_bookmark()` — `jj git push --bookmark <name>`
   - `git_fetch()` — `jj git fetch --all-remotes`
-- [ ] Helper for running jj commands with `ui.paginate=never` config
-- [ ] Remote URL parsing: extract owner/repo from HTTPS and SSH GitHub URLs
-- [ ] Tests with captured jj output fixtures
+- [x] Helper for running jj commands with `ui.paginate=never` config
+- [x] Remote URL parsing: extract owner/repo from HTTPS and SSH GitHub URLs
+- [x] Tests with captured jj output fixtures
 
 **Done when**: Can run `jack` in a jj repo and have it list bookmarks and their
 relationships without errors.
