@@ -22,8 +22,33 @@ commit descriptions, and structured error diagnostics.
 
 ## Installation
 
-> **TODO**: Distribution is not yet set up. For now, clone the repository and
-> build from source with `cargo build --release --bin stakk`.
+### mise (recommended)
+
+```
+mise use -g 'github:glennib/stakk'
+```
+
+Or from crates.io:
+
+```
+mise use -g 'cargo:stakk'
+```
+
+### cargo-binstall
+
+```
+cargo binstall stakk
+```
+
+### cargo install
+
+```
+cargo install stakk
+```
+
+### Pre-built binaries
+
+Download from the [latest release](https://github.com/glennib/stakk/releases/latest).
 
 ## Quick start
 
