@@ -42,10 +42,12 @@ for milestones.
   without executing, `--remote` flag overrides push remote. `indicatif`
   spinner for progress output. 15 new tests (5 Phase 1, 5 Phase 2, 5 Phase 3),
   77 total tests.
-- **Milestone 6 (Polish & QoL)**: In progress — `--draft` flag, PR body from
+- **Milestone 6 (Polish & QoL)**: Complete — `--draft` flag, PR body from
   descriptions, concurrent API calls, progress spinners, non-user bookmark
-  filtering, miette diagnostics, dependency upgrades. 85 total tests. README
-  is the remaining item.
+  filtering, miette diagnostics, dependency upgrades, README. 85 total tests.
+- **Sidequest (Replace anyhow)**: Complete — `SubmitError` enum with
+  `Diagnostic` derives, `JackError` aggregates all error types, `main()`
+  uses `miette::Report` for rendering, zero `anyhow` usage.
 
 ## Testing
 

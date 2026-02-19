@@ -159,8 +159,8 @@ set correct bases, and add stack comments — matching jj-stack's behavior.
 
 ## Milestone 6: Polish & Quality of Life
 
-- [ ] Write a comprehensive README (project overview, installation, usage
-  examples, how stacking works, comparison with alternatives)
+- [x] Write a comprehensive README (project overview, installation placeholder,
+  usage examples, how stacking works, comparison with jj-stack)
 - [x] Concurrent PR lookups, base updates, and comment operations during
   Phase 2 & 3 (using `futures::future::join_all`)
 - [x] Progress output during Phase 1 & 2 (indicatif spinner with status
