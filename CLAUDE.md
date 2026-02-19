@@ -156,6 +156,12 @@ made during implementation here.)
   Parse with simple string splitting.
 - `trunk()` remote bookmarks include an internal `@git` entry — filter it
   out when detecting the default branch.
+- When a bookmark is unsynced, `jj bookmark list` emits two entries (local
+  and remote tracking target) with the same name. Deduplicate by keeping
+  only the first entry per name.
+- `jj abandon` reverts the working copy to match the parent. If you have
+  uncommitted edits in the working copy, use `jj new` first or `jj undo`
+  to recover.
 
 ## Decisions Log
 

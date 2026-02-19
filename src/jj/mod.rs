@@ -189,6 +189,7 @@ impl<R: JjRunner> Jj<R> {
 }
 
 fn parse_bookmarks(output: &str) -> Result<Vec<Bookmark>, JjError> {
+    let mut seen = std::collections::HashSet::new();
     let mut bookmarks = Vec::new();
     for line in output.lines() {
         let line = line.trim();
@@ -200,6 +201,11 @@ fn parse_bookmarks(output: &str) -> Result<Vec<Bookmark>, JjError> {
                 context: "bookmark list".to_string(),
                 source: e,
             })?;
+        // When a bookmark is unsynced, jj emits separate entries for the local
+        // and remote tracking targets. Keep only the first (local) entry.
+        if !seen.insert(raw.name.clone()) {
+            continue;
+        }
         // Skip conflicted bookmarks (no normal target).
         if let Some(target) = raw.target {
             bookmarks.push(Bookmark {
@@ -303,6 +309,19 @@ mod tests {
     fn parse_bookmarks_empty_input() {
         let bookmarks = parse_bookmarks("").unwrap();
         assert!(bookmarks.is_empty());
+    }
+
+    #[test]
+    fn parse_bookmarks_deduplicates_unsynced() {
+        // When a bookmark is unsynced, jj emits two entries: local and remote
+        // tracking target. We should keep only the first (local) entry.
+        let local = r#"{"name":"feat","synced":false,"target":{"commit_id":"new","parents":[],"change_id":"x1","description":"","author":{"name":"A","email":"a@b.c","timestamp":"T"},"committer":{"name":"A","email":"a@b.c","timestamp":"T"}}}"#;
+        let remote = r#"{"name":"feat","synced":false,"target":{"commit_id":"old","parents":[],"change_id":"x2","description":"","author":{"name":"A","email":"a@b.c","timestamp":"T"},"committer":{"name":"A","email":"a@b.c","timestamp":"T"}}}"#;
+        let input = format!("{local}\n{remote}");
+        let bookmarks = parse_bookmarks(&input).unwrap();
+        assert_eq!(bookmarks.len(), 1);
+        assert_eq!(bookmarks[0].name, "feat");
+        assert_eq!(bookmarks[0].commit_id, "new");
     }
 
     // -- parse_log_entries tests --
