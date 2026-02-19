@@ -67,12 +67,19 @@ pub struct Bookmark {
     pub commit_id: String,
     #[cfg_attr(
         not(test),
-        expect(dead_code, reason = "used in later milestones for submission")
+        expect(
+            dead_code,
+            reason = "deserialized for completeness, available for diagnostics"
+        )
     )]
     pub change_id: String,
     #[cfg_attr(
         not(test),
-        expect(dead_code, reason = "used in later milestones for status display")
+        expect(
+            dead_code,
+            reason = "available for push optimization (skip synced bookmarks) in a future \
+                      milestone"
+        )
     )]
     pub synced: bool,
 }

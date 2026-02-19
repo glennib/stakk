@@ -64,14 +64,17 @@ pub struct ChangeGraph {
     /// Change IDs closest to trunk with no parent in the adjacency list.
     #[cfg_attr(
         not(test),
-        expect(dead_code, reason = "used in later milestones for submission")
+        expect(dead_code, reason = "available for interactive mode or diagnostics")
     )]
     pub stack_roots: HashSet<String>,
 
     /// Map from change_id to its `BookmarkSegment`.
     #[cfg_attr(
         not(test),
-        expect(dead_code, reason = "used in later milestones for submission")
+        expect(
+            dead_code,
+            reason = "used during graph construction; exposed for diagnostics"
+        )
     )]
     pub segments: HashMap<String, BookmarkSegment>,
 

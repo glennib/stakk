@@ -44,8 +44,8 @@ pub fn format_stack_comment(data: &StackCommentData, current_index: usize) -> St
 
     let plural = if data.stack.len() == 1 { "" } else { "s" };
     let mut body = format!(
-        "{COMMENT_DATA_PREFIX}{encoded}{COMMENT_DATA_POSTFIX}\nThis PR is part of a stack of {} \
-         bookmark{plural}:\n\n1. `trunk()`\n",
+        "{COMMENT_DATA_PREFIX}{encoded}{COMMENT_DATA_POSTFIX}\n### Stack ({} bookmark{plural}, \
+         base: `trunk()`)\n\n",
         data.stack.len(),
     );
 
@@ -80,7 +80,7 @@ pub fn find_stack_comment(comments: &[Comment]) -> Option<&Comment> {
     not(test),
     expect(
         dead_code,
-        reason = "used in submit milestone for reading existing stack data"
+        reason = "needed when submission reads existing stack data (e.g. detecting merged PRs)"
     )
 )]
 pub fn parse_stack_comment(body: &str) -> Option<StackCommentData> {
@@ -199,14 +199,14 @@ mod tests {
             }],
         };
         let body = format_stack_comment(&data, 0);
-        assert!(body.contains("1 bookmark:"));
-        assert!(!body.contains("bookmarks:"));
+        assert!(body.contains("1 bookmark,"));
+        assert!(!body.contains("bookmarks,"));
     }
 
     #[test]
     fn format_multiple_bookmarks_plural() {
         let body = format_stack_comment(&sample_data(), 0);
-        assert!(body.contains("2 bookmarks:"));
+        assert!(body.contains("2 bookmarks,"));
     }
 
     #[test]

@@ -145,19 +145,6 @@ impl Forge for GitHubForge {
             .map_err(map_octocrab_error)?;
         Ok(())
     }
-
-    async fn get_repo_default_branch(&self) -> Result<String, ForgeError> {
-        let repo = self
-            .client
-            .repos(&self.owner, &self.repo)
-            .get()
-            .await
-            .map_err(map_octocrab_error)?;
-
-        repo.default_branch.ok_or_else(|| ForgeError::Api {
-            message: "repository has no default branch".to_string(),
-        })
-    }
 }
 
 fn map_octocrab_error(e: octocrab::Error) -> ForgeError {

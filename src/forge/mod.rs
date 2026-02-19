@@ -39,12 +39,12 @@ pub enum PrState {
 pub struct PullRequest {
     pub number: u64,
     pub html_url: String,
-    #[expect(dead_code, reason = "populated by forge, read in submit milestone")]
+    #[expect(dead_code, reason = "populated by forge, read in future milestones")]
     pub title: String,
-    #[expect(dead_code, reason = "populated by forge, read in submit milestone")]
+    #[expect(dead_code, reason = "populated by forge, read in future milestones")]
     pub head_ref: String,
     pub base_ref: String,
-    #[expect(dead_code, reason = "populated by forge, read in submit milestone")]
+    #[expect(dead_code, reason = "populated by forge, read in future milestones")]
     pub state: PrState,
 }
 
@@ -113,10 +113,4 @@ pub trait Forge: Send + Sync {
         comment_id: u64,
         body: &str,
     ) -> impl std::future::Future<Output = Result<(), ForgeError>> + Send;
-
-    /// Get the repository's default branch name.
-    #[expect(dead_code, reason = "used in submit milestone to determine stack base")]
-    fn get_repo_default_branch(
-        &self,
-    ) -> impl std::future::Future<Output = Result<String, ForgeError>> + Send;
 }

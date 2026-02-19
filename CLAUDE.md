@@ -33,13 +33,19 @@ for milestones.
   4 unit tests.
 - **Milestone 4 (Forge Trait & GitHub Implementation)**: Complete — `Forge`
   trait with 8 async methods, `GitHubForge` implementation using octocrab,
-  stack comment formatting with base64-encoded metadata, minimal `jack submit`
-  wiring (pushes bookmarks, creates/finds PRs, adds stack comments),
-  11 comment formatting tests, 62 total tests.
+  stack comment formatting with base64-encoded metadata,
+  11 comment formatting tests.
+- **Milestone 5 (Three-Phase Submission)**: Complete —
+  `analyze_submission()` (Phase 1, pure function), `create_submission_plan()`
+  (Phase 2, queries forge), `execute_submission_plan()` (Phase 3, pushes,
+  creates/updates PRs, manages stack comments). `--dry-run` flag prints plan
+  without executing, `--remote` flag overrides push remote. `indicatif`
+  spinner for progress output. 15 new tests (5 Phase 1, 5 Phase 2, 5 Phase 3),
+  77 total tests.
 
 ## Testing
 
-- **Unit/integration tests**: `cargo nextest run --all-targets` (62 tests).
+- **Unit/integration tests**: `cargo nextest run --all-targets` (77 tests).
 - **Manual testing repo**: `../jack-testing/` (github.com/glennib/jack-testing).
   A jj repo with pre-built bookmark stacks for end-to-end verification.
   Run jack from within that directory to test against real jj output.
@@ -233,6 +239,17 @@ made during implementation here.)
   authenticated" — both are expected fallthrough cases, not errors.
 - Stack comment metadata uses `JACK_STACK` prefix (not jj-stack's prefix).
   jj-stack compatibility is not a goal.
+- Three-phase submission (analyze → plan → execute) keeps business logic
+  testable with mock `Forge` and `JjRunner`. `main.rs` is the composition
+  root that creates concrete `GitHubForge` and `Jj<RealJjRunner>`, then
+  passes them as `&F: Forge` and `&Jj<R>` to generic phase functions.
+- Mock state shared between test code and mock impls uses
+  `Arc<Mutex<Vec<...>>>` since `Jj::new()` takes ownership of the runner.
+  Create the Arc before constructing the mock, clone it, and inspect
+  after execution.
+- `resolve_github_remote()` stays in `main.rs` — it's CLI orchestration
+  that creates a `Jj<RealJjRunner>` internally and is not part of the
+  submission logic.
 
 ## Decisions Log
 
@@ -267,3 +284,13 @@ rationale.)
   its own `JACK_STACK` comment prefix and snake_case serde fields.
 - **2026-02-19**: Minimal `submit_bookmark()` wiring in main.rs for M4 —
   temporary scaffolding replaced by full three-phase submission in M5.
+- **2026-02-19**: Three-phase submission uses `anyhow::Result` (not
+  `thiserror`) — application-level orchestration code, errors from
+  sub-systems are wrapped with `.context()`.
+- **2026-02-19**: `SubmissionAnalysis` does not carry `target_bookmark` —
+  the field was unused after construction, removed to avoid dead_code warning.
+- **2026-02-19**: `needs_push` is always `true` in M5 — always pushing is
+  safe and idempotent. Optimization to skip synced bookmarks deferred.
+- **2026-02-19**: `--remote` flag serves dual purpose — selects which
+  remote jj pushes to AND which remote URL resolves the GitHub owner/repo.
+  `resolve_github_remote(Some("name"))` validates it's a GitHub URL.

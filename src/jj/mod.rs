@@ -174,7 +174,10 @@ impl<R: JjRunner> Jj<R> {
     }
 
     /// Fetch from all remotes.
-    #[expect(dead_code, reason = "will be used in submit milestone")]
+    #[expect(
+        dead_code,
+        reason = "available for pre-submission fetch in a future milestone"
+    )]
     pub async fn git_fetch(&self) -> Result<(), JjError> {
         self.runner
             .run_jj(&["git", "fetch", "--all-remotes"])

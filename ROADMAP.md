@@ -132,25 +132,25 @@ Design a trait abstraction so the core logic is forge-agnostic.
 
 Port the core submission workflow.
 
-- [ ] **Phase 1 — Analysis** (`analyze_submission`):
+- [x] **Phase 1 — Analysis** (`analyze_submission`):
   - Take a target bookmark and change graph
   - Find the stack containing that bookmark
   - Return relevant segments from trunk to target
-- [ ] **Phase 2 — Planning** (`create_submission_plan`):
+- [x] **Phase 2 — Planning** (`create_submission_plan`):
   - Check GitHub for existing PRs for each bookmark
   - Determine which bookmarks need pushing
   - Determine which PRs need creation
   - Determine which PR bases need updating
   - Report the plan to the user
-- [ ] **Phase 3 — Execution** (`execute_submission_plan`):
+- [x] **Phase 3 — Execution** (`execute_submission_plan`):
   - Push bookmarks via `jj git push`
   - Update PR bases
   - Create new PRs (bottom to top)
   - Create/update stack comments on all PRs
-- [ ] `jack submit <bookmark>` — full end-to-end submission
-- [ ] `--dry-run` flag — show plan without executing
-- [ ] `--remote` flag — specify which remote to push to (default: `origin`)
-- [ ] Progress output during execution (indicatif)
+- [x] `jack submit <bookmark>` — full end-to-end submission
+- [x] `--dry-run` flag — show plan without executing
+- [x] `--remote` flag — specify which remote to push to (default: `origin`)
+- [x] Progress output during execution (indicatif)
 
 **Done when**: Can run `jack submit my-bookmark` and have it push, create PRs,
 set correct bases, and add stack comments — matching jj-stack's behavior.
@@ -173,6 +173,11 @@ a bookmark to submit.
 
 ## Milestone 7: Polish & Quality of Life
 
+- [ ] Concurrent PR creation and concurrent comment updates during Phase 3
+  (use `join_all` / `FuturesUnordered` where ordering doesn't matter)
+- [ ] Progress output during Phase 1 & 2 (there's a noticeable pause before
+  the plan is printed — investigate whether it's graph building, forge queries,
+  or auth resolution, and add spinner/status updates to stderr)
 - [ ] Parallel GitHub API calls where dependencies allow (check existing PRs
   concurrently)
 - [ ] `--draft` flag for creating PRs as drafts
