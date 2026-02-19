@@ -157,22 +157,10 @@ set correct bases, and add stack comments — matching jj-stack's behavior.
 
 ---
 
-## Milestone 6: Interactive Mode
+## Milestone 6: Polish & Quality of Life
 
-Default behavior when `jack` is run with no arguments.
-
-- [ ] Build change graph and display stacks as ASCII tree
-- [ ] Interactive bookmark selection using `inquire`
-- [ ] After selection, run the three-phase submission for that bookmark
-- [ ] Handle the case where multiple bookmarks point to the same change
-
-**Done when**: Running `jack` with no args shows stacks and lets the user pick
-a bookmark to submit.
-
----
-
-## Milestone 7: Polish & Quality of Life
-
+- [ ] Write a comprehensive README (project overview, installation, usage
+  examples, how stacking works, comparison with alternatives)
 - [ ] Concurrent PR creation and concurrent comment updates during Phase 3
   (use `join_all` / `FuturesUnordered` where ordering doesn't matter)
 - [ ] Progress output during Phase 1 & 2 (there's a noticeable pause before
@@ -186,7 +174,22 @@ a bookmark to submit.
 - [ ] Better error messages with miette diagnostics
 - [ ] Handle non-user bookmarks gracefully (filter, don't crash)
 
-**Done when**: All known jj-stack issues are addressed in jack.
+**Done when**: README is polished and publishable, all known jj-stack issues
+are addressed in jack.
+
+---
+
+## Milestone 7: Interactive Mode
+
+Default behavior when `jack` is run with no arguments.
+
+- [ ] Build change graph and display stacks as ASCII tree
+- [ ] Interactive bookmark selection using `inquire`
+- [ ] After selection, run the three-phase submission for that bookmark
+- [ ] Handle the case where multiple bookmarks point to the same change
+
+**Done when**: Running `jack` with no args shows stacks and lets the user pick
+a bookmark to submit.
 
 ---
 
@@ -194,7 +197,8 @@ a bookmark to submit.
 
 - [ ] GitHub Enterprise support (configurable API base URL in forge config)
 - [ ] Fork workflow (push to fork remote, create PR against upstream)
-- [ ] Stack comments showing PR titles instead of bookmark names
+- [ ] Stack comments showing PR titles instead of bookmark names (low priority
+  — GitHub already renders PR links nicely in comments)
 - [ ] Config file support (`.jack.toml` or similar) for per-repo settings:
   - Default remote
   - Default branch override
