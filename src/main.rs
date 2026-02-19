@@ -199,7 +199,9 @@ async fn show_status() -> Result<(), JackError> {
                 let desc = segment
                     .commits
                     .first()
-                    .map(|c| c.description.trim())
+                    .and_then(|c| c.description.lines().next())
+                    .map(|l| l.trim())
+                    .filter(|l| !l.is_empty())
                     .unwrap_or("(no description)");
                 println!("    {names} ({commit_count} commit(s)): {desc}");
             }
