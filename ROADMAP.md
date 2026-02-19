@@ -88,14 +88,14 @@ stacks and can print them.
 
 ## Milestone 3: GitHub Authentication
 
-- [ ] Resolve auth token in order:
+- [x] Resolve auth token in order:
   1. `gh auth token` (shell out to gh CLI)
   2. `GITHUB_TOKEN` env var
   3. `GH_TOKEN` env var
-- [ ] Validate token via GitHub API (octocrab)
-- [ ] `jack auth test` — prints success/failure with username
-- [ ] `jack auth help` — prints setup instructions
-- [ ] Clear error messages when auth fails
+- [x] Validate token via GitHub API (octocrab)
+- [x] `jack auth test` — prints success/failure with username
+- [x] `jack auth setup` — prints setup instructions
+- [x] Clear error messages when auth fails
 
 **Done when**: `jack auth test` reports the authenticated GitHub user.
 
@@ -105,7 +105,7 @@ stacks and can print them.
 
 Design a trait abstraction so the core logic is forge-agnostic.
 
-- [ ] Define `Forge` trait:
+- [x] Define `Forge` trait:
   ```rust
   trait Forge {
       async fn get_authenticated_user(&self) -> Result<String>;
@@ -118,12 +118,11 @@ Design a trait abstraction so the core logic is forge-agnostic.
       async fn get_repo_default_branch(&self) -> Result<String>;
   }
   ```
-- [ ] Implement `GitHubForge` using octocrab
-- [ ] Stack comment formatting with base64-encoded metadata (compatible with
-  jj-stack's format for migration)
-- [ ] PR existence checking
-- [ ] PR creation with title + body
-- [ ] PR base branch updates
+- [x] Implement `GitHubForge` using octocrab
+- [x] Stack comment formatting with base64-encoded metadata
+- [x] PR existence checking
+- [x] PR creation with title + body
+- [x] PR base branch updates
 
 **Done when**: Can create a PR on GitHub from jack, with a stack comment.
 

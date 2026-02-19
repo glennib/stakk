@@ -158,7 +158,6 @@ impl<R: JjRunner> Jj<R> {
     }
 
     /// Push a bookmark to a remote.
-    #[expect(dead_code, reason = "will be used in submit milestone")]
     pub async fn push_bookmark(&self, bookmark: &str, remote: &str) -> Result<(), JjError> {
         self.runner
             .run_jj(&[

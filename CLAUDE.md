@@ -27,10 +27,19 @@ for milestones.
   `BookmarkSegment`, `BranchStack` types, `build_change_graph()` with
   paginated traversal, merge-commit tainting, `topological_sort()`,
   14 unit/integration tests, CLI displays stacks.
+- **Milestone 3 (GitHub Authentication)**: Complete — `auth::resolve_token()`
+  with priority cascade (gh CLI → GITHUB_TOKEN → GH_TOKEN), `jack auth test`
+  validates token and prints username, `jack auth setup` prints instructions,
+  4 unit tests.
+- **Milestone 4 (Forge Trait & GitHub Implementation)**: Complete — `Forge`
+  trait with 8 async methods, `GitHubForge` implementation using octocrab,
+  stack comment formatting with base64-encoded metadata, minimal `jack submit`
+  wiring (pushes bookmarks, creates/finds PRs, adds stack comments),
+  11 comment formatting tests, 62 total tests.
 
 ## Testing
 
-- **Unit/integration tests**: `cargo nextest run --all-targets` (47 tests).
+- **Unit/integration tests**: `cargo nextest run --all-targets` (62 tests).
 - **Manual testing repo**: `../jack-testing/` (github.com/glennib/jack-testing).
   A jj repo with pre-built bookmark stacks for end-to-end verification.
   Run jack from within that directory to test against real jj output.
@@ -78,14 +87,25 @@ usable. Don't gold-plate early milestones with features from later ones.
 Capture real `jj` and GitHub API output as test fixtures. Tests should run
 without a live jj repo or GitHub access. This makes CI fast and deterministic.
 
+### 8. No jj-stack compatibility
+
+jj-stack compatibility is explicitly a non-goal. jack uses its own comment
+metadata format (`JACK_STACK` prefix), its own serde field naming (snake_case),
+and its own comment footer. Do not reference jj-stack's format, data
+structures, or conventions in code or documentation.
+
 ## Architecture
 
 ```
 src/
 ├── main.rs          # CLI entry point (clap)
+├── auth.rs          # GitHub token resolution (gh CLI, env vars)
 ├── cli/             # clap subcommand definitions
 ├── jj/              # jj CLI interface — all VCS ops go here
 ├── forge/           # Forge trait + GitHub implementation (octocrab)
+│   ├── mod.rs       # Forge trait, forge-agnostic types, ForgeError
+│   ├── github.rs    # GitHubForge implementation
+│   └── comment.rs   # Stack comment formatting and parsing
 ├── graph/           # Change graph construction (ChangeGraph, BookmarkSegment, BranchStack)
 ├── submit/          # Three-phase submission (analyze → plan → execute)
 └── error.rs         # Error types (thiserror)
@@ -101,10 +121,12 @@ There is intentionally no `git/` module.
 | `serde` + `serde_json` | Parse jj JSON output, GitHub API responses |
 | `tokio` | Async runtime (required by octocrab) |
 | `octocrab` | GitHub API client |
+| `base64` | Stack comment metadata encoding |
+| `http` | HTTP status codes for error mapping |
 | `thiserror` | Error type definitions |
 | `anyhow` | Error propagation with context |
-| `inquire` | Interactive bookmark selection |
-| `indicatif` | Progress bars/spinners |
+| `inquire` | Interactive bookmark selection (later milestone) |
+| `indicatif` | Progress bars/spinners (later milestone) |
 | `miette` | User-facing error diagnostics (later milestone) |
 
 ## Conventions
@@ -195,6 +217,22 @@ made during implementation here.)
 - Graph traversal uses `"trunk()"` as the revset base (not the branch name
   like `"main"`). This lets jj resolve the trunk commit automatically
   regardless of what the default branch is called.
+- The `Forge` trait uses `impl Future` in trait (edition 2024), same as
+  `JjRunner`. No `async_trait` dependency needed.
+- octocrab treats PR comments as issue comments — use `issues().list_comments()`
+  and `issues().create_comment()` for PR comment operations.
+- octocrab's `pulls().create()` returns a builder that borrows the pulls
+  handler. Bind the handler to a variable (`let pulls = ...`) before calling
+  `.create()` to avoid temporary lifetime issues.
+- `CommentId` in octocrab is a newtype around `u64`. Use `CommentId::from(id)`
+  and `.into_inner()` to convert.
+- `resolve_token()` does NOT validate the token. Validation happens separately
+  via `Forge::get_authenticated_user()`. This keeps resolution fast (no
+  network call) and testable.
+- `try_gh_cli()` returns `Ok(None)` for "gh not installed" and "gh not
+  authenticated" — both are expected fallthrough cases, not errors.
+- Stack comment metadata uses `JACK_STACK` prefix (not jj-stack's prefix).
+  jj-stack compatibility is not a goal.
 
 ## Decisions Log
 
@@ -216,3 +254,16 @@ rationale.)
 - **2026-02-19**: NDJSON templates over array-based JSON — simpler parsing
   (line-by-line), natural pagination boundary, no need to accumulate large
   JSON arrays in memory.
+- **2026-02-19**: `Forge` trait uses `impl Future` in trait, same pattern
+  as `JjRunner` — zero-cost dispatch, no `async_trait` crate needed.
+- **2026-02-19**: `auth::resolve_token()` as standalone function, not a
+  struct — no state to carry, matches "boring solutions" principle.
+- **2026-02-19**: `GitHubForge::new()` creates the octocrab client
+  internally — caller provides token + owner/repo, not an octocrab instance.
+- **2026-02-19**: Forge-agnostic types (`PullRequest`, `Comment`,
+  `CreatePrParams`) in `forge/mod.rs` alongside the trait — `GitHubForge`
+  maps between octocrab types and these.
+- **2026-02-19**: jj-stack compatibility is explicitly a non-goal. jack uses
+  its own `JACK_STACK` comment prefix and snake_case serde fields.
+- **2026-02-19**: Minimal `submit_bookmark()` wiring in main.rs for M4 —
+  temporary scaffolding replaced by full three-phase submission in M5.
