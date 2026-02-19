@@ -1,0 +1,5 @@
+[workspace]
+# release only when merging release pr
+release_always = false
+# cargo-dist (release.yml) will publish it
+git_release_draft = true

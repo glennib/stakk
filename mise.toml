@@ -1,6 +1,9 @@
 [tools]
+cargo-binstall = "latest"
+"cargo:cargo-dist" = "latest"
 "cargo:cargo-edit" = "latest"
 "cargo:cargo-nextest" = "latest"
+"cargo:release-plz" = "latest"
 
 [tasks.fmt]
 description = "Format code"
@@ -26,6 +29,10 @@ run = "cargo clippy --all-targets --all-features -- -D warnings"
 description = "Run tests"
 run = "cargo nextest run --all-targets --no-tests=pass"
 
+[tasks.build]
+description = "Build release binary"
+run = "cargo build --release"
+
 [tasks.ci]
 description = "Run all CI checks"
-depends = ["fmt:check", "clippy", "test"]
+depends = ["fmt:check", "clippy", "test", "build"]

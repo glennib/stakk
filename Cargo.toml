@@ -2,6 +2,14 @@
 name = "jack"
 version = "0.1.0"
 edition = "2024"
+repository = "https://github.com/glennib/jack"
+description = "A CLI tool that bridges Jujutsu (jj) bookmarks to GitHub stacked pull requests"
+license = "MIT OR Apache-2.0"
+authors = ["Glenn Bitar <glennbitar@gmail.com>"]
+
+[[bin]]
+name = "jack"
+path = "src/main.rs"
 
 [dependencies]
 base64 = "0.22.1"
@@ -15,3 +23,10 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "process"] }
+
+# The profile that 'dist' will build with
+[profile.dist]
+inherits = "release"
+strip = true
+lto = "fat"
+codegen-units = 1
