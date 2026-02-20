@@ -61,7 +61,7 @@ for milestones.
 
 ## Testing
 
-- **Unit/integration tests**: `cargo nextest run --all-targets` (98 tests).
+- **Unit/integration tests**: `cargo nextest run --all-targets` (100 tests).
 - **Manual testing repo**: `../jack-testing/` (github.com/glennib/jack-testing).
   A jj repo with pre-built bookmark stacks for end-to-end verification.
   Run stakk from within that directory to test against real jj output.

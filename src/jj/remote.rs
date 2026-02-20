@@ -17,13 +17,19 @@ impl std::fmt::Display for GitHubRepo {
 ///
 /// Supports:
 /// - HTTPS: `https://github.com/owner/repo.git`
-/// - SSH: `git@github.com:owner/repo.git`
+/// - SSH (SCP-style): `git@github.com:owner/repo.git`
+/// - SSH (canonical): `ssh://git@github.com/owner/repo.git`
 /// - With or without `.git` suffix
 ///
 /// Returns `None` for non-GitHub URLs.
 pub fn parse_github_url(url: &str) -> Option<GitHubRepo> {
-    // SSH format: git@github.com:owner/repo.git
+    // SSH SCP-style format: git@github.com:owner/repo.git
     if let Some(path) = url.strip_prefix("git@github.com:") {
+        return parse_owner_repo(path);
+    }
+
+    // SSH canonical format: ssh://git@github.com/owner/repo.git
+    if let Some(path) = url.strip_prefix("ssh://git@github.com/") {
         return parse_owner_repo(path);
     }
 
@@ -144,6 +150,38 @@ mod tests {
     fn extra_path_segments() {
         assert_eq!(
             parse_github_url("https://github.com/owner/repo/extra"),
+            None
+        );
+    }
+
+    #[test]
+    fn ssh_canonical_with_git_suffix() {
+        let result = parse_github_url("ssh://git@github.com/glennib/stakk.git");
+        assert_eq!(
+            result,
+            Some(GitHubRepo {
+                owner: "glennib".into(),
+                repo: "stakk".into(),
+            })
+        );
+    }
+
+    #[test]
+    fn ssh_canonical_without_git_suffix() {
+        let result = parse_github_url("ssh://git@github.com/glennib/stakk");
+        assert_eq!(
+            result,
+            Some(GitHubRepo {
+                owner: "glennib".into(),
+                repo: "stakk".into(),
+            })
+        );
+    }
+
+    #[test]
+    fn non_github_ssh_canonical() {
+        assert_eq!(
+            parse_github_url("ssh://git@gitlab.com/owner/repo.git"),
             None
         );
     }
