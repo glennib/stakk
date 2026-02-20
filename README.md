@@ -91,6 +91,8 @@ stakk submit my-feature --draft
 stakk show
 ```
 
+![Interactive stakk submission flow](media/stakk.gif)
+
 ## How stacking works
 
 In jj, you create bookmarks that point at changes. When bookmarks form a
@@ -119,18 +121,10 @@ The result on GitHub:
 - `feat-api` → PR targeting `feat-auth`
 - `feat-ui` → PR targeting `feat-api`
 
-Each PR shows only its own diff, and a stack comment links all related PRs
-together:
+Each PR shows only its own diff, and a stack comment on every PR links all related
+PRs together:
 
-```
-### Stack (3 bookmarks, base: main)
-
-1. https://github.com/you/repo/pull/1
-2. https://github.com/you/repo/pull/2
-3. **https://github.com/you/repo/pull/3 ← this PR**
-```
-
-![Stack comment on a GitHub PR](media/pr-comment.png)
+![Stack comment example on a GitHub PR](media/pr-comment.png)
 
 Re-running `stakk submit` is always safe — it updates existing PRs rather
 than creating duplicates.
@@ -142,8 +136,6 @@ than creating duplicates.
 Launches the interactive submission flow with a two-stage prompt: pick a stack,
 then choose how far up the stack to submit. This is equivalent to `stakk submit`
 without arguments.
-
-![Interactive stakk submission](media/stakk.gif)
 
 ### `stakk submit [bookmark]`
 
