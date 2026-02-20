@@ -8,6 +8,26 @@ and turning it into a coherent set of GitHub PRs that merge into each other in
 the correct order — with stack-awareness comments, correct base branches, and
 idempotent updates.
 
+## Features
+
+- **Automatic stack detection** — analyzes the jj change graph to find bookmark
+  chains and their topological order.
+- **Stacked PR submission** — creates or updates GitHub PRs with correct base
+  branches so each PR shows only its own diff.
+- **Stack-awareness comments** — adds a comment to every PR listing the full
+  stack with links, updated in place on re-runs.
+- **Idempotent** — re-running `stakk submit` is always safe. Existing PRs are
+  updated, never duplicated.
+- **Dry-run mode** — `--dry-run` shows exactly what would happen without
+  touching GitHub.
+- **Draft PRs** — `--draft` creates new PRs as drafts.
+- **PR body from descriptions** — PR titles and bodies are populated from jj
+  change descriptions. Manually edited PR bodies are never overwritten.
+- **No direct git usage** — all VCS operations go through `jj` commands, so
+  workspaces and non-colocated repos work automatically.
+- **Forge-agnostic core** — GitHub is the first implementation, but the
+  submission logic is decoupled behind a `Forge` trait.
+
 ## Origins
 
 stakk is inspired by [jj-stack](https://github.com/keanemind/jj-stack), a
@@ -15,10 +35,8 @@ TypeScript/ReScript CLI that does the same job. jj-stack's core algorithms —
 change graph construction, segment grouping, topological ordering — directly
 informed stakk's design.
 
-stakk reimplements these ideas in Rust to address architectural limitations
-that made certain improvements difficult in jj-stack: workspace and
-non-colocated repo support, concurrent API calls, draft PRs, PR bodies from
-commit descriptions, and structured error diagnostics.
+stakk reimplements these ideas in Rust to continue the development of these
+ideas, as well as to address new features and desired changes.
 
 ## Installation
 
