@@ -3,6 +3,7 @@ pub mod submit;
 
 use clap::Parser;
 use clap::Subcommand;
+use clap_complete::Shell;
 
 use crate::cli::auth::AuthArgs;
 use crate::cli::submit::SubmitArgs;
@@ -24,4 +25,9 @@ pub enum Commands {
     Auth(AuthArgs),
     /// Show repository status and bookmark stacks.
     Show,
+    /// Generate shell completions for the given shell.
+    Completions {
+        /// The shell to generate completions for.
+        shell: Shell,
+    },
 }

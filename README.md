@@ -193,6 +193,22 @@ Stacks (3 found):
     feature-tests (1 commit(s)): test: add integration tests
 ```
 
+### `stakk completions <shell>`
+
+Generate shell completions. Supported shells: `bash`, `zsh`, `fish`, `elvish`,
+`powershell`.
+
+```
+# Zsh — add to your fpath
+stakk completions zsh > ~/.zfunc/_stakk
+
+# Bash
+stakk completions bash > ~/.local/share/bash-completion/completions/stakk
+
+# Fish
+stakk completions fish > ~/.config/fish/completions/stakk.fish
+```
+
 ### `stakk auth test`
 
 Validate that GitHub authentication is working and print the authenticated

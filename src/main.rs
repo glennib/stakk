@@ -7,6 +7,7 @@ mod jj;
 mod select;
 mod submit;
 
+use clap::CommandFactory;
 use clap::Parser;
 
 use crate::cli::Cli;
@@ -44,6 +45,9 @@ async fn run() -> Result<(), StakkError> {
         },
         Some(Commands::Show) => {
             show_status().await?;
+        }
+        Some(Commands::Completions { shell }) => {
+            clap_complete::generate(shell, &mut Cli::command(), "stakk", &mut std::io::stdout());
         }
         None => {
             submit_bookmark(&SubmitArgs::default()).await?;
