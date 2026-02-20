@@ -18,6 +18,7 @@ use crate::forge::Forge;
 use crate::jj::Jj;
 use crate::jj::remote::parse_github_url;
 use crate::jj::runner::RealJjRunner;
+use crate::select::collect_stack_choices;
 
 #[tokio::main]
 async fn main() {
@@ -207,21 +208,10 @@ async fn show_status() -> Result<(), StakkError> {
     if change_graph.stacks.is_empty() {
         println!("\nNo bookmark stacks found.");
     } else {
-        println!("\nStacks ({} found):", change_graph.stacks.len());
-        for (i, stack) in change_graph.stacks.iter().enumerate() {
-            println!("  Stack {}:", i + 1);
-            for segment in &stack.segments {
-                let names = segment.bookmark_names.join(", ");
-                let commit_count = segment.commits.len();
-                let desc = segment
-                    .commits
-                    .first()
-                    .and_then(|c| c.description.lines().next())
-                    .map(|l| l.trim())
-                    .filter(|l| !l.is_empty())
-                    .unwrap_or("(no description)");
-                println!("    {names} ({commit_count} commit(s)): {desc}");
-            }
+        let choices = collect_stack_choices(&change_graph);
+        println!("\nStacks ({} found):", choices.len());
+        for choice in &choices {
+            println!("  {choice}");
         }
 
         if change_graph.excluded_bookmark_count > 0 {
