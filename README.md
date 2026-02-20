@@ -75,11 +75,8 @@ Download from the [latest release](https://github.com/glennib/stakk/releases/lat
 ## Quick start
 
 ```
-# See your bookmark stacks
-stakk
-
 # Submit interactively — pick a stack and bookmark from a menu
-stakk submit
+stakk
 
 # Submit a specific bookmark (and its ancestors) as stacked PRs
 stakk submit my-feature
@@ -89,6 +86,9 @@ stakk submit my-feature --dry-run
 
 # Create PRs as drafts
 stakk submit my-feature --draft
+
+# See your bookmark stacks without submitting
+stakk show
 ```
 
 ## How stacking works
@@ -137,27 +137,15 @@ than creating duplicates.
 
 ### `stakk` (no arguments)
 
-Shows repository status: default branch, remotes, and all bookmark stacks
-with their commit summaries.
-
-```
-Default branch: main
-Remote: origin git@github.com:you/repo.git (you/repo)
-
-Stacks (2 found):
-  Stack 1:
-    feat-auth (1 commit(s)): add authentication layer
-    feat-api (2 commit(s)): implement API endpoints
-  Stack 2:
-    fix-typo (1 commit(s)): fix typo in README
-```
+Launches the interactive submission flow with a two-stage prompt: pick a stack,
+then choose how far up the stack to submit. This is equivalent to `stakk submit`
+without arguments.
 
 ### `stakk submit [bookmark]`
 
-Submit a bookmark and all its ancestors as stacked PRs.
-
-When run without a bookmark argument, an interactive two-stage prompt lets
-you pick a stack and then choose how far up the stack to submit:
+Submit a bookmark and all its ancestors as stacked PRs. When run without a
+bookmark argument, an interactive two-stage prompt lets you pick a stack and
+then choose how far up the stack to submit:
 
 ```
 ? Which stack?
@@ -187,6 +175,27 @@ are populated from the full description (everything after the title line).
 For segments with multiple commits, descriptions are joined with `---`
 separators. Bodies are only set on PR creation — manually edited PR bodies
 are never overwritten.
+
+### `stakk show`
+
+Display repository status and all bookmark stacks without submitting.
+
+Shows the default branch, remotes, and all bookmark stacks with their commit
+summaries and PR counts:
+
+```
+Default branch: main
+Remote: origin git@github.com:you/repo.git (you/repo)
+
+Stacks (3 found):
+  Stack 1:
+    feature-auth (1 commit(s)): feat: add authentication
+    feature-api (2 commit(s)): feat: add API endpoints
+  Stack 2:
+    feature-ui (1 commit(s)): feat: add UI layer
+  Stack 3:
+    feature-tests (1 commit(s)): test: add integration tests
+```
 
 ### `stakk auth test`
 
