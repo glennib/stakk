@@ -32,6 +32,8 @@ idempotent updates.
 - **Forge-agnostic core** — GitHub is the first implementation, but the
   submission logic is decoupled behind a `Forge` trait.
 
+![Interactive stakk submission flow](media/stakk.gif)
+
 ## Origins
 
 stakk is inspired by [jj-stack](https://github.com/keanemind/jj-stack), a
@@ -90,8 +92,6 @@ stakk submit my-feature --draft
 # See your bookmark stacks without submitting
 stakk show
 ```
-
-![Interactive stakk submission flow](media/stakk.gif)
 
 ## How stacking works
 
