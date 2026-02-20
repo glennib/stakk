@@ -130,6 +130,8 @@ together:
 3. **https://github.com/you/repo/pull/3 ← this PR**
 ```
 
+![Stack comment on a GitHub PR](media/pr-comment.png)
+
 Re-running `stakk submit` is always safe — it updates existing PRs rather
 than creating duplicates.
 
@@ -140,6 +142,8 @@ than creating duplicates.
 Launches the interactive submission flow with a two-stage prompt: pick a stack,
 then choose how far up the stack to submit. This is equivalent to `stakk submit`
 without arguments.
+
+![Interactive stakk submission](media/stakk.gif)
 
 ### `stakk submit [bookmark]`
 
