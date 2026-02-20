@@ -54,10 +54,10 @@ for milestones.
   title for single-PR stacks), stage 2 picks a bookmark within that stack
   (leaf-first, with position labels, commit summaries listed per bookmark, and
   `→ N PRs` indicating how many PRs each selection generates). Stages are
-  skipped when only one option exists. Auto-selects when only one bookmark
-  exists (showing commit title). `--dry-run` prints a prominent header.
-  `stakk show` subcommand extracted (default when no subcommand given).
-  98 total tests.
+  skipped when only one option exists. Single-bookmark case shows
+  `inquire::Confirm` prompt instead of auto-submitting. `--dry-run` prints a
+  prominent header. `stakk show` subcommand available. Default command (no
+  subcommand) is interactive submit. 97 total tests.
 
 ## Testing
 
@@ -172,6 +172,7 @@ There is intentionally no `git/` module.
 - Run `mise run fmt:nightly` (or `cargo +nightly fmt --all`) for full
   formatting locally. CI uses stable `fmt:check` which silently ignores
   nightly-only options.
+- **Always run `cargo +nightly fmt --all` before committing.**
 - If `mise` tools are missing from PATH after installation, run
   `mise install` to refresh.
 
@@ -386,3 +387,9 @@ rationale.)
 - **2026-02-20**: `inquire` with `default-features = false, features = ["console"]`
   — reuses stakk's existing `console = "0.16"` dependency (shared with
   `indicatif`). Avoids pulling in `crossterm` backend.
+- **2026-02-20**: Single-bookmark case uses `inquire::Confirm` instead of
+  auto-submitting — prevents accidental submission when running `stakk`
+  with no arguments.
+- **2026-02-20**: Default command changed from `show` to `submit` — running
+  `stakk` without a subcommand now launches interactive submit. `stakk show`
+  remains available as an explicit subcommand.

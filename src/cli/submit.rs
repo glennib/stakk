@@ -19,3 +19,14 @@ pub struct SubmitArgs {
     #[arg(long, default_value = "origin")]
     pub remote: String,
 }
+
+impl Default for SubmitArgs {
+    fn default() -> Self {
+        Self {
+            bookmark: None,
+            dry_run: false,
+            draft: false,
+            remote: "origin".to_string(),
+        }
+    }
+}

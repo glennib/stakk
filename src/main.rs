@@ -42,8 +42,11 @@ async fn run() -> Result<(), StakkError> {
                 auth_setup();
             }
         },
-        Some(Commands::Show) | None => {
+        Some(Commands::Show) => {
             show_status().await?;
+        }
+        None => {
+            submit_bookmark(&SubmitArgs::default()).await?;
         }
     }
 
