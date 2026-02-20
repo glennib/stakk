@@ -57,6 +57,8 @@ for milestones.
   skipped when only one option exists. Auto-selects when only one bookmark
   exists (showing commit title). `--dry-run` prints a prominent header.
   `stakk show` subcommand extracted (default when no subcommand given).
+  `show_status()` reuses `collect_stack_choices()` / `StackChoice::Display`
+  for consistent `○ ←` chain formatting across both `show` and `submit`.
   98 total tests.
 
 ## Testing
@@ -302,6 +304,10 @@ made during implementation here.)
   auto-select when one bookmark across all stacks.
 - Shared-ancestor detection via pre-pass: build `HashMap<change_id, Vec<stack_index>>`,
   then annotate each stack's shared segments with the leaf names of other stacks.
+- `show_status()` reuses `collect_stack_choices()` + `StackChoice::Display`
+  from `select.rs` — keeps stack formatting consistent between `stakk show`
+  and `stakk submit` interactive mode. No per-segment detail lines; the
+  compact `○ ←` chain header is sufficient for the show view.
 
 ## Decisions Log
 
@@ -386,3 +392,8 @@ rationale.)
 - **2026-02-20**: `inquire` with `default-features = false, features = ["console"]`
   — reuses stakk's existing `console = "0.16"` dependency (shared with
   `indicatif`). Avoids pulling in `crossterm` backend.
+- **2026-02-20**: `show_status()` reuses `collect_stack_choices()` +
+  `StackChoice::Display` — unified formatting between `stakk show` and
+  `stakk submit` interactive mode. Per-segment detail lines dropped from
+  `show`; the `○ ←` chain header with PR count and shared-ancestor
+  annotations is sufficient.
