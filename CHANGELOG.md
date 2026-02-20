@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1](https://github.com/glennib/stakk/compare/v0.2.0...v0.2.1) - 2026-02-20
+
+### Added
+
+- add shell completions subcommand and version output
+- enable vim mode (j/k navigation) and disable filtering in interactive selection
+- add help message to stage 1 of interactive bookmark selection
+- support canonical SSH URLs (ssh://git@github.com/...) in remote parsing
+
+### Other
+
+- move gif to right after Features section for better visibility
+- improve README layout — move gif to Quick Start, replace textual comment example with screenshot
+- add interactive gif and PR comment screenshot to README
+- update README to reflect submit as default command
+
 ## [0.2.0](https://github.com/glennib/stakk/compare/v0.1.1...v0.2.0) - 2026-02-20
 
 ### Added
