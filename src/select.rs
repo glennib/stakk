@@ -10,7 +10,8 @@ use std::io;
 use inquire::InquireError;
 
 use crate::error::StakkError;
-use crate::graph::types::{BranchStack, ChangeGraph};
+use crate::graph::types::BranchStack;
+use crate::graph::types::ChangeGraph;
 
 /// Stage 1 item: a stack shown as a single line.
 #[derive(Debug, Clone)]
@@ -142,8 +143,7 @@ pub fn collect_stack_choices(graph: &ChangeGraph) -> Vec<StackChoice> {
                 })
                 .collect();
 
-            let commit_count: usize =
-                stack.segments.iter().map(|s| s.commits.len()).sum();
+            let commit_count: usize = stack.segments.iter().map(|s| s.commits.len()).sum();
 
             // Detect shared segments.
             let mut shared_with: Vec<(String, Vec<String>)> = Vec::new();
@@ -236,8 +236,9 @@ pub fn collect_bookmark_choices(stack: &BranchStack) -> Vec<BookmarkChoice> {
 fn map_inquire_error(err: InquireError) -> StakkError {
     match err {
         InquireError::NotTTY => StakkError::NotInteractive,
-        InquireError::OperationCanceled
-        | InquireError::OperationInterrupted => StakkError::PromptCancelled,
+        InquireError::OperationCanceled | InquireError::OperationInterrupted => {
+            StakkError::PromptCancelled
+        }
         InquireError::IO(e) => StakkError::Io(e),
         other => StakkError::Io(io::Error::other(other.to_string())),
     }
@@ -252,18 +253,11 @@ fn select_stack(choices: Vec<StackChoice>) -> Result<usize, StakkError> {
 }
 
 /// Show inquire bookmark selector, returning the chosen bookmark name.
-fn select_bookmark_in_stack(
-    choices: Vec<BookmarkChoice>,
-) -> Result<String, StakkError> {
-    let result = inquire::Select::new(
-        "Submit up to which bookmark?",
-        choices,
-    )
-    .with_help_message(
-        "All bookmarks from base up to your selection will be submitted",
-    )
-    .prompt()
-    .map_err(map_inquire_error)?;
+fn select_bookmark_in_stack(choices: Vec<BookmarkChoice>) -> Result<String, StakkError> {
+    let result = inquire::Select::new("Submit up to which bookmark?", choices)
+        .with_help_message("All bookmarks from base up to your selection will be submitted")
+        .prompt()
+        .map_err(map_inquire_error)?;
     Ok(result.bookmark_name)
 }
 
@@ -277,17 +271,14 @@ fn select_bookmark_in_stack(
 ///
 /// Returns `StakkError::NotInteractive` if stdin is not a terminal.
 /// Returns `StakkError::PromptCancelled` if the user presses Escape.
-pub fn resolve_bookmark_interactively(
-    graph: &ChangeGraph,
-) -> Result<Option<String>, StakkError> {
+pub fn resolve_bookmark_interactively(graph: &ChangeGraph) -> Result<Option<String>, StakkError> {
     if graph.stacks.is_empty() {
         eprintln!("No bookmark stacks found.");
         return Ok(None);
     }
 
     // Count total bookmarks across all stacks.
-    let total_bookmarks: usize =
-        graph.stacks.iter().map(|s| s.segments.len()).sum();
+    let total_bookmarks: usize = graph.stacks.iter().map(|s| s.segments.len()).sum();
 
     if total_bookmarks == 1 {
         let segment = &graph.stacks[0].segments[0];
@@ -341,11 +332,14 @@ pub fn resolve_bookmark_interactively(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+    use std::collections::HashSet;
+
     use super::*;
-    use crate::graph::types::{
-        BookmarkSegment, BranchStack, ChangeGraph, SegmentCommit,
-    };
-    use std::collections::{HashMap, HashSet};
+    use crate::graph::types::BookmarkSegment;
+    use crate::graph::types::BranchStack;
+    use crate::graph::types::ChangeGraph;
+    use crate::graph::types::SegmentCommit;
 
     fn make_graph(stacks: Vec<BranchStack>) -> ChangeGraph {
         ChangeGraph {
@@ -359,11 +353,7 @@ mod tests {
         }
     }
 
-    fn make_segment(
-        names: &[&str],
-        change_id: &str,
-        descriptions: &[&str],
-    ) -> BookmarkSegment {
+    fn make_segment(names: &[&str], change_id: &str, descriptions: &[&str]) -> BookmarkSegment {
         BookmarkSegment {
             bookmark_names: names.iter().map(|s| s.to_string()).collect(),
             change_id: change_id.to_string(),
@@ -416,11 +406,7 @@ mod tests {
                 ],
             },
             BranchStack {
-                segments: vec![make_segment(
-                    &["gamma"],
-                    "ch_gamma",
-                    &["gamma"],
-                )],
+                segments: vec![make_segment(&["gamma"], "ch_gamma", &["gamma"])],
             },
         ]);
 
@@ -444,16 +430,8 @@ mod tests {
             },
             BranchStack {
                 segments: vec![
-                    make_segment(
-                        &["base"],
-                        "ch_shared",
-                        &["shared base"],
-                    ),
-                    make_segment(
-                        &["other-leaf"],
-                        "ch_c",
-                        &["other leaf"],
-                    ),
+                    make_segment(&["base"], "ch_shared", &["shared base"]),
+                    make_segment(&["other-leaf"], "ch_c", &["other leaf"]),
                 ],
             },
         ]);
@@ -482,17 +460,15 @@ mod tests {
                 "feat-c".to_string(),
             ],
             commit_count: 5,
-            shared_with: vec![(
-                "base".to_string(),
-                vec!["other-leaf".to_string()],
-            )],
+            shared_with: vec![("base".to_string(), vec!["other-leaf".to_string()])],
             leaf_summary: "add caching".to_string(),
         };
 
         let display = format!("{choice}");
         assert_eq!(
             display,
-            "\u{25cb} \u{2190} base \u{2190} feat-b \u{2190} feat-c  (3 PRs)  [base also in other-leaf]"
+            "\u{25cb} \u{2190} base \u{2190} feat-b \u{2190} feat-c  (3 PRs)  [base also in \
+             other-leaf]"
         );
     }
 
@@ -507,7 +483,10 @@ mod tests {
         };
 
         let display = format!("{choice}");
-        assert_eq!(display, "\u{25cb} \u{2190} standalone  (1 PR: fix login bug)");
+        assert_eq!(
+            display,
+            "\u{25cb} \u{2190} standalone  (1 PR: fix login bug)"
+        );
     }
 
     // -- BookmarkChoice tests --
@@ -515,11 +494,7 @@ mod tests {
     #[test]
     fn bookmark_choices_single_segment() {
         let stack = BranchStack {
-            segments: vec![make_segment(
-                &["only-one"],
-                "ch_a",
-                &["the commit"],
-            )],
+            segments: vec![make_segment(&["only-one"], "ch_a", &["the commit"])],
         };
 
         let choices = collect_bookmark_choices(&stack);
@@ -590,10 +565,7 @@ mod tests {
         };
 
         let choices = collect_bookmark_choices(&stack);
-        assert_eq!(
-            choices[0].commit_summaries,
-            vec!["(no description)"]
-        );
+        assert_eq!(choices[0].commit_summaries, vec!["(no description)"]);
 
         let display = format!("{}", choices[0]);
         assert!(display.contains("(no description)"));
@@ -603,18 +575,11 @@ mod tests {
     fn bookmark_choices_display_shows_commits() {
         let stack = BranchStack {
             segments: vec![
-                make_segment(
-                    &["base"],
-                    "ch_a",
-                    &["add user model"],
-                ),
+                make_segment(&["base"], "ch_a", &["add user model"]),
                 make_segment(
                     &["feat"],
                     "ch_b",
-                    &[
-                        "refactor auth module",
-                        "extract token parser",
-                    ],
+                    &["refactor auth module", "extract token parser"],
                 ),
             ],
         };
@@ -624,7 +589,8 @@ mod tests {
         let feat_display = format!("{}", choices[0]);
         assert_eq!(
             feat_display,
-            "feat (leaf, 2 commits) \u{2192} 2 PRs\n    refactor auth module\n    extract token parser"
+            "feat (leaf, 2 commits) \u{2192} 2 PRs\n    refactor auth module\n    extract token \
+             parser"
         );
 
         let base_display = format!("{}", choices[1]);
@@ -646,11 +612,7 @@ mod tests {
     #[test]
     fn resolve_single_bookmark_auto_select() {
         let graph = make_graph(vec![BranchStack {
-            segments: vec![make_segment(
-                &["only-bm"],
-                "ch_a",
-                &["the commit"],
-            )],
+            segments: vec![make_segment(&["only-bm"], "ch_a", &["the commit"])],
         }]);
 
         let result = resolve_bookmark_interactively(&graph).unwrap();
