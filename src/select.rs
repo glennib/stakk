@@ -248,6 +248,8 @@ fn map_inquire_error(err: InquireError) -> StakkError {
 fn select_stack(choices: Vec<StackChoice>) -> Result<usize, StakkError> {
     let result = inquire::Select::new("Which stack would you like to submit?", choices)
         .with_help_message("You will then select a bookmark within this stack")
+        .with_vim_mode(true)
+        .without_filtering()
         .prompt()
         .map_err(map_inquire_error)?;
     Ok(result.stack_index)
@@ -257,6 +259,8 @@ fn select_stack(choices: Vec<StackChoice>) -> Result<usize, StakkError> {
 fn select_bookmark_in_stack(choices: Vec<BookmarkChoice>) -> Result<String, StakkError> {
     let result = inquire::Select::new("Submit up to which bookmark?", choices)
         .with_help_message("All bookmarks from base up to your selection will be submitted")
+        .with_vim_mode(true)
+        .without_filtering()
         .prompt()
         .map_err(map_inquire_error)?;
     Ok(result.bookmark_name)

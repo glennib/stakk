@@ -17,7 +17,8 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum Commands {
-    /// Submit bookmarks as GitHub pull requests.
+    /// Submit bookmarks as GitHub pull requests (default when no command
+    /// given).
     Submit(SubmitArgs),
     /// Manage authentication.
     Auth(AuthArgs),
