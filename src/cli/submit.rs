@@ -3,8 +3,9 @@ use clap::Args;
 /// Arguments for the `submit` subcommand.
 #[derive(Debug, Args)]
 pub struct SubmitArgs {
-    /// The bookmark to submit as a pull request.
-    pub bookmark: String,
+    /// The bookmark to submit as a pull request. If omitted, shows an
+    /// interactive selection.
+    pub bookmark: Option<String>,
 
     /// Show what would be done without actually doing it.
     #[arg(long)]
@@ -17,4 +18,15 @@ pub struct SubmitArgs {
     /// Git remote to push to.
     #[arg(long, default_value = "origin")]
     pub remote: String,
+}
+
+impl Default for SubmitArgs {
+    fn default() -> Self {
+        Self {
+            bookmark: None,
+            dry_run: false,
+            draft: false,
+            remote: "origin".to_string(),
+        }
+    }
 }

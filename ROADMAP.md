@@ -188,17 +188,63 @@ are addressed in stakk.
 
 ## Milestone 7: Interactive Mode
 
-Default behavior when `stakk` is run with no arguments.
+Interactive bookmark selection when `stakk submit` is run without a bookmark
+argument. See [RESEARCH-interactive-selector.md](RESEARCH-interactive-selector.md)
+for full research and trade-off analysis.
 
-- [ ] Build change graph and display stacks as ASCII tree
-- [ ] Colorized output for stack display (bookmark names, commit summaries,
-  PR status indicators, etc.)
-- [ ] Interactive bookmark selection using `inquire`
-- [ ] After selection, run the three-phase submission for that bookmark
-- [ ] Handle the case where multiple bookmarks point to the same change
+### Part 1: Basic interactive selection — DONE
 
-**Done when**: Running `stakk` with no args shows stacks and lets the user pick
-a bookmark to submit.
+- [x] `stakk show` subcommand extracted (default when no subcommand given)
+- [x] `bookmark` argument made optional in `SubmitArgs`
+- [x] `NotInteractive` and `PromptCancelled` error variants
+- [x] `src/select.rs` module with interactive selection
+- [x] Auto-select when only one bookmark exists
+- [x] TTY detection with actionable error message
+
+### Part 2: Two-stage inquire-based selection — DONE
+
+Replaced the custom `console`-based graph renderer (which couldn't handle
+viewport overflow) with a two-stage `inquire::Select` approach. Trades
+graph visualization for built-in pagination, type-to-filter, and much less
+code (~220 lines vs ~400).
+
+- [x] Stage 1: Stack selection with `○ ←` trunk marker, `←`-chained bookmark
+  names, shared-ancestor annotations (`[base also in other-leaf]`), commit
+  title for single-PR stacks. Skipped when only one stack exists.
+- [x] Stage 2: Bookmark selection within a stack, leaf-first order, position
+  labels (leaf/base), commit summaries listed under each bookmark, `→ N PRs`
+  showing how many PRs each selection generates. Skipped when stack has one
+  bookmark.
+- [x] Auto-select with commit title when only one bookmark across all stacks
+- [x] `--dry-run` emphasized with prominent header
+- [x] `inquire` dependency with `console` backend (shares existing `console`
+  dependency, no crossterm)
+- [x] 13 pure-function tests for `collect_stack_choices()`,
+  `collect_bookmark_choices()`, `Display` impls, and edge cases
+
+**Done when**: `stakk submit` (no args) in `../jack-testing/` shows
+paginated, filterable stack/bookmark selection with relationship annotations.
+
+### Part 3: DAG graph rendering — TODO
+
+Replace the linear per-stack display with jj-stack-style column-based
+graph layout showing true branching structure.
+
+**Approach: Column-based layout adapted from jj-stack**
+
+Uses existing `ChangeGraph` fields (`adjacency_list`, `segments`,
+`stack_leaves`). No new dependencies.
+
+- [ ] Topological sort (leaf-to-root, Kahn's algorithm on `stack_leaves`)
+- [ ] Column tracking: `Vec<Option<String>>` of active columns per change
+- [ ] Branching characters: `○` (node), `│` (continuation), `├` (branch),
+  `─╯` (merge converging), `─│` (horizontal crossing vertical)
+- [ ] Show change ID + bookmark name per row (like jj-stack)
+- [ ] Stacks sharing ancestors merge visually in the graph
+- [ ] Tests for column layout (linear, branching, merging)
+
+**Done when**: `stakk submit` (no args) shows a graph matching jj-stack's
+visual style, with branching indentation for stacks that share ancestors.
 
 ---
 
