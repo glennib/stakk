@@ -188,17 +188,77 @@ are addressed in stakk.
 
 ## Milestone 7: Interactive Mode
 
-Default behavior when `stakk` is run with no arguments.
+Interactive bookmark selection when `stakk submit` is run without a bookmark
+argument. See [RESEARCH-interactive-selector.md](RESEARCH-interactive-selector.md)
+for full research and trade-off analysis.
 
-- [ ] Build change graph and display stacks as ASCII tree
-- [ ] Colorized output for stack display (bookmark names, commit summaries,
-  PR status indicators, etc.)
-- [ ] Interactive bookmark selection using `inquire`
-- [ ] After selection, run the three-phase submission for that bookmark
-- [ ] Handle the case where multiple bookmarks point to the same change
+### Part 1: Basic interactive selection — DONE (WIP commit `5e4c72e8`)
 
-**Done when**: Running `stakk` with no args shows stacks and lets the user pick
-a bookmark to submit.
+- [x] `stakk show` subcommand extracted (default when no subcommand given)
+- [x] `bookmark` argument made optional in `SubmitArgs`
+- [x] `NotInteractive` and `PromptCancelled` error variants
+- [x] `src/select.rs` module with graph selector using `console` crate
+- [x] `○`/`│` graph characters, green focused, red ancestors, dim commits
+- [x] Keyboard navigation (arrows/jk, Enter, Esc/q)
+- [x] Auto-select when only one bookmark exists
+- [x] TTY detection with actionable error message
+- [x] `CursorGuard` scope guard for cursor restoration
+- [x] 6 pure-function tests for `collect_selectable_bookmarks()`
+
+### Part 2: Viewport windowing — TODO
+
+The current renderer writes all lines at once. When the graph exceeds
+terminal height, it scrolls past the top and becomes unusable.
+
+**Approach: Console + viewport windowing (Option A from research)**
+
+No new dependencies. Refactor `select.rs`:
+
+- [ ] Pre-render graph into `Vec<GraphLine>` (text + bookmark_index +
+  line_type), separating data from rendering
+- [ ] `render_viewport()` replaces `render_graph()`: uses `Term::size()`
+  to get terminal height, only renders the visible window of lines
+- [ ] `calculate_scroll_offset()` pure function: keeps focused bookmark
+  visible, avoids unnecessary jumping (follows jj-stack's pattern)
+- [ ] Scroll indicators (`▲ N more` / `▼ N more`) when content overflows
+- [ ] `selectable_indices: Vec<usize>` — navigation skips non-selectable
+  rows (connector lines, commit lines, separators)
+- [ ] Tests for `calculate_scroll_offset()` (fits/above/below/stable)
+- [ ] Tests for `build_graph_lines()` (line sequence, selectable indices)
+
+**Done when**: `stakk submit` (no args) in `../jack-testing/` shows a
+viewport-clipped graph that scrolls as the user navigates, with the focused
+bookmark always visible.
+
+### Part 3: DAG graph rendering — TODO
+
+Replace the linear per-stack display with jj-stack-style column-based
+graph layout showing true branching structure.
+
+**Approach: Column-based layout adapted from jj-stack**
+
+Uses existing `ChangeGraph` fields (`adjacency_list`, `segments`,
+`stack_leaves`). No new dependencies.
+
+- [ ] Topological sort (leaf-to-root, Kahn's algorithm on `stack_leaves`)
+- [ ] Column tracking: `Vec<Option<String>>` of active columns per change
+- [ ] Branching characters: `○` (node), `│` (continuation), `├` (branch),
+  `─╯` (merge converging), `─│` (horizontal crossing vertical)
+- [ ] Show change ID + bookmark name per row (like jj-stack)
+- [ ] Stacks sharing ancestors merge visually in the graph
+- [ ] Tests for column layout (linear, branching, merging)
+
+**Done when**: `stakk submit` (no args) shows a graph matching jj-stack's
+visual style, with branching indentation for stacks that share ancestors.
+
+### Alternative approaches considered (see research doc)
+
+- **Option B (Ratatui)**: `Viewport::Inline` + `List` widget for built-in
+  scrolling. Adds ratatui+crossterm deps. Better resize handling, but
+  potential conflict with console crate.
+- **Option C (Inquire)**: Two-step `Select` prompts (pick stack, then
+  bookmark). Minimal code (~50 lines), auto-viewport, type-to-filter. But
+  loses graph visualization entirely.
 
 ---
 
