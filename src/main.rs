@@ -79,7 +79,7 @@ fn auth_setup() {
     println!("To verify: run `stakk auth test`");
 }
 
-/// Submit a bookmark as a stacked pull request using the three-phase pipeline:
+/// Submits a bookmark as a stacked pull request using the three-phase pipeline:
 /// analyze, plan, execute.
 async fn submit_bookmark(args: &SubmitArgs) -> Result<(), StakkError> {
     let pb = indicatif::ProgressBar::new_spinner();
