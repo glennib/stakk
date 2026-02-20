@@ -41,7 +41,7 @@ async fn run() -> Result<(), StakkError> {
                 auth_setup();
             }
         },
-        None => {
+        Some(Commands::Show) | None => {
             show_status().await?;
         }
     }

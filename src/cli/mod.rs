@@ -21,4 +21,6 @@ pub enum Commands {
     Submit(SubmitArgs),
     /// Manage authentication.
     Auth(AuthArgs),
+    /// Show repository status and bookmark stacks.
+    Show,
 }
