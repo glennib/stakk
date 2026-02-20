@@ -20,6 +20,10 @@ idempotent updates.
   updated, never duplicated.
 - **Dry-run mode** — `--dry-run` shows exactly what would happen without
   touching GitHub.
+- **Interactive selection** — running `stakk submit` without a bookmark
+  argument shows an interactive two-stage prompt: pick a stack, then pick
+  how far up the stack to submit. Shared ancestors are annotated, and each
+  option shows the resulting PR count.
 - **Draft PRs** — `--draft` creates new PRs as drafts.
 - **PR body from descriptions** — PR titles and bodies are populated from jj
   change descriptions. Manually edited PR bodies are never overwritten.
@@ -74,7 +78,10 @@ Download from the [latest release](https://github.com/glennib/stakk/releases/lat
 # See your bookmark stacks
 stakk
 
-# Submit a bookmark (and its ancestors) as stacked PRs
+# Submit interactively — pick a stack and bookmark from a menu
+stakk submit
+
+# Submit a specific bookmark (and its ancestors) as stacked PRs
 stakk submit my-feature
 
 # Preview what would happen without doing anything
@@ -145,9 +152,29 @@ Stacks (2 found):
     fix-typo (1 commit(s)): fix typo in README
 ```
 
-### `stakk submit <bookmark>`
+### `stakk submit [bookmark]`
 
 Submit a bookmark and all its ancestors as stacked PRs.
+
+When run without a bookmark argument, an interactive two-stage prompt lets
+you pick a stack and then choose how far up the stack to submit:
+
+```
+? Which stack?
+> ○ ← base ← feat-b ← feat-c  (3 PRs)
+  ○ ← standalone  (1 PR: fix login bug)
+
+? Submit up to which bookmark?
+> feat-c (leaf, 1 commit) → 3 PRs
+      add caching layer
+  feat-b (2 commits) → 2 PRs
+      refactor auth module
+  base (base, 1 commit) → 1 PR
+      add user model
+```
+
+Stages are skipped automatically when there's only one option (e.g., a
+single stack skips stage 1, a single bookmark auto-selects immediately).
 
 | Flag | Description |
 |------|-------------|

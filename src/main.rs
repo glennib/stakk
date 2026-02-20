@@ -128,6 +128,9 @@ async fn submit_bookmark(args: &SubmitArgs) -> Result<(), StakkError> {
     pb.finish_and_clear();
 
     // Print the plan.
+    if args.dry_run {
+        println!("DRY RUN — no changes will be made.\n");
+    }
     println!("{plan}");
 
     if args.dry_run {

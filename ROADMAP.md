@@ -192,43 +192,38 @@ Interactive bookmark selection when `stakk submit` is run without a bookmark
 argument. See [RESEARCH-interactive-selector.md](RESEARCH-interactive-selector.md)
 for full research and trade-off analysis.
 
-### Part 1: Basic interactive selection — DONE (WIP commit `5e4c72e8`)
+### Part 1: Basic interactive selection — DONE
 
 - [x] `stakk show` subcommand extracted (default when no subcommand given)
 - [x] `bookmark` argument made optional in `SubmitArgs`
 - [x] `NotInteractive` and `PromptCancelled` error variants
-- [x] `src/select.rs` module with graph selector using `console` crate
-- [x] `○`/`│` graph characters, green focused, red ancestors, dim commits
-- [x] Keyboard navigation (arrows/jk, Enter, Esc/q)
+- [x] `src/select.rs` module with interactive selection
 - [x] Auto-select when only one bookmark exists
 - [x] TTY detection with actionable error message
-- [x] `CursorGuard` scope guard for cursor restoration
-- [x] 6 pure-function tests for `collect_selectable_bookmarks()`
 
-### Part 2: Viewport windowing — TODO
+### Part 2: Two-stage inquire-based selection — DONE
 
-The current renderer writes all lines at once. When the graph exceeds
-terminal height, it scrolls past the top and becomes unusable.
+Replaced the custom `console`-based graph renderer (which couldn't handle
+viewport overflow) with a two-stage `inquire::Select` approach. Trades
+graph visualization for built-in pagination, type-to-filter, and much less
+code (~220 lines vs ~400).
 
-**Approach: Console + viewport windowing (Option A from research)**
+- [x] Stage 1: Stack selection with `○ ←` trunk marker, `←`-chained bookmark
+  names, shared-ancestor annotations (`[base also in other-leaf]`), commit
+  title for single-PR stacks. Skipped when only one stack exists.
+- [x] Stage 2: Bookmark selection within a stack, leaf-first order, position
+  labels (leaf/base), commit summaries listed under each bookmark, `→ N PRs`
+  showing how many PRs each selection generates. Skipped when stack has one
+  bookmark.
+- [x] Auto-select with commit title when only one bookmark across all stacks
+- [x] `--dry-run` emphasized with prominent header
+- [x] `inquire` dependency with `console` backend (shares existing `console`
+  dependency, no crossterm)
+- [x] 13 pure-function tests for `collect_stack_choices()`,
+  `collect_bookmark_choices()`, `Display` impls, and edge cases
 
-No new dependencies. Refactor `select.rs`:
-
-- [ ] Pre-render graph into `Vec<GraphLine>` (text + bookmark_index +
-  line_type), separating data from rendering
-- [ ] `render_viewport()` replaces `render_graph()`: uses `Term::size()`
-  to get terminal height, only renders the visible window of lines
-- [ ] `calculate_scroll_offset()` pure function: keeps focused bookmark
-  visible, avoids unnecessary jumping (follows jj-stack's pattern)
-- [ ] Scroll indicators (`▲ N more` / `▼ N more`) when content overflows
-- [ ] `selectable_indices: Vec<usize>` — navigation skips non-selectable
-  rows (connector lines, commit lines, separators)
-- [ ] Tests for `calculate_scroll_offset()` (fits/above/below/stable)
-- [ ] Tests for `build_graph_lines()` (line sequence, selectable indices)
-
-**Done when**: `stakk submit` (no args) in `../jack-testing/` shows a
-viewport-clipped graph that scrolls as the user navigates, with the focused
-bookmark always visible.
+**Done when**: `stakk submit` (no args) in `../jack-testing/` shows
+paginated, filterable stack/bookmark selection with relationship annotations.
 
 ### Part 3: DAG graph rendering — TODO
 
@@ -250,15 +245,6 @@ Uses existing `ChangeGraph` fields (`adjacency_list`, `segments`,
 
 **Done when**: `stakk submit` (no args) shows a graph matching jj-stack's
 visual style, with branching indentation for stacks that share ancestors.
-
-### Alternative approaches considered (see research doc)
-
-- **Option B (Ratatui)**: `Viewport::Inline` + `List` widget for built-in
-  scrolling. Adds ratatui+crossterm deps. Better resize handling, but
-  potential conflict with console crate.
-- **Option C (Inquire)**: Two-step `Select` prompts (pick stack, then
-  bookmark). Minimal code (~50 lines), auto-viewport, type-to-filter. But
-  loses graph visualization entirely.
 
 ---
 

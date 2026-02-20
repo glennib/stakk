@@ -16,6 +16,7 @@ base64 = "0.22.1"
 clap = { version = "4", features = ["derive"] }
 console = "0.16"
 futures = "0.3"
+inquire = { version = "0.9", default-features = false, features = ["console"] }
 http = "1.4.0"
 indicatif = "0.18"
 miette = { version = "7", features = ["fancy"] }
