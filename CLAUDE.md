@@ -48,10 +48,16 @@ for milestones.
 - **Sidequest (Replace anyhow)**: Complete — `SubmitError` enum with
   `Diagnostic` derives, `StakkError` aggregates all error types, `main()`
   uses `miette::Report` for rendering, zero `anyhow` usage.
+- **Interactive bookmark selection**: Complete — `stakk submit` without a
+  bookmark argument shows an interactive graph selector using `console` crate.
+  Visual graph with `○`/`│` characters, color-coded ancestors (red) and
+  focused bookmark (green/bold), keyboard navigation (arrows/jk, Enter, Esc).
+  Auto-selects when only one bookmark exists. `stakk show` subcommand
+  extracted (default when no subcommand given). 91 total tests.
 
 ## Testing
 
-- **Unit/integration tests**: `cargo nextest run --all-targets` (85 tests).
+- **Unit/integration tests**: `cargo nextest run --all-targets` (91 tests).
 - **Manual testing repo**: `../jack-testing/` (github.com/glennib/jack-testing).
   A jj repo with pre-built bookmark stacks for end-to-end verification.
   Run stakk from within that directory to test against real jj output.
@@ -119,6 +125,7 @@ src/
 │   ├── github.rs    # GitHubForge implementation
 │   └── comment.rs   # Stack comment formatting and parsing
 ├── graph/           # Change graph construction (ChangeGraph, BookmarkSegment, BranchStack)
+├── select.rs        # Interactive bookmark selection (graph renderer, keyboard nav)
 ├── submit/          # Three-phase submission (analyze → plan → execute)
 └── error.rs         # Error types (thiserror)
 ```
@@ -136,11 +143,10 @@ There is intentionally no `git/` module.
 | `base64` | Stack comment metadata encoding |
 | `http` | HTTP status codes for error mapping |
 | `thiserror` | Error type definitions |
-| `miette` | User-facing error diagnostics |
-| `inquire` | Interactive bookmark selection (later milestone) |
+| `miette` | User-facing error diagnostics (`Diagnostic` derives) |
+| `console` | Terminal I/O for interactive bookmark selection |
 | `futures` | Concurrent async operations (`join_all`) |
 | `indicatif` | Progress bars/spinners |
-| `miette` | User-facing error diagnostics (`Diagnostic` derives) |
 
 ## Conventions
 
@@ -282,6 +288,15 @@ made during implementation here.)
 - `SubmitError` uses `#[source]` on `ForgeError`/`JjError` fields — miette
   automatically treats `#[source]` fields that implement `Diagnostic` as
   diagnostic sources, walking the chain to render help from inner errors.
+- `console` crate for inline interactive TUI — `Term::read_key()` for arrow
+  keys/Enter/Esc, `Term::clear_last_lines()` for re-rendering,
+  `console::style()` for colors, `Term::is_term()` for TTY detection. No need
+  for inquire or crossterm for simple selectors.
+- Use `Term::stderr()` for interactive UI so it doesn't interfere with stdout
+  if piped. `Term::write_str()` takes `&self` (unlike `io::Write::write_all`
+  which needs `&mut self`).
+- `CursorGuard` scope guard pattern ensures `show_cursor()` is always called
+  even on error or panic during interactive selection.
 
 ## Decisions Log
 
@@ -349,3 +364,15 @@ rationale.)
   available. All references updated: crate name, binary name, error types
   (`JackError` → `StakkError`), comment metadata prefix (`JACK_STACK` →
   `STAKK_STACK`), documentation, and user-facing strings.
+- **2026-02-20**: `stakk show` extracted as subcommand — `Show` variant in
+  `Commands`, default when no subcommand given (`Some(Commands::Show) | None`).
+  Makes room for swapping the default to interactive submit later.
+- **2026-02-20**: `console` over `inquire` for interactive bookmark selection
+  — `console` is already a transitive dependency via `indicatif`, provides
+  exactly what's needed (key reading, cursor control, styling), and gives full
+  control over the graph-based rendering. No new transitive dependencies.
+- **2026-02-20**: Bookmark argument optional on `stakk submit` — `Option<String>`
+  in `SubmitArgs`. When `None`, interactive selection is triggered after
+  spinner finishes (graph is already built). Spinner is split: first spinner
+  covers auth/remote/graph, cleared before interactive prompt, second spinner
+  covers submission phases.

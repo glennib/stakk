@@ -3,8 +3,9 @@ use clap::Args;
 /// Arguments for the `submit` subcommand.
 #[derive(Debug, Args)]
 pub struct SubmitArgs {
-    /// The bookmark to submit as a pull request.
-    pub bookmark: String,
+    /// The bookmark to submit as a pull request. If omitted, shows an
+    /// interactive selection.
+    pub bookmark: Option<String>,
 
     /// Show what would be done without actually doing it.
     #[arg(long)]

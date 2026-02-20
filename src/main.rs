@@ -4,6 +4,7 @@ mod error;
 mod forge;
 mod graph;
 mod jj;
+mod select;
 mod submit;
 
 use clap::Parser;
@@ -103,9 +104,22 @@ async fn submit_bookmark(args: &SubmitArgs) -> Result<(), StakkError> {
     pb.set_message("Detecting default branch...");
     let default_branch = jj.get_default_branch().await?;
 
+    // Resolve bookmark: explicit argument or interactive selection.
+    pb.finish_and_clear();
+
+    let bookmark = match &args.bookmark {
+        Some(name) => name.clone(),
+        None => match select::resolve_bookmark_interactively(&change_graph)? {
+            Some(name) => name,
+            None => return Ok(()),
+        },
+    };
+
     // Phase 1: Analyze.
+    let pb = indicatif::ProgressBar::new_spinner();
+    pb.enable_steady_tick(std::time::Duration::from_millis(120));
     pb.set_message("Analyzing submission...");
-    let analysis = submit::analyze_submission(&args.bookmark, &change_graph, &default_branch)?;
+    let analysis = submit::analyze_submission(&bookmark, &change_graph, &default_branch)?;
 
     // Phase 2: Plan.
     pb.set_message("Checking for existing pull requests...");

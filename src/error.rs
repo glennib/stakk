@@ -45,4 +45,17 @@ pub enum StakkError {
     #[error("no GitHub remote found")]
     #[diagnostic(help("Make sure this repository has a GitHub remote configured"))]
     NoGithubRemote,
+
+    /// A terminal I/O error.
+    #[error("terminal I/O error: {0}")]
+    Io(#[from] std::io::Error),
+
+    /// Interactive selection required but stdin is not a terminal.
+    #[error("interactive mode requires a terminal")]
+    #[diagnostic(help("Pass the bookmark name explicitly: stakk submit <BOOKMARK>"))]
+    NotInteractive,
+
+    /// User cancelled the interactive prompt.
+    #[error("interactive selection cancelled")]
+    PromptCancelled,
 }
