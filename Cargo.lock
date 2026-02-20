@@ -1816,7 +1816,7 @@ checksum = "6ce2be8dc25455e1f91df71bfa12ad37d7af1092ae736f3a6cd0e37bc7810596"
 
 [[package]]
 name = "stakk"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "base64",
  "clap",

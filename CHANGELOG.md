@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0](https://github.com/glennib/stakk/compare/v0.1.1...v0.2.0) - 2026-02-20
+
+### Added
+
+- [**breaking**] default command is now interactive submit instead of show
+- default command is now interactive submit instead of show
+- confirm before submitting when a single bookmark is auto-selected
+- two-stage inquire-based interactive bookmark selection
+- add `stakk show` subcommand
+
+### Other
+
+- research report and roadmap for interactive selector viewport
+- interactive bookmark selection for `stakk submit`
+- add features to readme
+- *(deps)* update rust crate clap to v4.5.60
+- Add renovate.json
+
 ## [0.1.1](https://github.com/glennib/stakk/compare/v0.1.0...v0.1.1) - 2026-02-19
 
 ### Other
