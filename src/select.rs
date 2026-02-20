@@ -247,6 +247,7 @@ fn map_inquire_error(err: InquireError) -> StakkError {
 /// Show inquire stack selector, returning the chosen stack index.
 fn select_stack(choices: Vec<StackChoice>) -> Result<usize, StakkError> {
     let result = inquire::Select::new("Which stack would you like to submit?", choices)
+        .with_help_message("You will then select a bookmark within this stack")
         .prompt()
         .map_err(map_inquire_error)?;
     Ok(result.stack_index)
