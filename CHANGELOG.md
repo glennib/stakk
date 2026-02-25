@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.2](https://github.com/glennib/stakk/compare/v0.2.1...v0.2.2) - 2026-02-25
+
+### Fixed
+
+- handle null elements in tracking_target arrays from jj
+
 ## [0.2.1](https://github.com/glennib/stakk/compare/v0.2.0...v0.2.1) - 2026-02-20
 
 ### Added
