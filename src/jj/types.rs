@@ -35,12 +35,15 @@ pub struct CommitRefData {
     pub target: Vec<String>,
     #[serde(default)]
     pub remote: Option<String>,
+    /// Tracking target commit IDs. Elements are `Option<String>` because jj
+    /// serializes absent tracking targets as `[null]` (e.g. when the tracked
+    /// commit has been rewritten and the remote bookmark hasn't been updated).
     #[cfg_attr(
         not(test),
         expect(dead_code, reason = "deserialized for completeness, used later")
     )]
     #[serde(default)]
-    pub tracking_target: Option<Vec<String>>,
+    pub tracking_target: Option<Vec<Option<String>>>,
 }
 
 /// Raw log entry: commit + bookmark refs from the log template.
@@ -155,7 +158,7 @@ mod tests {
         assert_eq!(cr.remote.as_deref(), Some("origin"));
         assert_eq!(
             cr.tracking_target.as_deref(),
-            Some(vec!["4fcf70e0abc".to_string()].as_slice())
+            Some(vec![Some("4fcf70e0abc".to_string())].as_slice())
         );
     }
 
@@ -212,5 +215,14 @@ mod tests {
         let entry: BookmarkEntryRaw = serde_json::from_str(json).unwrap();
         assert_eq!(entry.name, "conflict");
         assert!(entry.target.is_none());
+    }
+
+    /// Remote bookmarks can have `tracking_target: [null]` when the tracking
+    /// target commit is absent (e.g. after the tracked commit was rewritten).
+    #[test]
+    fn deserialize_commit_ref_null_tracking_target_element() {
+        let json = r#"{"name":"feat","remote":"origin","target":["abc"],"tracking_target":[null]}"#;
+        let cr: CommitRefData = serde_json::from_str(json).unwrap();
+        assert_eq!(cr.tracking_target.as_deref(), Some([None].as_slice()));
     }
 }
