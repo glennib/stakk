@@ -48,20 +48,19 @@ for milestones.
 - **Sidequest (Replace anyhow)**: Complete — `SubmitError` enum with
   `Diagnostic` derives, `StakkError` aggregates all error types, `main()`
   uses `miette::Report` for rendering, zero `anyhow` usage.
-- **Interactive bookmark selection**: Complete — `stakk submit` without a
-  bookmark argument shows a two-stage `inquire::Select` prompt: stage 1 picks
-  a stack (with `○ ←` trunk marker, shared-ancestor annotations, and commit
-  title for single-PR stacks), stage 2 picks a bookmark within that stack
-  (leaf-first, with position labels, commit summaries listed per bookmark, and
-  `→ N PRs` indicating how many PRs each selection generates). Stages are
-  skipped when only one option exists. Single-bookmark case shows
-  `inquire::Confirm` prompt instead of auto-submitting. `--dry-run` prints a
-  prominent header. `stakk show` subcommand available. Default command (no
-  subcommand) is interactive submit. 97 total tests.
+- **Ratatui TUI selector**: Complete — replaced `inquire` two-stage prompts
+  with a ratatui inline-viewport TUI. Screen 1 renders a tree graph of all
+  branch stacks with `○`/`◆` nodes and Unicode box-drawing edges; user
+  navigates with arrow keys or j/k to select a leaf branch. Screen 2 shows
+  commits on the selected trunk→leaf path with checkboxes; existing bookmarks
+  are pre-checked, unmarked commits can be toggled to get auto-generated
+  `stakk-<change_id>` bookmarks. New bookmarks are created via
+  `jj bookmark create` before submission. `Jj::create_bookmark()` is the
+  first write operation stakk performs on jj state. 117 total tests.
 
 ## Testing
 
-- **Unit/integration tests**: `cargo nextest run --all-targets` (100 tests).
+- **Unit/integration tests**: `cargo nextest run --all-targets` (117 tests).
 - **Manual testing repo**: `../jack-testing/` (github.com/glennib/jack-testing).
   A jj repo with pre-built bookmark stacks for end-to-end verification.
   Run stakk from within that directory to test against real jj output.
@@ -129,7 +128,13 @@ src/
 │   ├── github.rs    # GitHubForge implementation
 │   └── comment.rs   # Stack comment formatting and parsing
 ├── graph/           # Change graph construction (ChangeGraph, BookmarkSegment, BranchStack)
-├── select.rs        # Interactive bookmark selection (two-stage inquire prompts)
+├── select/          # Interactive TUI selection (ratatui inline viewport)
+│   ├── mod.rs       # Public API: resolve_bookmark_interactively(), SelectionResult
+│   ├── app.rs       # App state machine, event loop, terminal init
+│   ├── graph_layout.rs  # Convert ChangeGraph → 2D positioned nodes + edges
+│   ├── graph_widget.rs  # Screen 1: tree graph widget
+│   ├── bookmark_widget.rs # Screen 2: bookmark toggle/assignment widget
+│   └── event.rs     # crossterm key event mapping to app actions
 ├── submit/          # Three-phase submission (analyze → plan → execute)
 └── error.rs         # Error types (thiserror)
 ```
@@ -148,10 +153,12 @@ There is intentionally no `git/` module.
 | `http` | HTTP status codes for error mapping |
 | `thiserror` | Error type definitions |
 | `miette` | User-facing error diagnostics (`Diagnostic` derives) |
-| `console` | Terminal I/O (used by indicatif and inquire) |
-| `inquire` | Interactive selection prompts (pagination, type-to-filter) |
+| `ratatui` | TUI framework for interactive graph/bookmark selection |
+| `crossterm` | Terminal events and raw mode for TUI input handling |
+| `console` | Terminal I/O (used by indicatif) |
 | `futures` | Concurrent async operations (`join_all`) |
 | `indicatif` | Progress bars/spinners |
+| `rand` | Fallback bookmark name generation |
 
 ## Conventions
 
@@ -294,15 +301,22 @@ made during implementation here.)
 - `SubmitError` uses `#[source]` on `ForgeError`/`JjError` fields — miette
   automatically treats `#[source]` fields that implement `Diagnostic` as
   diagnostic sources, walking the chain to render help from inner errors.
-- `inquire::Select` for interactive prompts — built-in pagination,
-  type-to-filter, handles NotTTY detection. Map `InquireError` variants to
-  existing `StakkError` variants (`NotTTY` → `NotInteractive`,
-  `OperationCanceled`/`OperationInterrupted` → `PromptCancelled`).
-- Two-stage selection (stack → bookmark) with auto-skip: skip stage 1 when
-  one stack, skip stage 2 when one bookmark in the selected stack. Total
-  auto-select when one bookmark across all stacks.
-- Shared-ancestor detection via pre-pass: build `HashMap<change_id, Vec<stack_index>>`,
-  then annotate each stack's shared segments with the leaf names of other stacks.
+- ratatui inline viewport (`Viewport::Inline(height)`) renders within
+  terminal output, no fullscreen. Use `crossterm::terminal::size()` to
+  cap viewport height. Call `enable_raw_mode()` before and
+  `disable_raw_mode()` after.
+- crossterm's `event::read()` blocks synchronously — runs on main thread
+  before async submission phases, no need for async event handling.
+- Graph layout deduplicates shared segments across stacks by `commit_id`
+  (not `change_id`, since all commits in a segment share the same
+  `change_id`). Shared commits appear once, in the first stack's column.
+- Auto-generated bookmark names use `stakk-<first 12 chars of change_id>`,
+  matching jj's `push-<change_id>` convention for deterministic naming.
+- TTY detection uses `std::io::stdin().is_terminal()` (Rust 1.70+ stdlib)
+  instead of relying on a TUI library's detection.
+- `Jj::create_bookmark()` is the first write operation on jj state —
+  calls `jj bookmark create <name> -r <revision>`. After creating new
+  bookmarks, the change graph must be rebuilt to include them.
 
 ## Decisions Log
 
@@ -393,3 +407,20 @@ rationale.)
 - **2026-02-20**: Default command changed from `show` to `submit` — running
   `stakk` without a subcommand now launches interactive submit. `stakk show`
   remains available as an explicit subcommand.
+- **2026-03-01**: ratatui replaces inquire for interactive selection — two-screen
+  TUI (graph view → bookmark assignment) with inline viewport. ratatui provides
+  visual graph rendering that inquire's flat list couldn't. crossterm added as
+  direct dep for `event::read()`.
+- **2026-03-01**: `resolve_bookmark_interactively()` returns
+  `SelectionResult` (with `Vec<BookmarkAssignment>`) instead of
+  `Option<String>` — enables creating new bookmarks on unmarked commits.
+  Each assignment carries `is_new` flag to indicate whether `jj bookmark
+  create` is needed.
+- **2026-03-01**: Graph layout deduplicates by `commit_id`, not
+  `change_id` — all commits in a segment share the same `change_id`,
+  but each has a unique `commit_id`. Dedup by commit_id prevents
+  collapsing multi-commit segments while still merging shared segments
+  across stacks.
+- **2026-03-01**: `rand` added but not yet actively used — primary bookmark
+  naming strategy is deterministic (`stakk-<change_id_prefix>`). `rand` is
+  a fallback for name collisions.

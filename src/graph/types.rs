@@ -7,15 +7,7 @@ use std::collections::HashSet;
 /// and later PR creation.
 #[derive(Debug, Clone)]
 pub struct SegmentCommit {
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "used in later milestones for PR creation")
-    )]
     pub commit_id: String,
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "used in later milestones for PR creation")
-    )]
     pub change_id: String,
     pub description: String,
     #[cfg_attr(

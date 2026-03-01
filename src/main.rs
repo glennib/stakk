@@ -14,7 +14,8 @@ use crate::cli::Cli;
 use crate::cli::Commands;
 use crate::cli::auth::AuthCommands;
 use crate::cli::submit::SubmitArgs;
-use crate::error::StakkError;
+use crate::error::StakkError::Interrupted;
+use crate::error::StakkError::{self};
 use crate::forge::Forge;
 use crate::jj::Jj;
 use crate::jj::remote::parse_github_url;
@@ -23,6 +24,9 @@ use crate::jj::runner::RealJjRunner;
 #[tokio::main]
 async fn main() {
     if let Err(e) = run().await {
+        if matches!(e, Interrupted) {
+            std::process::exit(130);
+        }
         eprintln!("{:?}", miette::Report::new(e));
         std::process::exit(1);
     }
@@ -114,10 +118,47 @@ async fn submit_bookmark(args: &SubmitArgs) -> Result<(), StakkError> {
     // Resolve bookmark: explicit argument or interactive selection.
     pb.finish_and_clear();
 
-    let bookmark = match &args.bookmark {
-        Some(name) => name.clone(),
+    let (bookmark, change_graph) = match &args.bookmark {
+        Some(name) => (name.clone(), change_graph),
         None => match select::resolve_bookmark_interactively(&change_graph)? {
-            Some(name) => name,
+            Some(result) => {
+                // Create any new bookmarks that were assigned.
+                let has_new = result.assignments.iter().any(|a| a.is_new);
+                for assignment in &result.assignments {
+                    if assignment.is_new {
+                        let pb = indicatif::ProgressBar::new_spinner();
+                        pb.enable_steady_tick(std::time::Duration::from_millis(120));
+                        pb.set_message(format!(
+                            "Creating bookmark {}...",
+                            assignment.bookmark_name
+                        ));
+                        jj.create_bookmark(&assignment.bookmark_name, &assignment.change_id)
+                            .await?;
+                        pb.finish_and_clear();
+                    }
+                }
+
+                // Use the leaf-most assignment's bookmark name.
+                let leaf_bookmark = result
+                    .assignments
+                    .last()
+                    .map(|a| a.bookmark_name.clone())
+                    .unwrap_or_default();
+
+                // Rebuild graph if we created new bookmarks.
+                let graph = if has_new {
+                    let pb = indicatif::ProgressBar::new_spinner();
+                    pb.enable_steady_tick(std::time::Duration::from_millis(120));
+                    pb.set_message("Rebuilding change graph...");
+                    let g = graph::build_change_graph(&jj).await?;
+                    pb.finish_and_clear();
+                    g
+                } else {
+                    change_graph
+                };
+
+                (leaf_bookmark, graph)
+            }
             None => return Ok(()),
         },
     };

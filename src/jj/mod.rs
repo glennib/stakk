@@ -175,6 +175,14 @@ impl<R: JjRunner> Jj<R> {
         Ok(())
     }
 
+    /// Create a bookmark on a specific revision.
+    pub async fn create_bookmark(&self, name: &str, revision: &str) -> Result<(), JjError> {
+        self.runner
+            .run_jj(&["bookmark", "create", name, "-r", revision])
+            .await?;
+        Ok(())
+    }
+
     /// Fetch from all remotes.
     #[expect(
         dead_code,
@@ -491,5 +499,23 @@ mod tests {
             .await
             .unwrap();
         assert!(entries.is_empty());
+    }
+
+    #[tokio::test]
+    async fn create_bookmark_integration() {
+        let runner = MockJjRunner {
+            handler: |args: &[&str]| {
+                assert_eq!(args[0], "bookmark");
+                assert_eq!(args[1], "create");
+                assert_eq!(args[2], "stakk-abcdefghijkl");
+                assert_eq!(args[3], "-r");
+                assert_eq!(args[4], "abcdefghijklmnop");
+                Ok(String::new())
+            },
+        };
+        let jj = Jj::new(runner);
+        jj.create_bookmark("stakk-abcdefghijkl", "abcdefghijklmnop")
+            .await
+            .unwrap();
     }
 }

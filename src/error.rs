@@ -57,5 +57,13 @@ pub enum StakkError {
 
     /// User cancelled the interactive prompt.
     #[error("interactive selection cancelled")]
+    #[expect(
+        dead_code,
+        reason = "available for callers that want to distinguish cancellation from success"
+    )]
     PromptCancelled,
+
+    /// User interrupted with Ctrl-C (exit 130).
+    #[error("interrupted")]
+    Interrupted,
 }
