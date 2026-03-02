@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.4](https://github.com/glennib/stakk/compare/v0.2.3...v0.2.4) - 2026-03-02
+
+### Fixed
+
+- *(deps)* update rust crate rand to 0.10
+
+### Other
+
+- Merge pull request #23 from glennib/renovate/rand-0.x
+
 ## [0.2.3](https://github.com/glennib/stakk/compare/v0.2.2...v0.2.3) - 2026-03-02
 
 ### Added
