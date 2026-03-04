@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.5](https://github.com/glennib/stakk/compare/v0.2.4...v0.2.5) - 2026-03-04
+
+### Added
+
+- *(cli)* add STAKK_REMOTE and STAKK_DRAFT env var support
+- *(comment)* minijinja-based stack comment templating
+
+### Other
+
+- document env vars and stack comment templating
+
 ## [0.2.4](https://github.com/glennib/stakk/compare/v0.2.3...v0.2.4) - 2026-03-02
 
 ### Fixed
