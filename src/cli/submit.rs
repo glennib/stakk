@@ -53,6 +53,10 @@ pub struct SubmitArgs {
     ///   {%- endfor %}
     ///
     /// Can also be set with the `STAKK_TEMPLATE` environment variable.
+    #[expect(
+        clippy::doc_lazy_continuation,
+        reason = "endfor must align with the for-loop, not the list item"
+    )]
     #[arg(long, env = "STAKK_TEMPLATE", verbatim_doc_comment)]
     pub template: Option<String>,
 }
