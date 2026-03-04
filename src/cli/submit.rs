@@ -12,11 +12,11 @@ pub struct SubmitArgs {
     pub dry_run: bool,
 
     /// Create pull requests as drafts.
-    #[arg(long)]
+    #[arg(long, env = "STAKK_DRAFT")]
     pub draft: bool,
 
     /// Git remote to push to.
-    #[arg(long, default_value = "origin")]
+    #[arg(long, default_value = "origin", env = "STAKK_REMOTE")]
     pub remote: String,
 
     /// Path to a custom minijinja template for stack comments.
