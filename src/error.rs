@@ -46,6 +46,10 @@ pub enum StakkError {
     #[diagnostic(help("Make sure this repository has a GitHub remote configured"))]
     NoGithubRemote,
 
+    /// Failed to load a custom template file.
+    #[error("failed to load template '{path}': {reason}")]
+    TemplateLoadFailed { path: String, reason: String },
+
     /// A terminal I/O error.
     #[error("terminal I/O error: {0}")]
     Io(#[from] std::io::Error),
