@@ -185,8 +185,22 @@ async fn submit_bookmark(args: &SubmitArgs) -> Result<(), StakkError> {
         return Ok(());
     }
 
+    // Load template.
+    let template_source = match &args.template {
+        Some(path) => {
+            Some(
+                std::fs::read_to_string(path).map_err(|e| StakkError::TemplateLoadFailed {
+                    path: path.clone(),
+                    reason: e.to_string(),
+                })?,
+            )
+        }
+        None => None,
+    };
+    let comment_env = forge::comment::build_comment_env(template_source.as_deref())?;
+
     // Phase 3: Execute.
-    let result = submit::execute_submission_plan(&plan, &jj, &forge).await?;
+    let result = submit::execute_submission_plan(&plan, &jj, &forge, &comment_env).await?;
 
     println!("\nSubmitted {} bookmark(s).", result.stack_entries.len());
 
