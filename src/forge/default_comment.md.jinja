@@ -1,0 +1,6 @@
+This PR is part of a stack that merges into `{{ default_branch }}`:
+{% for entry in stack %}
+{{ entry.position }}. {{ entry.pr_url }}{% if entry.is_current %} 👈{% endif %}
+{%- endfor %}
+
+<sub>Created with [stakk]({{ stakk_url }})</sub>

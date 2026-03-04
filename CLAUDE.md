@@ -57,6 +57,12 @@ for milestones.
   `stakk-<change_id>` bookmarks. New bookmarks are created via
   `jj bookmark create` before submission. `Jj::create_bookmark()` is the
   first write operation stakk performs on jj state. 117 total tests.
+- **Stack comment templating**: Complete — minijinja-based templating for
+  stack comments. Default template uses table layout with PR URLs, bookmark
+  names, and base branches. Custom templates via `--template` flag or
+  `STAKK_TEMPLATE` env var. `StackCommentContext`/`StackEntryContext` structs
+  provide rich template context. Metadata line always prepended
+  programmatically (not part of template). 124 total tests.
 
 ## Testing
 
@@ -126,7 +132,8 @@ src/
 ├── forge/           # Forge trait + GitHub implementation (octocrab)
 │   ├── mod.rs       # Forge trait, forge-agnostic types, ForgeError
 │   ├── github.rs    # GitHubForge implementation
-│   └── comment.rs   # Stack comment formatting and parsing
+│   ├── comment.rs   # Stack comment formatting, parsing, and template context
+│   └── default_comment.md.jinja  # Default minijinja template for stack comments
 ├── graph/           # Change graph construction (ChangeGraph, BookmarkSegment, BranchStack)
 ├── select/          # Interactive TUI selection (ratatui inline viewport)
 │   ├── mod.rs       # Public API: resolve_bookmark_interactively(), SelectionResult
@@ -153,6 +160,7 @@ There is intentionally no `git/` module.
 | `http` | HTTP status codes for error mapping |
 | `thiserror` | Error type definitions |
 | `miette` | User-facing error diagnostics (`Diagnostic` derives) |
+| `minijinja` | Jinja2 templating for stack comments |
 | `ratatui` | TUI framework for interactive graph/bookmark selection |
 | `crossterm` | Terminal events and raw mode for TUI input handling |
 | `console` | Terminal I/O (used by indicatif) |
@@ -318,6 +326,21 @@ made during implementation here.)
   calls `jj bookmark create <name> -r <revision>`. After creating new
   bookmarks, the change graph must be rebuilt to include them.
 
+- minijinja `Environment::add_template` requires `&'source str` matching
+  the environment's lifetime. For custom templates (owned `String`), use
+  `Box::leak(source.into_boxed_str())` to get a `&'static str`. This is
+  fine since the env is created once per invocation.
+- Stack comment metadata line (`<!--- STAKK_STACK: ... --->`) is always
+  prepended programmatically — it is NOT part of the minijinja template.
+  This ensures metadata survives custom templates that might omit it.
+- `StackCommentContext` / `StackEntryContext` are separate from the lean
+  `StackCommentData` / `StackEntry` types. The former are rich rendering
+  contexts (title, base, is_current, position); the latter are minimal
+  machine-readable metadata embedded as base64 JSON.
+- `format_stack_comment` returns `Result` (not infallible) because user
+  templates can fail to render. Default template is validated at compile
+  time via `include_str!` + tests.
+
 ## Decisions Log
 
 (Record significant architectural or design decisions here with date and
@@ -424,3 +447,7 @@ rationale.)
 - **2026-03-01**: `rand` added but not yet actively used — primary bookmark
   naming strategy is deterministic (`stakk-<change_id_prefix>`). `rand` is
   a fallback for name collisions.
+- **2026-03-04**: minijinja for stack comment templating — replaces
+  hardcoded numbered list with table layout. `--template` / `STAKK_TEMPLATE`
+  for custom templates. Metadata line always prepended outside the template.
+  `format_stack_comment` now returns `Result` since user templates can fail.

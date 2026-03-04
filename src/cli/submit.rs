@@ -18,6 +18,10 @@ pub struct SubmitArgs {
     /// Git remote to push to.
     #[arg(long, default_value = "origin")]
     pub remote: String,
+
+    /// Path to a custom minijinja template for stack comments.
+    #[arg(long, env = "STAKK_TEMPLATE")]
+    pub template: Option<String>,
 }
 
 impl Default for SubmitArgs {
@@ -27,6 +31,7 @@ impl Default for SubmitArgs {
             dry_run: false,
             draft: false,
             remote: "origin".to_string(),
+            template: None,
         }
     }
 }

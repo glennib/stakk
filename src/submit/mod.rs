@@ -12,8 +12,10 @@ use crate::forge::CreatePrParams;
 use crate::forge::Forge;
 use crate::forge::ForgeError;
 use crate::forge::PullRequest;
+use crate::forge::comment::StackCommentContext;
 use crate::forge::comment::StackCommentData;
 use crate::forge::comment::StackEntry;
+use crate::forge::comment::StackEntryContext;
 use crate::forge::comment::find_stack_comment;
 use crate::forge::comment::format_stack_comment;
 use crate::graph::types::BookmarkSegment;
@@ -76,6 +78,10 @@ pub enum SubmitError {
         #[source]
         source: ForgeError,
     },
+
+    /// Failed to render a stack comment template.
+    #[error("template rendering failed: {message} — check the template syntax (minijinja/Jinja2)")]
+    TemplateRenderFailed { message: String },
 }
 
 // ---------------------------------------------------------------------------
@@ -122,6 +128,8 @@ pub struct SubmissionPlan {
     pub remote: String,
     /// Whether to create PRs as drafts.
     pub draft: bool,
+    /// The default branch name (e.g., "main").
+    pub default_branch: String,
 }
 
 /// Phase 3 output: what was actually done.
@@ -285,6 +293,7 @@ pub async fn create_submission_plan<F: Forge>(
         bookmark_plans,
         remote: remote.to_string(),
         draft,
+        default_branch: analysis.default_branch.clone(),
     })
 }
 
@@ -341,6 +350,7 @@ pub async fn execute_submission_plan<R: JjRunner, F: Forge>(
     plan: &SubmissionPlan,
     jj: &Jj<R>,
     forge: &F,
+    comment_env: &minijinja::Environment<'_>,
 ) -> Result<SubmissionResult, SubmitError> {
     let pb = indicatif::ProgressBar::new_spinner();
     pb.enable_steady_tick(std::time::Duration::from_millis(120));
@@ -426,13 +436,50 @@ pub async fn execute_submission_plan<R: JjRunner, F: Forge>(
         stack: stack_entries.clone(),
     };
 
+    let template = comment_env.get_template("stack_comment").map_err(|e| {
+        SubmitError::TemplateRenderFailed {
+            message: e.to_string(),
+        }
+    })?;
+
+    // Build the shared entry contexts from stack_entries + bookmark_plans.
+    let entry_contexts: Vec<StackEntryContext> = stack_entries
+        .iter()
+        .enumerate()
+        .map(|(i, entry)| {
+            let bp = &plan.bookmark_plans[i];
+            StackEntryContext {
+                bookmark_name: entry.bookmark_name.clone(),
+                pr_url: entry.pr_url.clone(),
+                pr_number: entry.pr_number,
+                title: bp.title.clone(),
+                base: bp.base.clone(),
+                is_draft: plan.draft && bp.needs_create,
+                position: i + 1,
+                is_current: false, // set per-PR below
+            }
+        })
+        .collect();
+
     let comment_futures: Vec<_> = stack_entries
         .iter()
         .enumerate()
         .map(|(i, entry)| {
-            let body = format_stack_comment(&comment_data, i);
+            // Build a context with is_current set for this PR.
+            let mut entries = entry_contexts.clone();
+            entries[i].is_current = true;
+            let ctx = StackCommentContext {
+                stack_size: entries.len(),
+                current_bookmark: entry.bookmark_name.clone(),
+                default_branch: plan.default_branch.clone(),
+                stakk_url: "https://github.com/glennib/stakk".to_string(),
+                stack: entries,
+            };
+
+            let body = format_stack_comment(&comment_data, &ctx, &template);
             let pr_number = entry.pr_number;
             async move {
+                let body = body?;
                 let existing_comments = forge
                     .list_comments(pr_number)
                     .await
@@ -477,11 +524,16 @@ mod tests {
     use crate::forge::Comment;
     use crate::forge::ForgeError;
     use crate::forge::PrState;
+    use crate::forge::comment::build_comment_env;
     use crate::graph::types::BranchStack;
     use crate::graph::types::SegmentCommit;
     use crate::jj::JjError;
 
     // -- Test helpers --
+
+    fn test_comment_env() -> minijinja::Environment<'static> {
+        build_comment_env(None).unwrap()
+    }
 
     fn make_segment(names: &[&str], change_id: &str, desc: &str) -> BookmarkSegment {
         BookmarkSegment {
@@ -893,6 +945,7 @@ mod tests {
             ],
             remote: "origin".to_string(),
             draft: false,
+            default_branch: "main".to_string(),
         };
 
         let output = plan.to_string();
@@ -934,13 +987,17 @@ mod tests {
             ],
             remote: "origin".to_string(),
             draft: false,
+            default_branch: "main".to_string(),
         };
 
         let (runner, _push_calls) = MockJjRunner::new();
         let jj = Jj::new(runner);
         let forge = MockForge::new();
+        let env = test_comment_env();
 
-        let result = execute_submission_plan(&plan, &jj, &forge).await.unwrap();
+        let result = execute_submission_plan(&plan, &jj, &forge, &env)
+            .await
+            .unwrap();
 
         assert_eq!(result.stack_entries.len(), 2);
 
@@ -967,13 +1024,17 @@ mod tests {
             }],
             remote: "origin".to_string(),
             draft: false,
+            default_branch: "main".to_string(),
         };
 
         let (runner, _push_calls) = MockJjRunner::new();
         let jj = Jj::new(runner);
         let forge = MockForge::new();
+        let env = test_comment_env();
 
-        execute_submission_plan(&plan, &jj, &forge).await.unwrap();
+        execute_submission_plan(&plan, &jj, &forge, &env)
+            .await
+            .unwrap();
 
         let updated = forge.updated_bases.lock().unwrap();
         assert_eq!(updated.len(), 1);
@@ -1007,13 +1068,17 @@ mod tests {
             ],
             remote: "origin".to_string(),
             draft: false,
+            default_branch: "main".to_string(),
         };
 
         let (runner, _push_calls) = MockJjRunner::new();
         let jj = Jj::new(runner);
         let forge = MockForge::new();
+        let env = test_comment_env();
 
-        execute_submission_plan(&plan, &jj, &forge).await.unwrap();
+        execute_submission_plan(&plan, &jj, &forge, &env)
+            .await
+            .unwrap();
 
         let comments = forge.created_comments.lock().unwrap();
         // One stack comment per PR.
@@ -1025,6 +1090,8 @@ mod tests {
 
     #[tokio::test]
     async fn execute_updates_existing_stack_comments() {
+        let env = test_comment_env();
+        let tmpl = env.get_template("stack_comment").unwrap();
         let existing_comment_body = format_stack_comment(
             &StackCommentData {
                 version: 0,
@@ -1034,8 +1101,25 @@ mod tests {
                     pr_number: 1,
                 }],
             },
-            0,
-        );
+            &StackCommentContext {
+                stack: vec![StackEntryContext {
+                    bookmark_name: "old".to_string(),
+                    pr_url: "https://example.com/1".to_string(),
+                    pr_number: 1,
+                    title: "old feature".to_string(),
+                    base: "main".to_string(),
+                    is_draft: false,
+                    position: 1,
+                    is_current: true,
+                }],
+                stack_size: 1,
+                default_branch: "main".to_string(),
+                current_bookmark: "old".to_string(),
+                stakk_url: "https://github.com/glennib/stakk".to_string(),
+            },
+            &tmpl,
+        )
+        .unwrap();
 
         let plan = SubmissionPlan {
             bookmark_plans: vec![BookmarkPlan {
@@ -1050,6 +1134,7 @@ mod tests {
             }],
             remote: "origin".to_string(),
             draft: false,
+            default_branch: "main".to_string(),
         };
 
         let (runner, _push_calls) = MockJjRunner::new();
@@ -1062,7 +1147,9 @@ mod tests {
             }],
         );
 
-        execute_submission_plan(&plan, &jj, &forge).await.unwrap();
+        execute_submission_plan(&plan, &jj, &forge, &env)
+            .await
+            .unwrap();
 
         // Should have updated the existing comment, not created a new one.
         let created = forge.created_comments.lock().unwrap();
@@ -1100,13 +1187,17 @@ mod tests {
             ],
             remote: "my-remote".to_string(),
             draft: false,
+            default_branch: "main".to_string(),
         };
 
         let (runner, push_calls) = MockJjRunner::new();
         let jj = Jj::new(runner);
         let forge = MockForge::new();
+        let env = test_comment_env();
 
-        execute_submission_plan(&plan, &jj, &forge).await.unwrap();
+        execute_submission_plan(&plan, &jj, &forge, &env)
+            .await
+            .unwrap();
 
         let calls = push_calls.lock().unwrap();
         assert_eq!(calls.len(), 2);
@@ -1129,6 +1220,7 @@ mod tests {
             }],
             remote: "origin".to_string(),
             draft: true,
+            default_branch: "main".to_string(),
         };
 
         let output = plan.to_string();
@@ -1153,13 +1245,17 @@ mod tests {
             }],
             remote: "origin".to_string(),
             draft: true,
+            default_branch: "main".to_string(),
         };
 
         let (runner, _push_calls) = MockJjRunner::new();
         let jj = Jj::new(runner);
         let forge = MockForge::new();
+        let env = test_comment_env();
 
-        execute_submission_plan(&plan, &jj, &forge).await.unwrap();
+        execute_submission_plan(&plan, &jj, &forge, &env)
+            .await
+            .unwrap();
 
         let created = forge.created_prs.lock().unwrap();
         assert_eq!(created.len(), 1);

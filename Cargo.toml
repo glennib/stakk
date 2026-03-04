@@ -13,7 +13,7 @@ path = "src/main.rs"
 
 [dependencies]
 base64 = "0.22.1"
-clap = { version = "4", features = ["derive"] }
+clap = { version = "4", features = ["derive", "env"] }
 clap_complete = "4.5.66"
 console = "0.16"
 crossterm = "0.29"
@@ -21,6 +21,7 @@ futures = "0.3"
 http = "1.4.0"
 indicatif = "0.18"
 miette = { version = "7", features = ["fancy"] }
+minijinja = { version = "2", default-features = false, features = ["builtins", "serde"] }
 octocrab = "0.49.5"
 rand = "0.10"
 ratatui = "0.30"
