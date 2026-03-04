@@ -15,7 +15,9 @@ idempotent updates.
 - **Stacked PR submission** — creates or updates GitHub PRs with correct base
   branches so each PR shows only its own diff.
 - **Stack-awareness comments** — adds a comment to every PR listing the full
-  stack with links, updated in place on re-runs.
+  stack with links, updated in place on re-runs. Comments are rendered with
+  [minijinja](https://github.com/mitsuhiko/minijinja) templates and can be
+  customized with `--template` or the `STAKK_TEMPLATE` environment variable.
 - **Idempotent** — re-running `stakk submit` is always safe. Existing PRs are
   updated, never duplicated.
 - **Dry-run mode** — `--dry-run` shows exactly what would happen without
@@ -129,6 +131,18 @@ PRs together:
 Re-running `stakk submit` is always safe — it updates existing PRs rather
 than creating duplicates.
 
+## Environment variables
+
+| Variable | Description |
+|----------|-------------|
+| `STAKK_REMOTE` | Default git remote to push to (overridden by `--remote`) |
+| `STAKK_DRAFT` | Set to `true` to always create draft PRs (overridden by `--draft`) |
+| `STAKK_TEMPLATE` | Path to a custom minijinja template for stack comments (overridden by `--template`) |
+| `GITHUB_TOKEN` | GitHub personal access token (see `stakk auth setup`) |
+| `GH_TOKEN` | Alternative to `GITHUB_TOKEN` |
+
+CLI flags always take precedence over environment variables.
+
 ## Usage
 
 ### `stakk` (no arguments)
@@ -160,11 +174,12 @@ then choose how far up the stack to submit:
 Stages are skipped automatically when there's only one option (e.g., a
 single stack skips stage 1, a single bookmark auto-selects immediately).
 
-| Flag | Description |
-|------|-------------|
-| `--dry-run` | Show the submission plan without executing |
-| `--draft` | Create new PRs as drafts |
-| `--remote <name>` | Push to a specific remote (default: `origin`) |
+| Flag | Env var | Description |
+|------|--------|-------------|
+| `--dry-run` | | Show the submission plan without executing |
+| `--draft` | `STAKK_DRAFT` | Create new PRs as drafts |
+| `--remote <name>` | `STAKK_REMOTE` | Push to a specific remote (default: `origin`) |
+| `--template <path>` | `STAKK_TEMPLATE` | Use a custom minijinja template for stack comments |
 
 PR titles come from the first line of the jj change description. PR bodies
 are populated from the full description (everything after the title line).

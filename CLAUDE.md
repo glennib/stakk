@@ -63,10 +63,13 @@ for milestones.
   `STAKK_TEMPLATE` env var. `StackCommentContext`/`StackEntryContext` structs
   provide rich template context. Metadata line always prepended
   programmatically (not part of template). 124 total tests.
+- **Environment variable config**: Complete — `--draft` (`STAKK_DRAFT`),
+  `--remote` (`STAKK_REMOTE`), and `--template` (`STAKK_TEMPLATE`) are all
+  configurable via environment variables. CLI flags override env vars.
 
 ## Testing
 
-- **Unit/integration tests**: `cargo nextest run --all-targets` (117 tests).
+- **Unit/integration tests**: `cargo nextest run --all-targets` (124 tests).
 - **Manual testing repo**: `../jack-testing/` (github.com/glennib/jack-testing).
   A jj repo with pre-built bookmark stacks for end-to-end verification.
   Run stakk from within that directory to test against real jj output.
@@ -451,3 +454,7 @@ rationale.)
   hardcoded numbered list with table layout. `--template` / `STAKK_TEMPLATE`
   for custom templates. Metadata line always prepended outside the template.
   `format_stack_comment` now returns `Result` since user templates can fail.
+- **2026-03-04**: `STAKK_REMOTE` and `STAKK_DRAFT` env vars — `--remote`
+  and `--draft` can now be configured via environment variables using clap's
+  `env` attribute. CLI flags override env vars. `--dry-run` intentionally
+  excluded — it's a one-off decision that would be surprising as a default.
