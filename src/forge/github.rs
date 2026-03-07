@@ -24,8 +24,12 @@ impl GitHubForge {
         let client = Octocrab::builder()
             .personal_token(token.to_string())
             .build()
-            .map_err(|e| ForgeError::Api {
-                message: format!("failed to create GitHub client: {e}"),
+            .map_err(|e| {
+                let message = format!("failed to create GitHub client: {e}");
+                ForgeError::Api {
+                    message,
+                    source: Box::new(e),
+                }
             })?;
 
         Ok(Self {
@@ -148,16 +152,26 @@ impl Forge for GitHubForge {
 }
 
 fn map_octocrab_error(e: octocrab::Error) -> ForgeError {
-    if let octocrab::Error::GitHub { source, .. } = &e
-        && (source.status_code == http::StatusCode::UNAUTHORIZED
-            || source.status_code == http::StatusCode::FORBIDDEN)
-    {
+    let is_auth_error = matches!(
+        &e,
+        octocrab::Error::GitHub { source, .. }
+            if source.status_code == http::StatusCode::UNAUTHORIZED
+                || source.status_code == http::StatusCode::FORBIDDEN
+    );
+    if is_auth_error {
+        let message = match &e {
+            octocrab::Error::GitHub { source, .. } => source.message.clone(),
+            _ => unreachable!(),
+        };
         return ForgeError::AuthFailed {
-            message: source.message.clone(),
+            message,
+            source: Box::new(e),
         };
     }
+    let message = e.to_string();
     ForgeError::Api {
-        message: e.to_string(),
+        message,
+        source: Box::new(e),
     }
 }
 

@@ -13,20 +13,35 @@ use thiserror::Error;
 #[derive(Debug, Error, Diagnostic)]
 pub enum ForgeError {
     #[error("API error: {message}")]
-    Api { message: String },
+    #[diagnostic(code(stakk::forge::api))]
+    Api {
+        message: String,
+        #[source]
+        source: Box<dyn std::error::Error + Send + Sync>,
+    },
 
     #[expect(dead_code, reason = "used in later milestones for PR lookup errors")]
     #[error("PR not found: #{number}")]
+    #[diagnostic(code(stakk::forge::pr_not_found))]
     PrNotFound { number: u64 },
 
-    #[error(
-        "authentication failed: {message}; your token may have expired — run `gh auth login` to \
-         re-authenticate"
+    #[error("authentication failed: {message}")]
+    #[diagnostic(
+        code(stakk::forge::auth_failed),
+        help("your token may have expired — run `gh auth login` to re-authenticate")
     )]
-    AuthFailed { message: String },
+    AuthFailed {
+        message: String,
+        #[source]
+        source: Box<dyn std::error::Error + Send + Sync>,
+    },
 
     #[expect(dead_code, reason = "used in later milestones for rate limit handling")]
     #[error("rate limited; retry after {retry_after_seconds}s")]
+    #[diagnostic(
+        code(stakk::forge::rate_limited),
+        help("wait {retry_after_seconds}s and retry")
+    )]
     RateLimited { retry_after_seconds: u64 },
 }
 

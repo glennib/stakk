@@ -213,9 +213,9 @@ There is intentionally no `git/` module.
   boundary for rendering.
 - No `anyhow` — every error is a concrete type with `Diagnostic` metadata.
 - User-facing error messages should be clear and actionable.
-- Use `#[diagnostic(help(...))]` on unit/tuple variants for actionable advice.
-  For struct variants with named fields, embed advice in `#[error(...)]` to
-  avoid false-positive `unused_assignments` warnings from the macro.
+- Use `#[diagnostic(help(...))]` for actionable advice on all variants.
+  Use `#[diagnostic(code(stakk::...))]` for machine-readable error identifiers.
+  Keep `#[error(...)]` focused on what went wrong; put what to do in `help`.
 
 ### jj Interface
 
@@ -300,11 +300,9 @@ made during implementation here.)
 - Non-user bookmarks on commits are filtered during traversal using a
   `HashSet<String>` of user bookmark names. This prevents spurious segment
   boundaries from bookmarks belonging to other users.
-- miette `#[diagnostic(help(...))]` on struct variants with named fields
-  causes false-positive `unused_assignments` warnings from the macro
-  expansion. Workaround: embed actionable text in the `#[error(...)]`
-  message directly for field-based variants; use `#[diagnostic(help(...))]`
-  only on unit or tuple variants.
+- thiserror 2.x fixed the `unused_assignments` false-positive that affected
+  `#[diagnostic(help(...))]` on struct variants with named fields. We now
+  use `help` freely on all variant kinds.
 - `main()` converts `StakkError` to `miette::Report` for rendering. miette's
   graphical report handler walks `diagnostic_source()` automatically to
   show help from any error in the chain (e.g. `SubmitError::PushFailed`

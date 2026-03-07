@@ -40,10 +40,14 @@ pub struct AuthToken {
 #[derive(Debug, Error, Diagnostic)]
 pub enum AuthError {
     #[error("no GitHub authentication found")]
-    #[diagnostic(help("Run `gh auth login` or set GITHUB_TOKEN/GH_TOKEN"))]
+    #[diagnostic(
+        code(stakk::auth::no_token),
+        help("Run `gh auth login` or set GITHUB_TOKEN/GH_TOKEN")
+    )]
     NoAuthFound,
 
     #[error("failed to run `gh auth token`: {0}")]
+    #[diagnostic(code(stakk::auth::gh_cli_error))]
     GhCliError(std::io::Error),
 }
 

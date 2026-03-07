@@ -23,10 +23,12 @@ use crate::jj::types::LogEntryRaw;
 pub enum JjError {
     /// The `jj` command exited with a non-zero status.
     #[error("jj command failed: {stderr}")]
+    #[diagnostic(code(stakk::jj::command_failed))]
     CommandFailed { stderr: String },
 
     /// Failed to parse `jj` output.
     #[error("failed to parse jj output ({context}): {source}")]
+    #[diagnostic(code(stakk::jj::parse_error))]
     ParseError {
         context: String,
         source: serde_json::Error,
@@ -34,12 +36,17 @@ pub enum JjError {
 
     /// `jj` binary not found.
     #[error("could not run jj: {0}")]
-    #[diagnostic(help("Make sure jj is installed and available on your PATH"))]
+    #[diagnostic(
+        code(stakk::jj::not_found),
+        help("Make sure jj is installed and available on your PATH")
+    )]
     NotFound(std::io::Error),
 
     /// Could not determine the default branch.
-    #[error(
-        "could not determine default branch; trunk() remote bookmark candidates: {candidates:?}"
+    #[error("could not determine default branch; candidates: {candidates:?}")]
+    #[diagnostic(
+        code(stakk::jj::no_default_branch),
+        help("ensure your repo has a trunk bookmark tracked from a remote")
     )]
     NoDefaultBranch { candidates: Vec<String> },
 }

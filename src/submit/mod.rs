@@ -29,18 +29,21 @@ use crate::jj::runner::JjRunner;
 #[derive(Debug, Error, Diagnostic)]
 pub enum SubmitError {
     /// Target bookmark was not found in any stack.
-    #[error(
-        "bookmark '{bookmark}' not found in any stack — run `stakk` with no arguments to see \
-         available stacks"
+    #[error("bookmark '{bookmark}' not found in any stack")]
+    #[diagnostic(
+        code(stakk::submit::bookmark_not_found),
+        help("run `stakk` with no arguments to see available stacks")
     )]
     BookmarkNotFound { bookmark: String },
 
     /// A segment in the change graph has no bookmark name.
     #[error("segment has no bookmark name")]
+    #[diagnostic(code(stakk::submit::segment_missing_bookmark))]
     SegmentMissingBookmark,
 
     /// Failed to look up an existing PR for a bookmark.
     #[error("failed to check for existing PR for '{bookmark}'")]
+    #[diagnostic(code(stakk::submit::pr_lookup_failed))]
     PrLookupFailed {
         bookmark: String,
         #[source]
@@ -49,6 +52,7 @@ pub enum SubmitError {
 
     /// Failed to push a bookmark to the remote.
     #[error("failed to push bookmark '{bookmark}'")]
+    #[diagnostic(code(stakk::submit::push_failed))]
     PushFailed {
         bookmark: String,
         #[source]
@@ -57,6 +61,7 @@ pub enum SubmitError {
 
     /// Failed to update the base branch of an existing PR.
     #[error("failed to update PR base for '{bookmark}'")]
+    #[diagnostic(code(stakk::submit::base_update_failed))]
     BaseUpdateFailed {
         bookmark: String,
         #[source]
@@ -65,6 +70,7 @@ pub enum SubmitError {
 
     /// Failed to create a new PR.
     #[error("failed to create PR for '{bookmark}'")]
+    #[diagnostic(code(stakk::submit::pr_create_failed))]
     PrCreateFailed {
         bookmark: String,
         #[source]
@@ -73,6 +79,7 @@ pub enum SubmitError {
 
     /// Failed to create or update a stack comment on a PR.
     #[error("failed to manage stack comment on PR #{pr_number}")]
+    #[diagnostic(code(stakk::submit::comment_failed))]
     CommentFailed {
         pr_number: u64,
         #[source]
@@ -80,7 +87,11 @@ pub enum SubmitError {
     },
 
     /// Failed to render a stack comment template.
-    #[error("template rendering failed: {message} — check the template syntax (minijinja/Jinja2)")]
+    #[error("template rendering failed: {message}")]
+    #[diagnostic(
+        code(stakk::submit::template_render_failed),
+        help("check the template syntax (minijinja/Jinja2)")
+    )]
     TemplateRenderFailed { message: String },
 }
 
