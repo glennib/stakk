@@ -53,7 +53,7 @@ pub enum AuthError {
 
 /// Resolve a GitHub authentication token.
 ///
-/// Tries sources in order: gh CLI, GITHUB_TOKEN env, GH_TOKEN env.
+/// Tries sources in order: gh CLI, `GITHUB_TOKEN` env, `GH_TOKEN` env.
 /// Returns the first token found, or `AuthError::NoAuthFound`.
 ///
 /// This does NOT validate the token against the GitHub API.

@@ -24,7 +24,8 @@ pub struct Signature {
     pub timestamp: String,
 }
 
-/// CommitRef serialization from `jj` (used in bookmark arrays on log entries).
+/// `CommitRef` serialization from `jj` (used in bookmark arrays on log
+/// entries).
 #[derive(Debug, Clone, Deserialize)]
 pub struct CommitRefData {
     pub name: String,

@@ -22,7 +22,7 @@ struct TraversalResult {
     /// Discovered segments, ordered newest-first (leaf toward trunk).
     segments: Vec<BookmarkSegment>,
     /// If traversal stopped because it hit an already-collected bookmark,
-    /// this is that bookmark's change_id.
+    /// this is that bookmark's `change_id`.
     already_seen_change_id: Option<String>,
     /// Whether this bookmark was excluded (tainted by a merge commit).
     excluded: bool,
@@ -424,12 +424,12 @@ mod tests {
 
     // -- Tests --
 
-    /// Simple linear stack: trunk -> bm_a -> bm_b
+    /// Simple linear stack: trunk -> `bm_a` -> `bm_b`
     ///
-    /// Bookmark list returns [bm_b, bm_a].
-    /// Traversing bm_b: log returns [c_b(bm_b), c_a(bm_a)].
-    /// bm_a is already discovered, so traversing bm_a is skipped.
-    /// Result: 1 stack with 2 segments [bm_a, bm_b] (trunk-to-leaf).
+    /// Bookmark list returns [`bm_b`, `bm_a`].
+    /// Traversing `bm_b`: log returns [`c_b(bm_b)`, `c_a(bm_a)`].
+    /// `bm_a` is already discovered, so traversing `bm_a` is skipped.
+    /// Result: 1 stack with 2 segments [`bm_a`, `bm_b`] (trunk-to-leaf).
     #[tokio::test]
     async fn linear_stack() {
         let runner = MockJjRunner {
@@ -477,10 +477,10 @@ mod tests {
         assert_eq!(stack.segments[1].bookmark_names, vec!["bm_b"]);
     }
 
-    /// Branching: trunk -> bm_a -> bm_b and trunk -> bm_a -> bm_c
+    /// Branching: trunk -> `bm_a` -> `bm_b` and trunk -> `bm_a` -> `bm_c`
     ///
-    /// Two stacks sharing a common root (bm_a).
-    /// bm_b and bm_c are both leaves.
+    /// Two stacks sharing a common root (`bm_a`).
+    /// `bm_b` and `bm_c` are both leaves.
     #[tokio::test]
     async fn branching_shared_root() {
         let runner = MockJjRunner {
@@ -574,9 +574,9 @@ mod tests {
 
     /// Taint propagation: a descendant of a merge commit is also tainted.
     ///
-    /// trunk -> bm_a (merge) -> bm_b
-    /// When we traverse bm_b first, we find bm_b, then bm_a which is a merge.
-    /// Both get tainted.
+    /// trunk -> `bm_a` (merge) -> `bm_b`
+    /// When we traverse `bm_b` first, we find `bm_b`, then `bm_a` which is a
+    /// merge. Both get tainted.
     #[tokio::test]
     async fn merge_taint_propagation() {
         let runner = MockJjRunner {
@@ -728,10 +728,10 @@ mod tests {
     /// Multi-commit segment: unbookmarked commits between bookmarks are
     /// included in the parent-ward segment.
     ///
-    /// trunk -> c1 -> c2(bm_a) -> c3 -> c4(bm_b)
+    /// trunk -> c1 -> `c2(bm_a)` -> c3 -> `c4(bm_b)`
     ///
-    /// Segment bm_b should contain [c4, c3] (newest first).
-    /// Segment bm_a should contain [c2, c1].
+    /// Segment `bm_b` should contain [c4, c3] (newest first).
+    /// Segment `bm_a` should contain [c2, c1].
     #[tokio::test]
     async fn multi_commit_segment() {
         let runner = MockJjRunner {
@@ -784,13 +784,13 @@ mod tests {
     /// Already-collected bookmark: second traversal connects to first via
     /// adjacency list without duplicating the segment.
     ///
-    /// Bookmarks [bm_b, bm_c, bm_a] where:
-    ///   trunk -> bm_a -> bm_b
-    ///   trunk -> bm_a -> bm_c
+    /// Bookmarks [`bm_b`, `bm_c`, `bm_a`] where:
+    ///   trunk -> `bm_a` -> `bm_b`
+    ///   trunk -> `bm_a` -> `bm_c`
     ///
-    /// Traversing bm_b discovers [bm_b, bm_a].
-    /// Traversing bm_c discovers [bm_c], stops at bm_a (already collected).
-    /// bm_a is NOT traversed separately (already collected).
+    /// Traversing `bm_b` discovers [`bm_b`, `bm_a`].
+    /// Traversing `bm_c` discovers [`bm_c`], stops at `bm_a` (already
+    /// collected). `bm_a` is NOT traversed separately (already collected).
     #[tokio::test]
     async fn already_collected_early_stop() {
         let runner = MockJjRunner {
@@ -845,8 +845,8 @@ mod tests {
 
     /// Topological sort: leaves first, roots last.
     ///
-    /// Graph: ch_c -> ch_b -> ch_a (linear)
-    /// Expected sort: [ch_c, ch_b, ch_a]
+    /// Graph: `ch_c` -> `ch_b` -> `ch_a` (linear)
+    /// Expected sort: [`ch_c`, `ch_b`, `ch_a`]
     #[tokio::test]
     async fn topological_sort_linear() {
         let runner = MockJjRunner {
@@ -884,9 +884,9 @@ mod tests {
     /// Topological sort with branching: leaves processed first, then shared
     /// root.
     ///
-    /// Graph: ch_b -> ch_a, ch_c -> ch_a
-    /// Expected: [ch_b, ch_c, ch_a] or [ch_c, ch_b, ch_a] depending on sort.
-    /// With alphabetical leaf ordering: ch_b before ch_c.
+    /// Graph: `ch_b` -> `ch_a`, `ch_c` -> `ch_a`
+    /// Expected: [`ch_b`, `ch_c`, `ch_a`] or [`ch_c`, `ch_b`, `ch_a`] depending
+    /// on sort. With alphabetical leaf ordering: `ch_b` before `ch_c`.
     #[tokio::test]
     async fn topological_sort_branching() {
         let runner = MockJjRunner {
@@ -998,7 +998,8 @@ mod tests {
         assert_eq!(seg.commits[0].author_name, "T");
     }
 
-    /// group_segments_into_stacks is deterministic (sorted by leaf change_id).
+    /// `group_segments_into_stacks` is deterministic (sorted by leaf
+    /// `change_id`).
     #[test]
     fn stacks_are_deterministically_ordered() {
         let mut segments = HashMap::new();
@@ -1068,9 +1069,10 @@ mod tests {
     /// A commit with only non-user bookmarks is treated as unbookmarked
     /// (no segment boundary).
     ///
-    /// trunk -> c_other(bm_other) -> c_user(bm_user)
-    /// Only bm_user is the user's bookmark. c_other has only bm_other, so
-    /// it should be treated as an unbookmarked commit within bm_user's segment.
+    /// trunk -> `c_other(bm_other)` -> `c_user(bm_user)`
+    /// Only `bm_user` is the user's bookmark. `c_other` has only `bm_other`, so
+    /// it should be treated as an unbookmarked commit within `bm_user`'s
+    /// segment.
     #[tokio::test]
     async fn only_non_user_bookmarks_no_segment_boundary() {
         let runner = MockJjRunner {
@@ -1115,10 +1117,10 @@ mod tests {
         args[0] == "log" && args[2].contains("heads(")
     }
 
-    /// trunk → bm_a → change_1 (no bookmark)
+    /// trunk → `bm_a` → `change_1` (no bookmark)
     ///
-    /// Head at change_1 creates a 2-segment stack: the unbookmarked head
-    /// segment plus the bookmarked bm_a segment discovered during traversal.
+    /// Head at `change_1` creates a 2-segment stack: the unbookmarked head
+    /// segment plus the bookmarked `bm_a` segment discovered during traversal.
     #[tokio::test]
     async fn unbookmarked_head_discovered() {
         let runner = MockJjRunner {
@@ -1209,8 +1211,8 @@ mod tests {
 
     /// Two unbookmarked heads branching from a bookmarked ancestor.
     ///
-    /// trunk → bm_a → head_1 (no bm)
-    ///       ↘ bm_a → head_2 (no bm)
+    /// trunk → `bm_a` → `head_1` (no bm)
+    ///       ↘ `bm_a` → `head_2` (no bm)
     #[tokio::test]
     async fn multiple_unbookmarked_heads() {
         let runner = MockJjRunner {
@@ -1284,8 +1286,8 @@ mod tests {
     /// unbookmarked head discovers the bookmark during the walk and creates
     /// proper boundary.
     ///
-    /// trunk → c_mid(bm_mid) → c_head (no bm)
-    /// No bookmark is at c_head. bm_mid is the only bookmark.
+    /// trunk → `c_mid(bm_mid)` → `c_head` (no bm)
+    /// No bookmark is at `c_head`. `bm_mid` is the only bookmark.
     #[tokio::test]
     async fn unbookmarked_head_with_bookmarked_ancestor() {
         let runner = MockJjRunner {

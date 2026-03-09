@@ -153,7 +153,7 @@ impl<'a> GraphWidget<'a> {
                 spans.push(Span::styled(format!("{node_char:<COL_WIDTH$}"), style));
 
                 if is_on_path || is_selected_leaf {
-                    let label = self.node_label(node);
+                    let label = Self::node_label(node);
                     if !label.is_empty() {
                         labels.push((label, true));
                     }
@@ -180,7 +180,7 @@ impl<'a> GraphWidget<'a> {
         Line::from(spans)
     }
 
-    /// Render the connector line between row_above and row_below.
+    /// Render the connector line between `row_above` and `row_below`.
     ///
     /// Shows │ for vertical edges, ├─╮ for branch forks.
     fn build_connector_line(
@@ -275,7 +275,7 @@ impl<'a> GraphWidget<'a> {
         Line::from(spans)
     }
 
-    fn node_label(&self, node: &super::graph_layout::LayoutNode) -> String {
+    fn node_label(node: &super::graph_layout::LayoutNode) -> String {
         let mut parts = Vec::new();
 
         if !node.bookmark_names.is_empty() {
@@ -311,7 +311,7 @@ impl Widget for GraphWidget<'_> {
         };
 
         for (i, line) in lines.iter().skip(start).take(visible_height).enumerate() {
-            let y = area.y + i as u16;
+            let y = area.y + u16::try_from(i).expect("line index fits in u16");
             if y >= area.y + area.height {
                 break;
             }
@@ -373,7 +373,7 @@ mod tests {
 
     fn make_segment(names: &[&str], change_id: &str, descriptions: &[&str]) -> BookmarkSegment {
         BookmarkSegment {
-            bookmark_names: names.iter().map(|s| s.to_string()).collect(),
+            bookmark_names: names.iter().map(ToString::to_string).collect(),
             change_id: change_id.to_string(),
             commits: descriptions
                 .iter()

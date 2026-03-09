@@ -153,7 +153,7 @@ pub fn build_layout(graph: &ChangeGraph) -> GraphLayout {
                     .description
                     .lines()
                     .next()
-                    .map(|l| l.trim())
+                    .map(str::trim)
                     .filter(|l| !l.is_empty())
                     .unwrap_or("(no description)")
                     .to_string();
@@ -266,7 +266,7 @@ mod tests {
 
     fn make_segment(names: &[&str], change_id: &str, descriptions: &[&str]) -> BookmarkSegment {
         BookmarkSegment {
-            bookmark_names: names.iter().map(|s| s.to_string()).collect(),
+            bookmark_names: names.iter().map(ToString::to_string).collect(),
             change_id: change_id.to_string(),
             commits: descriptions
                 .iter()

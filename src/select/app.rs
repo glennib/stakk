@@ -1,6 +1,6 @@
 //! App state machine and event loop for the TUI selection.
 //!
-//! Two screens: GraphView (pick a branch) → BookmarkAssignment (toggle
+//! Two screens: `GraphView` (pick a branch) → `BookmarkAssignment` (toggle
 //! bookmarks). Uses ratatui's inline viewport (not fullscreen).
 
 use std::io;
@@ -62,7 +62,8 @@ pub fn run_tui(graph: &ChangeGraph) -> Result<Option<SelectionResult>, StakkErro
     // Calculate viewport height: content rows + title + subtitle + help.
     let (_, term_height) = crossterm::terminal::size()?;
     let content_height = display_line_count(layout.total_rows) + 3;
-    let viewport_height = content_height.min(30).min(term_height as usize - 2) as u16;
+    let viewport_height = u16::try_from(content_height.min(30).min(usize::from(term_height) - 2))
+        .expect("viewport height fits in u16");
 
     // Set up inline viewport.
     crossterm::terminal::enable_raw_mode()?;

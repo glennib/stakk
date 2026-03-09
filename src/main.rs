@@ -279,7 +279,7 @@ async fn show_status() -> Result<(), StakkError> {
                     .commits
                     .first()
                     .and_then(|c| c.description.lines().next())
-                    .map(|l| l.trim())
+                    .map(str::trim)
                     .filter(|l| !l.is_empty())
                     .unwrap_or("(no description)");
                 println!("    {names} ({commit_count} commit(s)): {desc}");

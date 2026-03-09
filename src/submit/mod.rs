@@ -272,17 +272,16 @@ pub async fn create_submission_plan<F: Forge>(
             bookmark_names[i - 1].clone()
         };
 
-        let title = segment
-            .commits
-            .first()
-            .map(|c| {
+        let title = segment.commits.first().map_or_else(
+            || bookmark_name.clone(),
+            |c| {
                 c.description
                     .lines()
                     .next()
                     .unwrap_or(&c.description)
                     .to_string()
-            })
-            .unwrap_or_else(|| bookmark_name.clone());
+            },
+        );
 
         let existing_pr = pr_result.map_err(|source| SubmitError::PrLookupFailed {
             bookmark: bookmark_name.clone(),
@@ -555,7 +554,7 @@ mod tests {
 
     fn make_segment(names: &[&str], change_id: &str, desc: &str) -> BookmarkSegment {
         BookmarkSegment {
-            bookmark_names: names.iter().map(|s| s.to_string()).collect(),
+            bookmark_names: names.iter().map(ToString::to_string).collect(),
             change_id: change_id.to_string(),
             commits: vec![SegmentCommit {
                 commit_id: format!("c_{change_id}"),

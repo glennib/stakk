@@ -151,7 +151,7 @@ impl<R: JjRunner> Jj<R> {
                 // "main@origin" and "main@git". Filter for non-"git" remotes.
                 !name.ends_with("@git")
             })
-            .map(|s| s.as_str())
+            .map(String::as_str)
             .collect();
 
         match candidates.first() {

@@ -45,7 +45,7 @@ pub struct BranchStack {
 /// and the resulting stacks.
 #[derive(Debug)]
 pub struct ChangeGraph {
-    /// Child change_id → parent change_id (toward trunk). Each entry
+    /// Child `change_id` → parent `change_id` (toward trunk). Each entry
     /// represents a stacking relationship between two bookmarked changes.
     pub adjacency_list: HashMap<String, String>,
 
@@ -60,7 +60,7 @@ pub struct ChangeGraph {
     )]
     pub stack_roots: HashSet<String>,
 
-    /// Map from change_id to its `BookmarkSegment`.
+    /// Map from `change_id` to its `BookmarkSegment`.
     #[cfg_attr(
         not(test),
         expect(

@@ -13,13 +13,13 @@ pub struct SubmitArgs {
 
     /// Create pull requests as drafts.
     ///
-    /// Can also be set with the `STAKK_DRAFT` environment variable.
+    /// Can also be set with the STAKK_DRAFT environment variable.
     #[arg(long, env = "STAKK_DRAFT")]
     pub draft: bool,
 
     /// Git remote to push to.
     ///
-    /// Can also be set with the `STAKK_REMOTE` environment variable.
+    /// Can also be set with the STAKK_REMOTE environment variable.
     #[arg(long, default_value = "origin", env = "STAKK_REMOTE")]
     pub remote: String,
 
@@ -34,7 +34,7 @@ pub struct SubmitArgs {
     ///   current_bookmark  — the bookmark being submitted
     ///   stakk_url         — URL to the stakk project
     ///
-    /// Each entry in `stack` has:
+    /// Each entry in stack has:
     ///
     ///   bookmark_name  — bookmark name
     ///   pr_url         — full URL to the pull request
@@ -47,12 +47,12 @@ pub struct SubmitArgs {
     ///
     /// Example template:
     ///
-    ///   Stack ({{ stack_size }} PRs, merges into `{{ default_branch }}`):
+    ///  Stack ({{ stack_size }} PRs, merges into `{{ default_branch }}`):
     ///   {% for entry in stack %}
     ///   - {{ entry.pr_url }}{% if entry.is_current %} 👈{% endif %}
     ///   {%- endfor %}
     ///
-    /// Can also be set with the `STAKK_TEMPLATE` environment variable.
+    /// Can also be set with the STAKK_TEMPLATE environment variable.
     #[expect(
         clippy::doc_lazy_continuation,
         reason = "endfor must align with the for-loop, not the list item"

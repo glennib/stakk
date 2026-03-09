@@ -10,6 +10,11 @@ readme = "README.md"
 keywords = ["jujutsu", "jj", "github", "stacked-prs", "pull-request"]
 categories = ["command-line-utilities", "development-tools"]
 
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+too_many_lines = "allow"
+doc_markdown = "allow"
+
 [[bin]]
 name = "stakk"
 path = "src/main.rs"

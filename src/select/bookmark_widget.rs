@@ -39,7 +39,7 @@ pub struct BookmarkRow {
     pub existing_bookmark: Option<String>,
     /// Whether and how this row is included in the submission.
     pub state: RowState,
-    /// Generated bookmark name (stakk-<change_id_prefix>).
+    /// Generated bookmark name (`stakk-<change_id_prefix>`).
     pub generated_name: Option<String>,
     /// Whether this is the trunk row (not toggleable).
     pub is_trunk: bool,
@@ -127,7 +127,17 @@ impl BookmarkAssignmentState {
         };
 
         row.state = match (row.state, can_use_generated) {
+            #[expect(
+                clippy::match_same_arms,
+                reason = "UseExisting+true → UseGenerated is a distinct cycle transition from \
+                          Unchecked → UseGenerated"
+            )]
             (RowState::UseExisting, true) => RowState::UseGenerated,
+            #[expect(
+                clippy::match_same_arms,
+                reason = "UseExisting+false → Unchecked differs from UseGenerated which always → \
+                          Unchecked"
+            )]
             (RowState::UseExisting, false) => RowState::Unchecked,
             (RowState::UseGenerated, _) => RowState::Unchecked,
             (RowState::Unchecked, _) if row.existing_bookmark.is_some() => RowState::UseExisting,
@@ -300,7 +310,7 @@ impl Widget for BookmarkWidget<'_> {
         let lines = self.build_lines();
 
         for (i, line) in lines.iter().take(area.height as usize).enumerate() {
-            let y = area.y + i as u16;
+            let y = area.y + u16::try_from(i).expect("line index fits in u16");
             buf.set_line(area.x, y, line, area.width);
         }
     }
@@ -358,7 +368,7 @@ mod tests {
             change_id: change_id.to_string(),
             commit_id: format!("commit_{change_id}"),
             summary: summary.to_string(),
-            bookmark_names: bookmarks.iter().map(|s| s.to_string()).collect(),
+            bookmark_names: bookmarks.iter().map(ToString::to_string).collect(),
             is_trunk,
             is_leaf,
             stack_index: 0,

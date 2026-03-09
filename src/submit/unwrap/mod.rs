@@ -3,6 +3,83 @@
 /// Joins consecutive prose lines with a space while preserving structural
 /// Markdown elements (headers, lists, code blocks, tables, blockquotes,
 /// thematic breaks) verbatim.
+/// Returns true if the line is a thematic break: 3+ of the same marker
+/// char (`-`, `*`, `_`) with only spaces between.
+fn is_thematic_break(line: &str) -> bool {
+    let trimmed = line.trim();
+    if trimmed.len() < 3 {
+        return false;
+    }
+    let mut chars = trimmed.chars().filter(|c| *c != ' ');
+    let first = match chars.next() {
+        Some(c) if c == '-' || c == '*' || c == '_' => c,
+        _ => return false,
+    };
+    let count = 1 + chars.filter(|c| *c == first).count();
+    // All non-space chars must be the same marker, and there must be 3+.
+    trimmed.chars().all(|c| c == first || c == ' ') && count >= 3
+}
+
+/// Returns the fence marker if the line opens or closes a fenced code block.
+fn fence_marker(line: &str) -> Option<String> {
+    let trimmed = line.trim_start();
+    if trimmed.starts_with("```") {
+        Some("```".to_string())
+    } else if trimmed.starts_with("~~~") {
+        Some("~~~".to_string())
+    } else {
+        None
+    }
+}
+
+/// Classify a line as structural or prose.
+///
+/// Returns `Some(true)` for structural lines that block continuation
+/// (blank, header, thematic break, code, table, blockquote),
+/// `Some(false)` for structural lines that allow continuation (list
+/// items), and `None` for prose lines.
+fn classify(line: &str, prev_blocks_continuation: bool) -> Option<bool> {
+    let trimmed = line.trim_start();
+    // Blank line
+    if line.trim().is_empty() {
+        return Some(true);
+    }
+    // ATX header
+    if trimmed.starts_with('#') {
+        return Some(true);
+    }
+    // Unordered list item — structural but allows continuation
+    if trimmed.starts_with("- ") || trimmed.starts_with("* ") || trimmed.starts_with("+ ") {
+        return Some(false);
+    }
+    // Ordered list item — structural but allows continuation
+    if let Some(rest) = trimmed.strip_prefix(|c: char| c.is_ascii_digit()) {
+        let rest = rest.trim_start_matches(|c: char| c.is_ascii_digit());
+        if rest.starts_with(". ") || rest.starts_with(") ") {
+            return Some(false);
+        }
+    }
+    // Blockquote
+    if trimmed.starts_with('>') {
+        return Some(true);
+    }
+    // Thematic break
+    if is_thematic_break(line) {
+        return Some(true);
+    }
+    // Table row
+    if trimmed.starts_with('|') {
+        return Some(true);
+    }
+    // Indented code block (4+ spaces or tab) — only if previous
+    // blocks continuation (not continuing a prose paragraph).
+    if prev_blocks_continuation && (line.starts_with("    ") || line.starts_with('\t')) {
+        return Some(true);
+    }
+    // Prose
+    None
+}
+
 pub(crate) fn unwrap_markdown(text: &str) -> String {
     #[derive(PartialEq)]
     enum State {
@@ -12,83 +89,6 @@ pub(crate) fn unwrap_markdown(text: &str) -> String {
 
     let mut state = State::Normal;
     let mut output: Vec<String> = Vec::new();
-
-    /// Returns true if the line is a thematic break: 3+ of the same marker
-    /// char (`-`, `*`, `_`) with only spaces between.
-    fn is_thematic_break(line: &str) -> bool {
-        let trimmed = line.trim();
-        if trimmed.len() < 3 {
-            return false;
-        }
-        let mut chars = trimmed.chars().filter(|c| *c != ' ');
-        let first = match chars.next() {
-            Some(c) if c == '-' || c == '*' || c == '_' => c,
-            _ => return false,
-        };
-        let count = 1 + chars.filter(|c| *c == first).count();
-        // All non-space chars must be the same marker, and there must be 3+.
-        trimmed.chars().all(|c| c == first || c == ' ') && count >= 3
-    }
-
-    /// Returns true if the line opens or closes a fenced code block.
-    fn fence_marker(line: &str) -> Option<String> {
-        let trimmed = line.trim_start();
-        if trimmed.starts_with("```") {
-            Some("```".to_string())
-        } else if trimmed.starts_with("~~~") {
-            Some("~~~".to_string())
-        } else {
-            None
-        }
-    }
-
-    /// Classify a line as structural or prose.
-    ///
-    /// Returns `Some(true)` for structural lines that block continuation
-    /// (blank, header, thematic break, code, table, blockquote),
-    /// `Some(false)` for structural lines that allow continuation (list
-    /// items), and `None` for prose lines.
-    fn classify(line: &str, prev_blocks_continuation: bool) -> Option<bool> {
-        let trimmed = line.trim_start();
-        // Blank line
-        if line.trim().is_empty() {
-            return Some(true);
-        }
-        // ATX header
-        if trimmed.starts_with('#') {
-            return Some(true);
-        }
-        // Unordered list item — structural but allows continuation
-        if trimmed.starts_with("- ") || trimmed.starts_with("* ") || trimmed.starts_with("+ ") {
-            return Some(false);
-        }
-        // Ordered list item — structural but allows continuation
-        if let Some(rest) = trimmed.strip_prefix(|c: char| c.is_ascii_digit()) {
-            let rest = rest.trim_start_matches(|c: char| c.is_ascii_digit());
-            if rest.starts_with(". ") || rest.starts_with(") ") {
-                return Some(false);
-            }
-        }
-        // Blockquote
-        if trimmed.starts_with('>') {
-            return Some(true);
-        }
-        // Thematic break
-        if is_thematic_break(line) {
-            return Some(true);
-        }
-        // Table row
-        if trimmed.starts_with('|') {
-            return Some(true);
-        }
-        // Indented code block (4+ spaces or tab) — only if previous
-        // blocks continuation (not continuing a prose paragraph).
-        if prev_blocks_continuation && (line.starts_with("    ") || line.starts_with('\t')) {
-            return Some(true);
-        }
-        // Prose
-        None
-    }
 
     let lines: Vec<&str> = text.lines().collect();
     // Whether the previous line blocks continuation (joining). Starts true
@@ -115,23 +115,20 @@ pub(crate) fn unwrap_markdown(text: &str) -> String {
                     continue;
                 }
 
-                match classify(line, prev_blocks) {
-                    Some(blocks) => {
-                        // Structural line — always emitted on its own line.
-                        output.push(line.to_string());
-                        prev_blocks = blocks;
+                if let Some(blocks) = classify(line, prev_blocks) {
+                    // Structural line — always emitted on its own line.
+                    output.push(line.to_string());
+                    prev_blocks = blocks;
+                } else {
+                    // Prose line — join with previous if it allows
+                    // continuation.
+                    if !prev_blocks && let Some(last) = output.last_mut() {
+                        last.push(' ');
+                        last.push_str(line.trim());
+                        continue;
                     }
-                    None => {
-                        // Prose line — join with previous if it allows
-                        // continuation.
-                        if !prev_blocks && let Some(last) = output.last_mut() {
-                            last.push(' ');
-                            last.push_str(line.trim());
-                            continue;
-                        }
-                        output.push(line.to_string());
-                        prev_blocks = false;
-                    }
+                    output.push(line.to_string());
+                    prev_blocks = false;
                 }
             }
         }

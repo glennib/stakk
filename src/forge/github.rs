@@ -69,7 +69,7 @@ impl Forge for GitHubForge {
             title: pr.title.unwrap_or_default(),
             head_ref: pr.head.ref_field,
             base_ref: pr.base.ref_field,
-            state: map_pr_state(pr.state, pr.merged_at.is_some()),
+            state: map_pr_state(pr.state.as_ref(), pr.merged_at.is_some()),
         }))
     }
 
@@ -175,10 +175,10 @@ fn map_octocrab_error(e: octocrab::Error) -> ForgeError {
     }
 }
 
-fn map_pr_state(state: Option<IssueState>, has_merged_at: bool) -> PrState {
+fn map_pr_state(state: Option<&IssueState>, has_merged_at: bool) -> PrState {
     if has_merged_at {
         PrState::Merged
-    } else if state == Some(IssueState::Closed) {
+    } else if state == Some(&IssueState::Closed) {
         PrState::Closed
     } else {
         PrState::Open
