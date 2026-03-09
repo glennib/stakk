@@ -54,7 +54,7 @@ async fn run() -> Result<(), StakkError> {
             clap_complete::generate(shell, &mut Cli::command(), "stakk", &mut std::io::stdout());
         }
         None => {
-            submit_bookmark(&SubmitArgs::default()).await?;
+            submit_bookmark(&cli.submit_args).await?;
         }
     }
 

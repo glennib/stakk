@@ -60,15 +60,3 @@ pub struct SubmitArgs {
     #[arg(long, env = "STAKK_TEMPLATE", verbatim_doc_comment)]
     pub template: Option<String>,
 }
-
-impl Default for SubmitArgs {
-    fn default() -> Self {
-        Self {
-            bookmark: None,
-            dry_run: false,
-            draft: false,
-            remote: "origin".to_string(),
-            template: None,
-        }
-    }
-}

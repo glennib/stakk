@@ -11,9 +11,13 @@ use crate::cli::submit::SubmitArgs;
 /// stakk — bridge Jujutsu bookmarks to GitHub stacked pull requests.
 #[derive(Debug, Parser)]
 #[command(version, about)]
+#[command(args_conflicts_with_subcommands = true)]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Option<Commands>,
+    /// Default submit arguments (used when no subcommand is given).
+    #[command(flatten)]
+    pub submit_args: SubmitArgs,
 }
 
 #[derive(Debug, Subcommand)]
