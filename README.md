@@ -14,6 +14,9 @@ idempotent updates.
 
 - **Automatic stack detection** — analyzes the jj change graph to find bookmark
   chains and their topological order.
+- **No bookmarks required** — stakk discovers unbookmarked heads and lets you
+  create bookmarks on-the-fly via the interactive TUI. Auto-generated
+  `stakk-<change_id>` names keep things simple.
 - **Stacked PR submission** — creates or updates GitHub PRs with correct base
   branches so each PR shows only its own diff.
 - **Stack-awareness comments** — adds a comment to every PR listing the full
@@ -24,10 +27,9 @@ idempotent updates.
   updated, never duplicated.
 - **Dry-run mode** — `--dry-run` shows exactly what would happen without
   touching GitHub.
-- **Interactive selection** — running `stakk submit` without a bookmark
-  argument shows an interactive two-stage prompt: pick a stack, then pick
-  how far up the stack to submit. Shared ancestors are annotated, and each
-  option shows the resulting PR count.
+- **Interactive TUI** — running `stakk` without arguments launches a ratatui
+  TUI: a graph view shows all branch stacks, then a bookmark assignment screen
+  lets you toggle bookmarks on unmarked commits before submitting.
 - **Draft PRs** — `--draft` creates new PRs as drafts.
 - **PR body from descriptions** — PR titles and bodies are populated from jj
   change descriptions. Manually edited PR bodies are never overwritten.
@@ -79,7 +81,10 @@ Download from the [latest release](https://github.com/glennib/stakk/releases/lat
 ## Quick start
 
 ```
-# Submit interactively — pick a stack and bookmark from a menu
+# Submit interactively — pick a stack and assign bookmarks via TUI
+stakk
+
+# Works even without any bookmarks — the TUI lets you create them
 stakk
 
 # Submit a specific bookmark (and its ancestors) as stacked PRs
@@ -97,8 +102,9 @@ stakk show
 
 ## How stacking works
 
-In jj, you create bookmarks that point at changes. When bookmarks form a
-linear chain — each building on the previous — they represent a stack:
+In jj, bookmarks point at changes. When bookmarks form a linear chain — each
+building on the previous — they represent a stack. You can create bookmarks
+yourself, or let stakk discover unbookmarked heads and create them interactively:
 
 ```
 trunk
@@ -147,32 +153,17 @@ CLI flags always take precedence over environment variables.
 
 ### `stakk` (no arguments)
 
-Launches the interactive submission flow with a two-stage prompt: pick a stack,
-then choose how far up the stack to submit. This is equivalent to `stakk submit`
-without arguments.
+Launches the interactive submission flow. A ratatui TUI shows a graph of all
+branch stacks; select a leaf branch, then toggle bookmarks on commits that need
+them. Works even in repos with no pre-existing bookmarks — stakk creates
+`stakk-<change_id>` bookmarks for unmarked commits. Equivalent to
+`stakk submit` without arguments.
 
 ### `stakk submit [bookmark]`
 
 Submit a bookmark and all its ancestors as stacked PRs. When run without a
-bookmark argument, an interactive two-stage prompt lets you pick a stack and
-then choose how far up the stack to submit:
-
-```
-? Which stack?
-> ○ ← base ← feat-b ← feat-c  (3 PRs)
-  ○ ← standalone  (1 PR: fix login bug)
-
-? Submit up to which bookmark?
-> feat-c (leaf, 1 commit) → 3 PRs
-      add caching layer
-  feat-b (2 commits) → 2 PRs
-      refactor auth module
-  base (base, 1 commit) → 1 PR
-      add user model
-```
-
-Stages are skipped automatically when there's only one option (e.g., a
-single stack skips stage 1, a single bookmark auto-selects immediately).
+bookmark argument, an interactive ratatui TUI lets you select a branch from a
+graph view, then assign bookmarks to any unmarked commits before submitting.
 
 | Flag | Env var | Description |
 |------|--------|-------------|
@@ -261,4 +252,4 @@ and `--dry-run` falls out naturally (run phases 1 and 2, skip 3).
 
 ## License
 
-MIT
+MIT OR Apache-2.0
