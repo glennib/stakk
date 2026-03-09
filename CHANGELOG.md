@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0](https://github.com/glennib/stakk/compare/v0.2.9...v1.0.0) - 2026-03-09
+
+### Highlights at 1.0
+
+- Automatic stack detection from jj change graph
+- Three-phase submission pipeline (analyze → plan → execute)
+- Interactive ratatui TUI for branch selection and bookmark assignment
+- Works without pre-existing bookmarks — creates them on-the-fly
+- Stack-awareness comments on every PR with customizable minijinja templates
+- Idempotent — re-running is always safe, existing PRs are updated
+- Dry-run mode to preview without touching GitHub
+- Draft PR support
+- PR titles and bodies from jj change descriptions
+- Environment variable configuration (`STAKK_REMOTE`, `STAKK_DRAFT`, `STAKK_TEMPLATE`)
+- Shell completions (bash, zsh, fish, elvish, powershell)
+- All VCS operations through jj — no direct git usage
+
+### Other
+
+- address clippy pedantic lints
+- add license texts (MIT, Apache-2.0)
+- add crates.io metadata (keywords, categories)
+- remove stale development documents
+
 ## [0.2.9](https://github.com/glennib/stakk/compare/v0.2.8...v0.2.9) - 2026-03-09
 
 ### Added
