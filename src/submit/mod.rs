@@ -3,6 +3,8 @@
 //! Takes a change graph and forge implementation and submits bookmarks as
 //! stacked pull requests, updating existing PRs idempotently.
 
+mod unwrap;
+
 use std::fmt;
 
 use miette::Diagnostic;
@@ -24,6 +26,7 @@ use crate::graph::types::SegmentCommit;
 use crate::jj::Jj;
 use crate::jj::JjError;
 use crate::jj::runner::JjRunner;
+use crate::submit::unwrap::unwrap_markdown;
 
 /// Errors from the submission pipeline.
 #[derive(Debug, Error, Diagnostic)]
@@ -218,7 +221,11 @@ fn build_pr_body(commits: &[SegmentCommit]) -> Option<String> {
         parts.join("\n\n---\n\n")
     };
 
-    if body.is_empty() { None } else { Some(body) }
+    if body.is_empty() {
+        None
+    } else {
+        Some(unwrap_markdown(&body))
+    }
 }
 
 // ---------------------------------------------------------------------------
