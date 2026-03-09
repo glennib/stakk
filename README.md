@@ -8,6 +8,8 @@ and turning it into a coherent set of GitHub PRs that merge into each other in
 the correct order — with stack-awareness comments, correct base branches, and
 idempotent updates.
 
+![Interactive stakk submission flow](media/stakk.gif)
+
 ## Features
 
 - **Automatic stack detection** — analyzes the jj change graph to find bookmark
@@ -34,8 +36,6 @@ idempotent updates.
 - **Forge-agnostic core** — GitHub is the first implementation, but the
   submission logic is decoupled behind a `Forge` trait.
 
-![Interactive stakk submission flow](media/stakk.gif)
-
 ## Origins
 
 stakk is inspired by [jj-stack](https://github.com/keanemind/jj-stack), a
@@ -43,8 +43,8 @@ TypeScript/ReScript CLI that does the same job. jj-stack's core algorithms —
 change graph construction, segment grouping, topological ordering — directly
 informed stakk's design.
 
-stakk reimplements these ideas in Rust to continue the development of these
-ideas, as well as to address new features and desired changes.
+stakk reimplements these ideas in Rust to continue the development and to
+address new features and desired changes.
 
 ## Installation
 
