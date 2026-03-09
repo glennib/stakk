@@ -6,6 +6,9 @@ repository = "https://github.com/glennib/stakk"
 description = "A CLI tool that bridges Jujutsu (jj) bookmarks to GitHub stacked pull requests"
 license = "MIT OR Apache-2.0"
 authors = ["Glenn Bitar <glennbitar@gmail.com>"]
+readme = "README.md"
+keywords = ["jujutsu", "jj", "github", "stacked-prs", "pull-request"]
+categories = ["command-line-utilities", "development-tools"]
 
 [[bin]]
 name = "stakk"
