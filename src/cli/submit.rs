@@ -63,12 +63,9 @@ pub struct SubmitArgs {
 
 impl Default for SubmitArgs {
     fn default() -> Self {
-        Self {
-            bookmark: None,
-            dry_run: false,
-            draft: false,
-            remote: "origin".to_string(),
-            template: None,
-        }
+        let cmd = <Self as Args>::augment_args(clap::Command::new("submit"));
+        let matches = cmd.get_matches_from(std::iter::empty::<std::ffi::OsString>());
+        <Self as clap::FromArgMatches>::from_arg_matches(&matches)
+            .expect("default SubmitArgs should parse from empty args")
     }
 }
