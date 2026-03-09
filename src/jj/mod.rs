@@ -190,6 +190,27 @@ impl<R: JjRunner> Jj<R> {
         Ok(())
     }
 
+    /// Get all non-empty, user-authored head changes descending from trunk.
+    ///
+    /// These are the tips of branches that may not have bookmarks yet.
+    /// Used to discover unbookmarked changes beyond the last bookmark.
+    pub async fn get_heads(&self) -> Result<Vec<LogEntry>, JjError> {
+        let output = self
+            .runner
+            .run_jj(&[
+                "log",
+                "-r",
+                "heads((mine() ~ empty()) & trunk()..)",
+                "--no-graph",
+                "--limit",
+                "100",
+                "-T",
+                LOG_TEMPLATE,
+            ])
+            .await?;
+        parse_log_entries(&output)
+    }
+
     /// Fetch from all remotes.
     #[expect(
         dead_code,
@@ -506,6 +527,23 @@ mod tests {
             .await
             .unwrap();
         assert!(entries.is_empty());
+    }
+
+    #[tokio::test]
+    async fn get_heads_integration() {
+        let runner = MockJjRunner {
+            handler: |args: &[&str]| {
+                assert_eq!(args[0], "log");
+                assert!(args[2].contains("heads("));
+                Ok(r#"{"commit":{"commit_id":"h1","parents":["c_a"],"change_id":"ch_h1","description":"unbookmarked head","author":{"name":"A","email":"a@b.c","timestamp":"T"},"committer":{"name":"A","email":"a@b.c","timestamp":"T"}},"local_bookmarks":[],"remote_bookmarks":[]}"#.to_string())
+            },
+        };
+        let jj = Jj::new(runner);
+        let heads = jj.get_heads().await.unwrap();
+        assert_eq!(heads.len(), 1);
+        assert_eq!(heads[0].commit_id, "h1");
+        assert_eq!(heads[0].change_id, "ch_h1");
+        assert!(heads[0].local_bookmark_names.is_empty());
     }
 
     #[tokio::test]

@@ -29,11 +29,6 @@ pub enum StakkError {
     #[diagnostic(transparent)]
     Submit(#[from] SubmitError),
 
-    /// An error in change graph construction.
-    #[error("graph error: {message}")]
-    #[diagnostic(code(stakk::graph))]
-    Graph { message: String },
-
     /// The specified remote is not a GitHub URL.
     #[error("remote '{name}' is not a GitHub URL: {url}")]
     #[diagnostic(

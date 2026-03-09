@@ -16,7 +16,6 @@ use self::types::SegmentCommit;
 use crate::error::StakkError;
 use crate::jj::Jj;
 use crate::jj::runner::JjRunner;
-use crate::jj::types::Bookmark;
 
 /// Result of traversing from one bookmark toward trunk.
 struct TraversalResult {
@@ -54,7 +53,7 @@ pub async fn build_change_graph<R: JjRunner>(jj: &Jj<R>) -> Result<ChangeGraph, 
         }
 
         let result = traverse_and_discover_segments(
-            bookmark,
+            &bookmark.commit_id,
             jj,
             &fully_collected,
             &mut tainted_change_ids,
@@ -67,34 +66,51 @@ pub async fn build_change_graph<R: JjRunner>(jj: &Jj<R>) -> Result<ChangeGraph, 
             continue;
         }
 
-        // Store segments and mark bookmark names as fully collected.
-        for seg in &result.segments {
-            for name in &seg.bookmark_names {
-                fully_collected.insert(name.clone());
-            }
+        integrate_traversal_result(
+            result,
+            &mut adjacency_list,
+            &mut stack_roots,
+            &mut segments,
+            &mut fully_collected,
+        );
+    }
+
+    // Discover unbookmarked heads — changes beyond the last bookmark.
+    let bookmarked_commit_ids: HashSet<String> =
+        bookmarks.iter().map(|b| b.commit_id.clone()).collect();
+
+    let heads = jj.get_heads().await?;
+    for head in &heads {
+        // Skip heads that are at a bookmarked commit (already traversed).
+        if bookmarked_commit_ids.contains(&head.commit_id) {
+            continue;
+        }
+        // Skip heads whose change_id is already in segments.
+        if segments.contains_key(&head.change_id) {
+            continue;
         }
 
-        // Build adjacency: consecutive segments are child -> parent.
-        // result.segments is ordered newest-first (leaf toward trunk).
-        for window in result.segments.windows(2) {
-            let child_id = &window[0].change_id;
-            let parent_id = &window[1].change_id;
-            adjacency_list.insert(child_id.clone(), parent_id.clone());
+        let result = traverse_and_discover_segments(
+            &head.commit_id,
+            jj,
+            &fully_collected,
+            &mut tainted_change_ids,
+            &user_bookmark_names,
+        )
+        .await?;
+
+        if result.excluded {
+            excluded_bookmark_count += 1;
+            continue;
         }
 
-        // Connect to already-seen segment if traversal stopped early.
-        if let Some(ref seen_id) = result.already_seen_change_id {
-            if let Some(last_seg) = result.segments.last() {
-                adjacency_list.insert(last_seg.change_id.clone(), seen_id.clone());
-            }
-        } else if let Some(last_seg) = result.segments.last() {
-            // Reached trunk: this is a root.
-            stack_roots.insert(last_seg.change_id.clone());
-        }
-
-        for seg in result.segments {
-            segments.insert(seg.change_id.clone(), seg);
-        }
+        integrate_traversal_result(
+            result,
+            &mut adjacency_list,
+            &mut stack_roots,
+            &mut segments,
+            &mut fully_collected,
+        );
     }
 
     // Identify leaves: segments not pointed to as parent by anyone.
@@ -118,15 +134,60 @@ pub async fn build_change_graph<R: JjRunner>(jj: &Jj<R>) -> Result<ChangeGraph, 
     })
 }
 
-/// Traverse from a bookmark toward trunk, discovering segments along the way.
+/// Integrate a traversal result into the shared graph state.
+///
+/// Stores discovered segments, builds adjacency relationships, tracks roots,
+/// and marks bookmark names as fully collected.
+fn integrate_traversal_result(
+    result: TraversalResult,
+    adjacency_list: &mut HashMap<String, String>,
+    stack_roots: &mut HashSet<String>,
+    segments: &mut HashMap<String, BookmarkSegment>,
+    fully_collected: &mut HashSet<String>,
+) {
+    // Mark bookmark names as fully collected.
+    for seg in &result.segments {
+        for name in &seg.bookmark_names {
+            fully_collected.insert(name.clone());
+        }
+    }
+
+    // Build adjacency: consecutive segments are child -> parent.
+    // result.segments is ordered newest-first (leaf toward trunk).
+    for window in result.segments.windows(2) {
+        let child_id = &window[0].change_id;
+        let parent_id = &window[1].change_id;
+        adjacency_list.insert(child_id.clone(), parent_id.clone());
+    }
+
+    // Connect to already-seen segment if traversal stopped early.
+    if let Some(ref seen_id) = result.already_seen_change_id {
+        if let Some(last_seg) = result.segments.last() {
+            adjacency_list.insert(last_seg.change_id.clone(), seen_id.clone());
+        }
+    } else if let Some(last_seg) = result.segments.last() {
+        // Reached trunk: this is a root.
+        stack_roots.insert(last_seg.change_id.clone());
+    }
+
+    for seg in result.segments {
+        segments.insert(seg.change_id.clone(), seg);
+    }
+}
+
+/// Traverse from a starting commit toward trunk, discovering segments along the
+/// way.
 ///
 /// Fetches commits in pages of 100. At each commit, checks for local bookmarks
 /// to determine segment boundaries. Stops when:
 /// - hitting a commit whose bookmark was already fully collected
 /// - reaching trunk (no more commits in the revset)
-/// - encountering a merge commit (taints this bookmark)
+/// - encountering a merge commit (taints this traversal)
+///
+/// `start_commit_id` is the commit to begin traversal from (a bookmark target
+/// or an unbookmarked head).
 async fn traverse_and_discover_segments<R: JjRunner>(
-    bookmark: &Bookmark,
+    start_commit_id: &str,
     jj: &Jj<R>,
     fully_collected: &HashSet<String>,
     tainted_change_ids: &mut HashSet<String>,
@@ -140,11 +201,7 @@ async fn traverse_and_discover_segments<R: JjRunner>(
 
     'page_loop: loop {
         let changes = jj
-            .get_branch_changes_paginated(
-                "trunk()",
-                &bookmark.commit_id,
-                last_seen_commit.as_deref(),
-            )
+            .get_branch_changes_paginated("trunk()", start_commit_id, last_seen_commit.as_deref())
             .await?;
 
         if changes.is_empty() {
@@ -198,24 +255,21 @@ async fn traverse_and_discover_segments<R: JjRunner>(
                 });
             }
 
-            // Add commit to current segment.
+            // Add commit to current segment. If no segment exists yet
+            // (unbookmarked head), start one with empty bookmark_names.
+            if current_segment.is_none() {
+                current_segment = Some(BookmarkSegment {
+                    bookmark_names: vec![],
+                    change_id: change.change_id.clone(),
+                    commits: Vec::new(),
+                });
+            }
             if let Some(ref mut seg) = current_segment {
                 seg.commits.push(SegmentCommit {
                     commit_id: change.commit_id.clone(),
                     change_id: change.change_id.clone(),
                     description: change.description.clone(),
                     author_name: change.author.name.clone(),
-                });
-            } else {
-                // Commit before any bookmark — shouldn't happen because the
-                // first entry in trunk()..bookmark should be the bookmark
-                // commit itself.
-                return Err(StakkError::Graph {
-                    message: format!(
-                        "encountered change {} before any bookmark while traversing from bookmark \
-                         '{}'",
-                        change.change_id, bookmark.name,
-                    ),
                 });
             }
         }
@@ -766,6 +820,11 @@ mod tests {
                     return Ok(lines.join("\n"));
                 }
 
+                // Heads query: no unbookmarked heads in this test.
+                if is_heads_query(args) {
+                    return Ok(String::new());
+                }
+
                 // Should NOT be called for c_a because bm_a is already
                 // collected.
                 panic!("unexpected revset: {revset}");
@@ -1046,5 +1105,236 @@ mod tests {
         assert_eq!(seg.commits.len(), 2);
         assert_eq!(seg.commits[0].commit_id, "c_user");
         assert_eq!(seg.commits[1].commit_id, "c_other");
+    }
+
+    // -- Unbookmarked head tests --
+
+    /// Helper: determines if a `jj log` invocation is a heads query vs
+    /// traversal. Heads queries contain `"heads("` in the revset.
+    fn is_heads_query(args: &[&str]) -> bool {
+        args[0] == "log" && args[2].contains("heads(")
+    }
+
+    /// trunk → bm_a → change_1 (no bookmark)
+    ///
+    /// Head at change_1 creates a 2-segment stack: the unbookmarked head
+    /// segment plus the bookmarked bm_a segment discovered during traversal.
+    #[tokio::test]
+    async fn unbookmarked_head_discovered() {
+        let runner = MockJjRunner {
+            handler: |args: &[&str]| {
+                if args[0] == "bookmark" {
+                    return Ok(bookmark_json("bm_a", "c_a", "ch_a"));
+                }
+
+                if is_heads_query(args) {
+                    // Head is at c_h (beyond bm_a).
+                    return Ok(log_entry_json("c_h", "ch_h", &["c_a"], &[]));
+                }
+
+                // Traversal queries.
+                let revset = args[2];
+                if revset.contains("c_a") {
+                    return Ok(log_entry_json("c_a", "ch_a", &["trunk_c"], &["bm_a"]));
+                }
+                if revset.contains("c_h") {
+                    let lines = [
+                        log_entry_json("c_h", "ch_h", &["c_a"], &[]),
+                        log_entry_json("c_a", "ch_a", &["trunk_c"], &["bm_a"]),
+                    ];
+                    return Ok(lines.join("\n"));
+                }
+
+                Ok(String::new())
+            },
+        };
+
+        let jj = Jj::new(runner);
+        let graph = build_change_graph(&jj).await.unwrap();
+
+        // Two segments: bm_a (bookmarked) and ch_h (unbookmarked head).
+        assert_eq!(graph.segments.len(), 2);
+        assert!(graph.segments.contains_key("ch_a"));
+        assert!(graph.segments.contains_key("ch_h"));
+
+        // The unbookmarked segment has empty bookmark_names.
+        let head_seg = graph.segments.get("ch_h").unwrap();
+        assert!(head_seg.bookmark_names.is_empty());
+        assert_eq!(head_seg.commits.len(), 1);
+        assert_eq!(head_seg.commits[0].commit_id, "c_h");
+
+        // Adjacency: ch_h -> ch_a
+        assert_eq!(graph.adjacency_list.get("ch_h").unwrap(), "ch_a");
+
+        // One stack with 2 segments.
+        assert_eq!(graph.stacks.len(), 1);
+        let stack = &graph.stacks[0];
+        assert_eq!(stack.segments.len(), 2);
+        assert_eq!(stack.segments[0].change_id, "ch_a");
+        assert_eq!(stack.segments[1].change_id, "ch_h");
+    }
+
+    /// Head at the same commit as a bookmark — should be skipped (no
+    /// duplicate segment).
+    #[tokio::test]
+    async fn unbookmarked_head_at_bookmarked_commit_skipped() {
+        let runner = MockJjRunner {
+            handler: |args: &[&str]| {
+                if args[0] == "bookmark" {
+                    return Ok(bookmark_json("bm_a", "c_a", "ch_a"));
+                }
+
+                if is_heads_query(args) {
+                    // Head is at the same commit as bm_a.
+                    return Ok(log_entry_json("c_a", "ch_a", &["trunk_c"], &["bm_a"]));
+                }
+
+                let revset = args[2];
+                if revset.contains("c_a") {
+                    return Ok(log_entry_json("c_a", "ch_a", &["trunk_c"], &["bm_a"]));
+                }
+
+                Ok(String::new())
+            },
+        };
+
+        let jj = Jj::new(runner);
+        let graph = build_change_graph(&jj).await.unwrap();
+
+        // Only one segment — the head at bm_a's commit was skipped.
+        assert_eq!(graph.segments.len(), 1);
+        assert_eq!(graph.stacks.len(), 1);
+        assert!(graph.segments.contains_key("ch_a"));
+    }
+
+    /// Two unbookmarked heads branching from a bookmarked ancestor.
+    ///
+    /// trunk → bm_a → head_1 (no bm)
+    ///       ↘ bm_a → head_2 (no bm)
+    #[tokio::test]
+    async fn multiple_unbookmarked_heads() {
+        let runner = MockJjRunner {
+            handler: |args: &[&str]| {
+                if args[0] == "bookmark" {
+                    return Ok(bookmark_json("bm_a", "c_a", "ch_a"));
+                }
+
+                if is_heads_query(args) {
+                    let lines = [
+                        log_entry_json("c_h1", "ch_h1", &["c_a"], &[]),
+                        log_entry_json("c_h2", "ch_h2", &["c_a"], &[]),
+                    ];
+                    return Ok(lines.join("\n"));
+                }
+
+                let revset = args[2];
+                if revset.contains("c_a") {
+                    return Ok(log_entry_json("c_a", "ch_a", &["trunk_c"], &["bm_a"]));
+                }
+                if revset.contains("c_h1") {
+                    let lines = [
+                        log_entry_json("c_h1", "ch_h1", &["c_a"], &[]),
+                        log_entry_json("c_a", "ch_a", &["trunk_c"], &["bm_a"]),
+                    ];
+                    return Ok(lines.join("\n"));
+                }
+                if revset.contains("c_h2") {
+                    let lines = [
+                        log_entry_json("c_h2", "ch_h2", &["c_a"], &[]),
+                        log_entry_json("c_a", "ch_a", &["trunk_c"], &["bm_a"]),
+                    ];
+                    return Ok(lines.join("\n"));
+                }
+
+                Ok(String::new())
+            },
+        };
+
+        let jj = Jj::new(runner);
+        let graph = build_change_graph(&jj).await.unwrap();
+
+        // Three segments: bm_a, ch_h1, ch_h2.
+        assert_eq!(graph.segments.len(), 3);
+        assert_eq!(graph.stacks.len(), 2);
+
+        // Both heads connect to bm_a.
+        assert_eq!(graph.adjacency_list.get("ch_h1").unwrap(), "ch_a");
+        assert_eq!(graph.adjacency_list.get("ch_h2").unwrap(), "ch_a");
+
+        // Both head segments have empty bookmark names.
+        assert!(
+            graph
+                .segments
+                .get("ch_h1")
+                .unwrap()
+                .bookmark_names
+                .is_empty()
+        );
+        assert!(
+            graph
+                .segments
+                .get("ch_h2")
+                .unwrap()
+                .bookmark_names
+                .is_empty()
+        );
+    }
+
+    /// Unbookmarked head with a bookmarked ancestor — traversal from the
+    /// unbookmarked head discovers the bookmark during the walk and creates
+    /// proper boundary.
+    ///
+    /// trunk → c_mid(bm_mid) → c_head (no bm)
+    /// No bookmark is at c_head. bm_mid is the only bookmark.
+    #[tokio::test]
+    async fn unbookmarked_head_with_bookmarked_ancestor() {
+        let runner = MockJjRunner {
+            handler: |args: &[&str]| {
+                if args[0] == "bookmark" {
+                    return Ok(bookmark_json("bm_mid", "c_mid", "ch_mid"));
+                }
+
+                if is_heads_query(args) {
+                    return Ok(log_entry_json("c_head", "ch_head", &["c_mid"], &[]));
+                }
+
+                let revset = args[2];
+                if revset.contains("c_mid") {
+                    return Ok(log_entry_json("c_mid", "ch_mid", &["trunk_c"], &["bm_mid"]));
+                }
+                if revset.contains("c_head") {
+                    let lines = [
+                        log_entry_json("c_head", "ch_head", &["c_mid"], &[]),
+                        log_entry_json("c_mid", "ch_mid", &["trunk_c"], &["bm_mid"]),
+                    ];
+                    return Ok(lines.join("\n"));
+                }
+
+                Ok(String::new())
+            },
+        };
+
+        let jj = Jj::new(runner);
+        let graph = build_change_graph(&jj).await.unwrap();
+
+        assert_eq!(graph.segments.len(), 2);
+        assert_eq!(graph.stacks.len(), 1);
+
+        // ch_head segment has no bookmarks.
+        let head_seg = graph.segments.get("ch_head").unwrap();
+        assert!(head_seg.bookmark_names.is_empty());
+
+        // ch_mid segment has the bookmark.
+        let mid_seg = graph.segments.get("ch_mid").unwrap();
+        assert_eq!(mid_seg.bookmark_names, vec!["bm_mid"]);
+
+        // Adjacency: ch_head -> ch_mid.
+        assert_eq!(graph.adjacency_list.get("ch_head").unwrap(), "ch_mid");
+
+        // Stack: [bm_mid, head].
+        let stack = &graph.stacks[0];
+        assert_eq!(stack.segments.len(), 2);
+        assert_eq!(stack.segments[0].change_id, "ch_mid");
+        assert_eq!(stack.segments[1].change_id, "ch_head");
     }
 }
