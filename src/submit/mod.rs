@@ -96,6 +96,42 @@ pub enum SubmitError {
         help("check the template syntax (minijinja/Jinja2)")
     )]
     TemplateRenderFailed { message: String },
+
+    /// Failed to detach a PR base to the default branch.
+    #[error("failed to detach PR base for '{bookmark}' to '{default_branch}'")]
+    #[diagnostic(
+        code(stakk::submit::base_detach_failed),
+        help(
+            "the PR base could not be moved to the default branch — check GitHub permissions and \
+             retry"
+        )
+    )]
+    BaseDetachFailed {
+        bookmark: String,
+        default_branch: String,
+        #[source]
+        source: ForgeError,
+    },
+
+    /// Failed to reattach a PR base to its correct target.
+    #[error(
+        "failed to reattach PR base for '{bookmark}' (currently targeting '{default_branch}' \
+         instead of '{target_base}')"
+    )]
+    #[diagnostic(
+        code(stakk::submit::base_reattach_failed),
+        help(
+            "PR was detached to '{default_branch}' but could not be set to '{target_base}' — \
+             re-run stakk to retry"
+        )
+    )]
+    BaseReattachFailed {
+        bookmark: String,
+        default_branch: String,
+        target_base: String,
+        #[source]
+        source: ForgeError,
+    },
 }
 
 // ---------------------------------------------------------------------------
@@ -144,6 +180,8 @@ pub struct SubmissionPlan {
     pub draft: bool,
     /// The default branch name (e.g., "main").
     pub default_branch: String,
+    /// Whether to use the detach-reattach strategy for base updates.
+    pub detach_base: bool,
 }
 
 /// Phase 3 output: what was actually done.
@@ -241,6 +279,7 @@ pub async fn create_submission_plan<F: Forge>(
     forge: &F,
     remote: &str,
     draft: bool,
+    detach_base: bool,
 ) -> Result<SubmissionPlan, SubmitError> {
     // Collect bookmark names for concurrent PR lookup.
     let bookmark_names: Vec<String> = analysis
@@ -311,6 +350,7 @@ pub async fn create_submission_plan<F: Forge>(
         remote: remote.to_string(),
         draft,
         default_branch: analysis.default_branch.clone(),
+        detach_base,
     })
 }
 
@@ -321,9 +361,15 @@ pub async fn create_submission_plan<F: Forge>(
 impl fmt::Display for SubmissionPlan {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let draft_label = if self.draft { ", draft" } else { "" };
+        let has_base_updates = self.bookmark_plans.iter().any(|bp| bp.needs_base_update);
+        let detach_label = if self.detach_base && has_base_updates {
+            ", detach-base"
+        } else {
+            ""
+        };
         writeln!(
             f,
-            "Submission plan ({} bookmark(s), remote: {}{draft_label}):",
+            "Submission plan ({} bookmark(s), remote: {}{draft_label}{detach_label}):",
             self.bookmark_plans.len(),
             self.remote,
         )?;
@@ -339,11 +385,24 @@ impl fmt::Display for SubmissionPlan {
             if bp.needs_base_update
                 && let Some(pr) = &bp.existing_pr
             {
-                writeln!(
-                    f,
-                    "    - update PR #{} base: {} -> {}",
-                    pr.number, pr.base_ref, bp.base,
-                )?;
+                if self.detach_base {
+                    writeln!(
+                        f,
+                        "    - detach PR #{} base: {} -> {}",
+                        pr.number, pr.base_ref, self.default_branch,
+                    )?;
+                    writeln!(
+                        f,
+                        "    - reattach PR #{} base: {} -> {}",
+                        pr.number, self.default_branch, bp.base,
+                    )?;
+                } else {
+                    writeln!(
+                        f,
+                        "    - update PR #{} base: {} -> {}",
+                        pr.number, pr.base_ref, bp.base,
+                    )?;
+                }
             }
             if !bp.needs_create
                 && !bp.needs_base_update
@@ -374,6 +433,45 @@ pub async fn execute_submission_plan<R: JjRunner, F: Forge>(
 
     let mut stack_entries = Vec::new();
 
+    let has_base_updates = plan.bookmark_plans.iter().any(|bp| bp.needs_base_update);
+
+    // Detach phase: move PR bases to default_branch before pushing.
+    if plan.detach_base && has_base_updates {
+        pb.set_message(format!("Detaching PR bases to {}...", plan.default_branch));
+        let detach_futures: Vec<_> = plan
+            .bookmark_plans
+            .iter()
+            .filter(|bp| bp.needs_base_update)
+            .filter_map(|bp| {
+                bp.existing_pr.as_ref().and_then(|pr| {
+                    // Skip if already targeting default_branch.
+                    if pr.base_ref == plan.default_branch {
+                        None
+                    } else {
+                        Some((bp.bookmark_name.clone(), pr.number))
+                    }
+                })
+            })
+            .map(|(name, number)| {
+                let default_branch = plan.default_branch.clone();
+                async move {
+                    forge
+                        .update_pr_base(number, &default_branch)
+                        .await
+                        .map_err(|source| SubmitError::BaseDetachFailed {
+                            bookmark: name,
+                            default_branch,
+                            source,
+                        })
+                }
+            })
+            .collect();
+        let detach_results = futures::future::join_all(detach_futures).await;
+        for result in detach_results {
+            result?;
+        }
+    }
+
     // Step 1: Push all bookmarks.
     for bp in &plan.bookmark_plans {
         if bp.needs_push {
@@ -387,29 +485,62 @@ pub async fn execute_submission_plan<R: JjRunner, F: Forge>(
         }
     }
 
-    // Step 2a: Concurrently update bases for existing PRs that need it.
-    pb.set_message("Updating PR bases...");
-    let base_update_futures: Vec<_> = plan
-        .bookmark_plans
-        .iter()
-        .filter(|bp| bp.needs_base_update)
-        .filter_map(|bp| {
-            bp.existing_pr
-                .as_ref()
-                .map(|pr| (bp.bookmark_name.clone(), pr.number, bp.base.clone()))
-        })
-        .map(|(name, number, base)| async move {
-            forge.update_pr_base(number, &base).await.map_err(|source| {
-                SubmitError::BaseUpdateFailed {
-                    bookmark: name,
-                    source,
+    // Step 2a: Update bases for existing PRs that need it.
+    if plan.detach_base && has_base_updates {
+        // Reattach phase: set PR bases to their final targets.
+        pb.set_message("Reattaching PR bases...");
+        let reattach_futures: Vec<_> = plan
+            .bookmark_plans
+            .iter()
+            .filter(|bp| bp.needs_base_update)
+            .filter_map(|bp| {
+                bp.existing_pr
+                    .as_ref()
+                    .map(|pr| (bp.bookmark_name.clone(), pr.number, bp.base.clone()))
+            })
+            .map(|(name, number, base)| {
+                let default_branch = plan.default_branch.clone();
+                async move {
+                    forge.update_pr_base(number, &base).await.map_err(|source| {
+                        SubmitError::BaseReattachFailed {
+                            bookmark: name,
+                            default_branch,
+                            target_base: base,
+                            source,
+                        }
+                    })
                 }
             })
-        })
-        .collect();
-    let base_results = futures::future::join_all(base_update_futures).await;
-    for result in base_results {
-        result?;
+            .collect();
+        let reattach_results = futures::future::join_all(reattach_futures).await;
+        for result in reattach_results {
+            result?;
+        }
+    } else {
+        // Standard behavior: concurrent base update.
+        pb.set_message("Updating PR bases...");
+        let base_update_futures: Vec<_> = plan
+            .bookmark_plans
+            .iter()
+            .filter(|bp| bp.needs_base_update)
+            .filter_map(|bp| {
+                bp.existing_pr
+                    .as_ref()
+                    .map(|pr| (bp.bookmark_name.clone(), pr.number, bp.base.clone()))
+            })
+            .map(|(name, number, base)| async move {
+                forge.update_pr_base(number, &base).await.map_err(|source| {
+                    SubmitError::BaseUpdateFailed {
+                        bookmark: name,
+                        source,
+                    }
+                })
+            })
+            .collect();
+        let base_results = futures::future::join_all(base_update_futures).await;
+        for result in base_results {
+            result?;
+        }
     }
 
     // Step 2b: Create new PRs sequentially (base branch must exist first).
@@ -849,7 +980,7 @@ mod tests {
         };
 
         let forge = MockForge::new();
-        let plan = create_submission_plan(&analysis, &forge, "origin", false)
+        let plan = create_submission_plan(&analysis, &forge, "origin", false, false)
             .await
             .unwrap();
 
@@ -874,7 +1005,7 @@ mod tests {
 
         let forge = MockForge::new().with_existing_pr("feat-a", make_pr(42, "feat-a", "main"));
 
-        let plan = create_submission_plan(&analysis, &forge, "origin", false)
+        let plan = create_submission_plan(&analysis, &forge, "origin", false, false)
             .await
             .unwrap();
 
@@ -901,7 +1032,7 @@ mod tests {
             .with_existing_pr("feat-a", make_pr(10, "feat-a", "main"))
             .with_existing_pr("feat-b", make_pr(11, "feat-b", "main"));
 
-        let plan = create_submission_plan(&analysis, &forge, "origin", false)
+        let plan = create_submission_plan(&analysis, &forge, "origin", false, false)
             .await
             .unwrap();
 
@@ -927,7 +1058,7 @@ mod tests {
 
         let forge = MockForge::new().with_existing_pr("feat-a", make_pr(10, "feat-a", "main"));
 
-        let plan = create_submission_plan(&analysis, &forge, "origin", false)
+        let plan = create_submission_plan(&analysis, &forge, "origin", false, false)
             .await
             .unwrap();
 
@@ -963,6 +1094,7 @@ mod tests {
             remote: "origin".to_string(),
             draft: false,
             default_branch: "main".to_string(),
+            detach_base: false,
         };
 
         let output = plan.to_string();
@@ -1005,6 +1137,7 @@ mod tests {
             remote: "origin".to_string(),
             draft: false,
             default_branch: "main".to_string(),
+            detach_base: false,
         };
 
         let (runner, _push_calls) = MockJjRunner::new();
@@ -1042,6 +1175,7 @@ mod tests {
             remote: "origin".to_string(),
             draft: false,
             default_branch: "main".to_string(),
+            detach_base: false,
         };
 
         let (runner, _push_calls) = MockJjRunner::new();
@@ -1086,6 +1220,7 @@ mod tests {
             remote: "origin".to_string(),
             draft: false,
             default_branch: "main".to_string(),
+            detach_base: false,
         };
 
         let (runner, _push_calls) = MockJjRunner::new();
@@ -1152,6 +1287,7 @@ mod tests {
             remote: "origin".to_string(),
             draft: false,
             default_branch: "main".to_string(),
+            detach_base: false,
         };
 
         let (runner, _push_calls) = MockJjRunner::new();
@@ -1205,6 +1341,7 @@ mod tests {
             remote: "my-remote".to_string(),
             draft: false,
             default_branch: "main".to_string(),
+            detach_base: false,
         };
 
         let (runner, push_calls) = MockJjRunner::new();
@@ -1238,6 +1375,7 @@ mod tests {
             remote: "origin".to_string(),
             draft: true,
             default_branch: "main".to_string(),
+            detach_base: false,
         };
 
         let output = plan.to_string();
@@ -1263,6 +1401,7 @@ mod tests {
             remote: "origin".to_string(),
             draft: true,
             default_branch: "main".to_string(),
+            detach_base: false,
         };
 
         let (runner, _push_calls) = MockJjRunner::new();
@@ -1277,6 +1416,219 @@ mod tests {
         let created = forge.created_prs.lock().unwrap();
         assert_eq!(created.len(), 1);
         assert!(created[0].draft, "expected PR to be created as draft");
+    }
+
+    // -----------------------------------------------------------------------
+    // detach-base tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn plan_display_detach_base() {
+        let plan = SubmissionPlan {
+            bookmark_plans: vec![
+                BookmarkPlan {
+                    bookmark_name: "feat-a".to_string(),
+                    base: "main".to_string(),
+                    title: "feature a".to_string(),
+                    body: None,
+                    existing_pr: Some(make_pr(10, "feat-a", "main")),
+                    needs_push: true,
+                    needs_create: false,
+                    needs_base_update: false,
+                },
+                BookmarkPlan {
+                    bookmark_name: "feat-b".to_string(),
+                    base: "feat-a".to_string(),
+                    title: "feature b".to_string(),
+                    body: None,
+                    existing_pr: Some(make_pr(11, "feat-b", "main")),
+                    needs_push: true,
+                    needs_create: false,
+                    needs_base_update: true,
+                },
+            ],
+            remote: "origin".to_string(),
+            draft: false,
+            default_branch: "main".to_string(),
+            detach_base: true,
+        };
+
+        let output = plan.to_string();
+        assert!(
+            output.contains("detach-base"),
+            "expected 'detach-base' in header: {output}"
+        );
+        assert!(
+            output.contains("detach PR #11 base: main -> main"),
+            "expected detach line: {output}"
+        );
+        assert!(
+            output.contains("reattach PR #11 base: main -> feat-a"),
+            "expected reattach line: {output}"
+        );
+        assert!(
+            !output.contains("update PR"),
+            "should not contain 'update PR' when detach_base is true: {output}"
+        );
+    }
+
+    #[test]
+    fn plan_display_detach_base_no_updates() {
+        let plan = SubmissionPlan {
+            bookmark_plans: vec![BookmarkPlan {
+                bookmark_name: "feat-a".to_string(),
+                base: "main".to_string(),
+                title: "feature a".to_string(),
+                body: None,
+                existing_pr: Some(make_pr(10, "feat-a", "main")),
+                needs_push: true,
+                needs_create: false,
+                needs_base_update: false,
+            }],
+            remote: "origin".to_string(),
+            draft: false,
+            default_branch: "main".to_string(),
+            detach_base: true,
+        };
+
+        let output = plan.to_string();
+        assert!(
+            !output.contains("detach-base"),
+            "should not show 'detach-base' when no base updates exist: {output}"
+        );
+    }
+
+    #[tokio::test]
+    async fn execute_detach_reattach_order() {
+        let plan = SubmissionPlan {
+            bookmark_plans: vec![
+                BookmarkPlan {
+                    bookmark_name: "feat-a".to_string(),
+                    base: "main".to_string(),
+                    title: "feature a".to_string(),
+                    body: None,
+                    existing_pr: Some(make_pr(10, "feat-a", "main")),
+                    needs_push: true,
+                    needs_create: false,
+                    needs_base_update: false,
+                },
+                BookmarkPlan {
+                    bookmark_name: "feat-b".to_string(),
+                    base: "feat-a".to_string(),
+                    title: "feature b".to_string(),
+                    body: None,
+                    existing_pr: Some(make_pr(11, "feat-b", "feat-c")),
+                    needs_push: true,
+                    needs_create: false,
+                    needs_base_update: true,
+                },
+                BookmarkPlan {
+                    bookmark_name: "feat-c".to_string(),
+                    base: "feat-b".to_string(),
+                    title: "feature c".to_string(),
+                    body: None,
+                    existing_pr: Some(make_pr(12, "feat-c", "feat-a")),
+                    needs_push: true,
+                    needs_create: false,
+                    needs_base_update: true,
+                },
+            ],
+            remote: "origin".to_string(),
+            draft: false,
+            default_branch: "main".to_string(),
+            detach_base: true,
+        };
+
+        let (runner, _push_calls) = MockJjRunner::new();
+        let jj = Jj::new(runner);
+        let forge = MockForge::new();
+        let env = test_comment_env();
+
+        execute_submission_plan(&plan, &jj, &forge, &env)
+            .await
+            .unwrap();
+
+        let updated = forge.updated_bases.lock().unwrap();
+        // Detach: PR#11 (feat-c -> main), PR#12 (feat-a -> main)
+        // Reattach: PR#11 (main -> feat-a), PR#12 (main -> feat-b)
+        assert_eq!(updated.len(), 4);
+
+        // First two are detach calls (to default branch).
+        assert_eq!(updated[0], (11, "main".to_string()));
+        assert_eq!(updated[1], (12, "main".to_string()));
+
+        // Last two are reattach calls (to final bases).
+        assert_eq!(updated[2], (11, "feat-a".to_string()));
+        assert_eq!(updated[3], (12, "feat-b".to_string()));
+    }
+
+    #[tokio::test]
+    async fn execute_detach_skips_already_on_default() {
+        let plan = SubmissionPlan {
+            bookmark_plans: vec![BookmarkPlan {
+                bookmark_name: "feat-a".to_string(),
+                base: "develop".to_string(),
+                title: "feature a".to_string(),
+                body: None,
+                // PR base is already "main" (the default branch).
+                existing_pr: Some(make_pr(42, "feat-a", "main")),
+                needs_push: true,
+                needs_create: false,
+                needs_base_update: true,
+            }],
+            remote: "origin".to_string(),
+            draft: false,
+            default_branch: "main".to_string(),
+            detach_base: true,
+        };
+
+        let (runner, _push_calls) = MockJjRunner::new();
+        let jj = Jj::new(runner);
+        let forge = MockForge::new();
+        let env = test_comment_env();
+
+        execute_submission_plan(&plan, &jj, &forge, &env)
+            .await
+            .unwrap();
+
+        let updated = forge.updated_bases.lock().unwrap();
+        // Only reattach (no detach since already on default branch).
+        assert_eq!(updated.len(), 1);
+        assert_eq!(updated[0], (42, "develop".to_string()));
+    }
+
+    #[tokio::test]
+    async fn execute_without_detach_base_unchanged() {
+        let plan = SubmissionPlan {
+            bookmark_plans: vec![BookmarkPlan {
+                bookmark_name: "feat-a".to_string(),
+                base: "develop".to_string(),
+                title: "feature a".to_string(),
+                body: None,
+                existing_pr: Some(make_pr(42, "feat-a", "main")),
+                needs_push: true,
+                needs_create: false,
+                needs_base_update: true,
+            }],
+            remote: "origin".to_string(),
+            draft: false,
+            default_branch: "main".to_string(),
+            detach_base: false,
+        };
+
+        let (runner, _push_calls) = MockJjRunner::new();
+        let jj = Jj::new(runner);
+        let forge = MockForge::new();
+        let env = test_comment_env();
+
+        execute_submission_plan(&plan, &jj, &forge, &env)
+            .await
+            .unwrap();
+
+        let updated = forge.updated_bases.lock().unwrap();
+        // Standard behavior: single update to final base.
+        assert_eq!(updated.len(), 1);
+        assert_eq!(updated[0], (42, "develop".to_string()));
     }
 
     // -----------------------------------------------------------------------
