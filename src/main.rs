@@ -12,6 +12,7 @@ use clap::Parser;
 
 use crate::cli::Cli;
 use crate::cli::Commands;
+use crate::cli::ShowArgs;
 use crate::cli::auth::AuthCommands;
 use crate::cli::submit::SubmitArgs;
 use crate::error::StakkError::Interrupted;
@@ -47,8 +48,8 @@ async fn run() -> Result<(), StakkError> {
                 auth_setup();
             }
         },
-        Some(Commands::Show) => {
-            show_status().await?;
+        Some(Commands::Show(args)) => {
+            show_status(&args).await?;
         }
         Some(Commands::Completions { shell }) => {
             clap_complete::generate(shell, &mut Cli::command(), "stakk", &mut std::io::stdout());
@@ -110,7 +111,9 @@ async fn submit_bookmark(args: &SubmitArgs) -> Result<(), StakkError> {
 
     // Build the change graph.
     pb.set_message("Building change graph...");
-    let change_graph = graph::build_change_graph(&jj).await?;
+    let change_graph =
+        graph::build_change_graph(&jj, &args.graph.bookmarks_revset, &args.graph.heads_revset)
+            .await?;
 
     pb.set_message("Detecting default branch...");
     let default_branch = jj.get_default_branch().await?;
@@ -150,7 +153,12 @@ async fn submit_bookmark(args: &SubmitArgs) -> Result<(), StakkError> {
                     let pb = indicatif::ProgressBar::new_spinner();
                     pb.enable_steady_tick(std::time::Duration::from_millis(120));
                     pb.set_message("Rebuilding change graph...");
-                    let g = graph::build_change_graph(&jj).await?;
+                    let g = graph::build_change_graph(
+                        &jj,
+                        &args.graph.bookmarks_revset,
+                        &args.graph.heads_revset,
+                    )
+                    .await?;
                     pb.finish_and_clear();
                     g
                 } else {
@@ -243,7 +251,7 @@ async fn resolve_github_remote(
     Err(StakkError::NoGithubRemote)
 }
 
-async fn show_status() -> Result<(), StakkError> {
+async fn show_status(args: &ShowArgs) -> Result<(), StakkError> {
     let pb = indicatif::ProgressBar::new_spinner();
     pb.enable_steady_tick(std::time::Duration::from_millis(120));
     pb.set_message("Loading repository status...");
@@ -254,7 +262,9 @@ async fn show_status() -> Result<(), StakkError> {
 
     let remotes = jj.get_git_remote_list().await?;
 
-    let change_graph = graph::build_change_graph(&jj).await?;
+    let change_graph =
+        graph::build_change_graph(&jj, &args.graph.bookmarks_revset, &args.graph.heads_revset)
+            .await?;
 
     pb.finish_and_clear();
 

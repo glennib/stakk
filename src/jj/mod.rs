@@ -68,18 +68,11 @@ impl<R: JjRunner> Jj<R> {
         Self { runner }
     }
 
-    /// List bookmarks belonging to the current user, excluding trunk.
-    pub async fn get_my_bookmarks(&self) -> Result<Vec<Bookmark>, JjError> {
+    /// List bookmarks matching the given revset.
+    pub async fn get_my_bookmarks(&self, revset: &str) -> Result<Vec<Bookmark>, JjError> {
         let output = self
             .runner
-            .run_jj(&[
-                "bookmark",
-                "list",
-                "-r",
-                "mine() ~ trunk() ~ immutable()",
-                "-T",
-                BOOKMARK_TEMPLATE,
-            ])
+            .run_jj(&["bookmark", "list", "-r", revset, "-T", BOOKMARK_TEMPLATE])
             .await?;
 
         parse_bookmarks(&output)
@@ -190,17 +183,17 @@ impl<R: JjRunner> Jj<R> {
         Ok(())
     }
 
-    /// Get all non-empty, user-authored head changes descending from trunk.
+    /// Get head changes matching the given revset.
     ///
     /// These are the tips of branches that may not have bookmarks yet.
     /// Used to discover unbookmarked changes beyond the last bookmark.
-    pub async fn get_heads(&self) -> Result<Vec<LogEntry>, JjError> {
+    pub async fn get_heads(&self, revset: &str) -> Result<Vec<LogEntry>, JjError> {
         let output = self
             .runner
             .run_jj(&[
                 "log",
                 "-r",
-                "heads((mine() ~ empty() ~ immutable()) & trunk()..)",
+                revset,
                 "--no-graph",
                 "--limit",
                 "100",
@@ -441,16 +434,12 @@ mod tests {
             handler: |args: &[&str]| {
                 assert_eq!(args[0], "bookmark");
                 assert_eq!(args[1], "list");
-                assert!(
-                    args[3].contains("immutable()"),
-                    "revset should exclude immutable: {}",
-                    args[3]
-                );
+                assert_eq!(args[3], "custom-revset");
                 Ok(r#"{"name":"my-feature","synced":false,"target":{"commit_id":"abc","parents":[],"change_id":"xyz","description":"feat","author":{"name":"A","email":"a@b.c","timestamp":"T"},"committer":{"name":"A","email":"a@b.c","timestamp":"T"}}}"#.to_string())
             },
         };
         let jj = Jj::new(runner);
-        let bookmarks = jj.get_my_bookmarks().await.unwrap();
+        let bookmarks = jj.get_my_bookmarks("custom-revset").await.unwrap();
         assert_eq!(bookmarks.len(), 1);
         assert_eq!(bookmarks[0].name, "my-feature");
     }
@@ -539,17 +528,12 @@ mod tests {
         let runner = MockJjRunner {
             handler: |args: &[&str]| {
                 assert_eq!(args[0], "log");
-                assert!(args[2].contains("heads("));
-                assert!(
-                    args[2].contains("immutable()"),
-                    "revset should exclude immutable: {}",
-                    args[2]
-                );
+                assert_eq!(args[2], "custom-heads-revset");
                 Ok(r#"{"commit":{"commit_id":"h1","parents":["c_a"],"change_id":"ch_h1","description":"unbookmarked head","author":{"name":"A","email":"a@b.c","timestamp":"T"},"committer":{"name":"A","email":"a@b.c","timestamp":"T"}},"local_bookmarks":[],"remote_bookmarks":[]}"#.to_string())
             },
         };
         let jj = Jj::new(runner);
-        let heads = jj.get_heads().await.unwrap();
+        let heads = jj.get_heads("custom-heads-revset").await.unwrap();
         assert_eq!(heads.len(), 1);
         assert_eq!(heads[0].commit_id, "h1");
         assert_eq!(heads[0].change_id, "ch_h1");

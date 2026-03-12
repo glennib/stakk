@@ -33,8 +33,12 @@ struct TraversalResult {
 /// Discovers all user bookmarks, traverses each toward trunk to find segments,
 /// builds an adjacency list, detects merge commits, identifies leaves, and
 /// groups segments into stacks.
-pub async fn build_change_graph<R: JjRunner>(jj: &Jj<R>) -> Result<ChangeGraph, StakkError> {
-    let bookmarks = jj.get_my_bookmarks().await?;
+pub async fn build_change_graph<R: JjRunner>(
+    jj: &Jj<R>,
+    bookmarks_revset: &str,
+    heads_revset: &str,
+) -> Result<ChangeGraph, StakkError> {
+    let bookmarks = jj.get_my_bookmarks(bookmarks_revset).await?;
 
     // Collect user bookmark names so traversal can filter out non-user bookmarks
     // that appear on commits (e.g. bookmarks from other users).
@@ -79,7 +83,7 @@ pub async fn build_change_graph<R: JjRunner>(jj: &Jj<R>) -> Result<ChangeGraph, 
     let bookmarked_commit_ids: HashSet<String> =
         bookmarks.iter().map(|b| b.commit_id.clone()).collect();
 
-    let heads = jj.get_heads().await?;
+    let heads = jj.get_heads(heads_revset).await?;
     for head in &heads {
         // Skip heads that are at a bookmarked commit (already traversed).
         if bookmarked_commit_ids.contains(&head.commit_id) {
@@ -458,7 +462,13 @@ mod tests {
         };
 
         let jj = Jj::new(runner);
-        let graph = build_change_graph(&jj).await.unwrap();
+        let graph = build_change_graph(
+            &jj,
+            "mine() ~ trunk() ~ immutable()",
+            "heads((mine() ~ empty() ~ immutable()) & trunk()..)",
+        )
+        .await
+        .unwrap();
 
         assert_eq!(graph.segments.len(), 2);
         assert_eq!(graph.stacks.len(), 1);
@@ -516,7 +526,13 @@ mod tests {
         };
 
         let jj = Jj::new(runner);
-        let graph = build_change_graph(&jj).await.unwrap();
+        let graph = build_change_graph(
+            &jj,
+            "mine() ~ trunk() ~ immutable()",
+            "heads((mine() ~ empty() ~ immutable()) & trunk()..)",
+        )
+        .await
+        .unwrap();
 
         assert_eq!(graph.segments.len(), 3);
         assert_eq!(graph.stacks.len(), 2);
@@ -565,7 +581,13 @@ mod tests {
         };
 
         let jj = Jj::new(runner);
-        let graph = build_change_graph(&jj).await.unwrap();
+        let graph = build_change_graph(
+            &jj,
+            "mine() ~ trunk() ~ immutable()",
+            "heads((mine() ~ empty() ~ immutable()) & trunk()..)",
+        )
+        .await
+        .unwrap();
 
         assert_eq!(graph.stacks.len(), 0);
         assert_eq!(graph.excluded_bookmark_count, 1);
@@ -604,7 +626,13 @@ mod tests {
         };
 
         let jj = Jj::new(runner);
-        let graph = build_change_graph(&jj).await.unwrap();
+        let graph = build_change_graph(
+            &jj,
+            "mine() ~ trunk() ~ immutable()",
+            "heads((mine() ~ empty() ~ immutable()) & trunk()..)",
+        )
+        .await
+        .unwrap();
 
         assert_eq!(graph.stacks.len(), 0);
         // bm_b excluded because its traversal hit a merge.
@@ -655,7 +683,13 @@ mod tests {
         };
 
         let jj = Jj::new(runner);
-        let graph = build_change_graph(&jj).await.unwrap();
+        let graph = build_change_graph(
+            &jj,
+            "mine() ~ trunk() ~ immutable()",
+            "heads((mine() ~ empty() ~ immutable()) & trunk()..)",
+        )
+        .await
+        .unwrap();
 
         assert_eq!(graph.stacks.len(), 0);
         assert_eq!(graph.excluded_bookmark_count, 2);
@@ -692,7 +726,13 @@ mod tests {
         };
 
         let jj = Jj::new(runner);
-        let graph = build_change_graph(&jj).await.unwrap();
+        let graph = build_change_graph(
+            &jj,
+            "mine() ~ trunk() ~ immutable()",
+            "heads((mine() ~ empty() ~ immutable()) & trunk()..)",
+        )
+        .await
+        .unwrap();
 
         assert_eq!(graph.segments.len(), 1);
         assert_eq!(graph.stacks.len(), 1);
@@ -716,7 +756,13 @@ mod tests {
         };
 
         let jj = Jj::new(runner);
-        let graph = build_change_graph(&jj).await.unwrap();
+        let graph = build_change_graph(
+            &jj,
+            "mine() ~ trunk() ~ immutable()",
+            "heads((mine() ~ empty() ~ immutable()) & trunk()..)",
+        )
+        .await
+        .unwrap();
 
         assert!(graph.segments.is_empty());
         assert!(graph.stacks.is_empty());
@@ -760,7 +806,13 @@ mod tests {
         };
 
         let jj = Jj::new(runner);
-        let graph = build_change_graph(&jj).await.unwrap();
+        let graph = build_change_graph(
+            &jj,
+            "mine() ~ trunk() ~ immutable()",
+            "heads((mine() ~ empty() ~ immutable()) & trunk()..)",
+        )
+        .await
+        .unwrap();
 
         assert_eq!(graph.segments.len(), 2);
         assert_eq!(graph.stacks.len(), 1);
@@ -832,7 +884,13 @@ mod tests {
         };
 
         let jj = Jj::new(runner);
-        let graph = build_change_graph(&jj).await.unwrap();
+        let graph = build_change_graph(
+            &jj,
+            "mine() ~ trunk() ~ immutable()",
+            "heads((mine() ~ empty() ~ immutable()) & trunk()..)",
+        )
+        .await
+        .unwrap();
 
         // bm_a segment is NOT duplicated.
         assert_eq!(graph.segments.len(), 3);
@@ -875,7 +933,13 @@ mod tests {
         };
 
         let jj = Jj::new(runner);
-        let graph = build_change_graph(&jj).await.unwrap();
+        let graph = build_change_graph(
+            &jj,
+            "mine() ~ trunk() ~ immutable()",
+            "heads((mine() ~ empty() ~ immutable()) & trunk()..)",
+        )
+        .await
+        .unwrap();
         let sorted = topological_sort(&graph);
 
         assert_eq!(sorted, vec!["ch_c", "ch_b", "ch_a"]);
@@ -921,7 +985,13 @@ mod tests {
         };
 
         let jj = Jj::new(runner);
-        let graph = build_change_graph(&jj).await.unwrap();
+        let graph = build_change_graph(
+            &jj,
+            "mine() ~ trunk() ~ immutable()",
+            "heads((mine() ~ empty() ~ immutable()) & trunk()..)",
+        )
+        .await
+        .unwrap();
         let sorted = topological_sort(&graph);
 
         // ch_b is processed first (alphabetical), its parent ch_a becomes
@@ -955,7 +1025,13 @@ mod tests {
         };
 
         let jj = Jj::new(runner);
-        let graph = build_change_graph(&jj).await.unwrap();
+        let graph = build_change_graph(
+            &jj,
+            "mine() ~ trunk() ~ immutable()",
+            "heads((mine() ~ empty() ~ immutable()) & trunk()..)",
+        )
+        .await
+        .unwrap();
 
         assert_eq!(graph.segments.len(), 1);
         assert_eq!(graph.stacks.len(), 1);
@@ -989,7 +1065,13 @@ mod tests {
         };
 
         let jj = Jj::new(runner);
-        let graph = build_change_graph(&jj).await.unwrap();
+        let graph = build_change_graph(
+            &jj,
+            "mine() ~ trunk() ~ immutable()",
+            "heads((mine() ~ empty() ~ immutable()) & trunk()..)",
+        )
+        .await
+        .unwrap();
 
         let seg = graph.segments.get("ch1").unwrap();
         assert_eq!(seg.commits[0].commit_id, "c1");
@@ -1059,7 +1141,13 @@ mod tests {
         };
 
         let jj = Jj::new(runner);
-        let graph = build_change_graph(&jj).await.unwrap();
+        let graph = build_change_graph(
+            &jj,
+            "mine() ~ trunk() ~ immutable()",
+            "heads((mine() ~ empty() ~ immutable()) & trunk()..)",
+        )
+        .await
+        .unwrap();
 
         assert_eq!(graph.segments.len(), 1);
         let seg = graph.segments.get("ch_x").unwrap();
@@ -1096,7 +1184,13 @@ mod tests {
         };
 
         let jj = Jj::new(runner);
-        let graph = build_change_graph(&jj).await.unwrap();
+        let graph = build_change_graph(
+            &jj,
+            "mine() ~ trunk() ~ immutable()",
+            "heads((mine() ~ empty() ~ immutable()) & trunk()..)",
+        )
+        .await
+        .unwrap();
 
         // Only one segment (bm_user), containing both commits.
         assert_eq!(graph.segments.len(), 1);
@@ -1152,7 +1246,13 @@ mod tests {
         };
 
         let jj = Jj::new(runner);
-        let graph = build_change_graph(&jj).await.unwrap();
+        let graph = build_change_graph(
+            &jj,
+            "mine() ~ trunk() ~ immutable()",
+            "heads((mine() ~ empty() ~ immutable()) & trunk()..)",
+        )
+        .await
+        .unwrap();
 
         // Two segments: bm_a (bookmarked) and ch_h (unbookmarked head).
         assert_eq!(graph.segments.len(), 2);
@@ -1201,7 +1301,13 @@ mod tests {
         };
 
         let jj = Jj::new(runner);
-        let graph = build_change_graph(&jj).await.unwrap();
+        let graph = build_change_graph(
+            &jj,
+            "mine() ~ trunk() ~ immutable()",
+            "heads((mine() ~ empty() ~ immutable()) & trunk()..)",
+        )
+        .await
+        .unwrap();
 
         // Only one segment — the head at bm_a's commit was skipped.
         assert_eq!(graph.segments.len(), 1);
@@ -1253,7 +1359,13 @@ mod tests {
         };
 
         let jj = Jj::new(runner);
-        let graph = build_change_graph(&jj).await.unwrap();
+        let graph = build_change_graph(
+            &jj,
+            "mine() ~ trunk() ~ immutable()",
+            "heads((mine() ~ empty() ~ immutable()) & trunk()..)",
+        )
+        .await
+        .unwrap();
 
         // Three segments: bm_a, ch_h1, ch_h2.
         assert_eq!(graph.segments.len(), 3);
@@ -1317,7 +1429,13 @@ mod tests {
         };
 
         let jj = Jj::new(runner);
-        let graph = build_change_graph(&jj).await.unwrap();
+        let graph = build_change_graph(
+            &jj,
+            "mine() ~ trunk() ~ immutable()",
+            "heads((mine() ~ empty() ~ immutable()) & trunk()..)",
+        )
+        .await
+        .unwrap();
 
         assert_eq!(graph.segments.len(), 2);
         assert_eq!(graph.stacks.len(), 1);

@@ -1,5 +1,7 @@
 use clap::Args;
 
+use crate::cli::graph::GraphArgs;
+
 /// Arguments for the `submit` subcommand.
 #[derive(Debug, Args)]
 pub struct SubmitArgs {
@@ -11,15 +13,14 @@ pub struct SubmitArgs {
     #[arg(long)]
     pub dry_run: bool,
 
+    #[command(flatten)]
+    pub graph: GraphArgs,
+
     /// Create pull requests as drafts.
-    ///
-    /// Can also be set with the STAKK_DRAFT environment variable.
     #[arg(long, env = "STAKK_DRAFT")]
     pub draft: bool,
 
     /// Git remote to push to.
-    ///
-    /// Can also be set with the STAKK_REMOTE environment variable.
     #[arg(long, default_value = "origin", env = "STAKK_REMOTE")]
     pub remote: String,
 
@@ -51,8 +52,6 @@ pub struct SubmitArgs {
     ///   {% for entry in stack %}
     ///   - {{ entry.pr_url }}{% if entry.is_current %} 👈{% endif %}
     ///   {%- endfor %}
-    ///
-    /// Can also be set with the STAKK_TEMPLATE environment variable.
     #[expect(
         clippy::doc_lazy_continuation,
         reason = "endfor must align with the for-loop, not the list item"
