@@ -15,8 +15,6 @@ and comprehensive error handling.
 ## Testing
 
 - **Unit/integration tests**: `cargo nextest run --all-targets`.
-- **Manual testing repo**: `../jack-testing/` (github.com/glennib/jack-testing).
-  Run stakk from within that directory to test against real jj output.
 
 ## Development Principles
 
