@@ -4,10 +4,12 @@ use octocrab::Octocrab;
 use octocrab::models::CommentId;
 use octocrab::models::IssueState;
 
+use super::AutoMergeState;
 use super::Comment;
 use super::CreatePrParams;
 use super::Forge;
 use super::ForgeError;
+use super::MergeMethod;
 use super::PrState;
 use super::PullRequest;
 
@@ -37,6 +39,59 @@ impl GitHubForge {
             owner,
             repo,
         })
+    }
+}
+
+/// Minimal PR details fetched via the REST API.
+#[derive(serde::Deserialize)]
+struct PrDetails {
+    node_id: String,
+    auto_merge: Option<AutoMergeDetails>,
+}
+
+/// The `auto_merge` object from the GitHub REST API.
+#[derive(serde::Deserialize)]
+struct AutoMergeDetails {
+    merge_method: String,
+}
+
+/// Response shape for GraphQL mutations.
+#[derive(serde::Deserialize)]
+struct GraphQlResponse<T> {
+    #[expect(dead_code, reason = "we only need to check for errors")]
+    data: Option<T>,
+    errors: Option<Vec<GraphQlError>>,
+}
+
+#[derive(serde::Deserialize)]
+struct GraphQlError {
+    message: String,
+}
+
+#[derive(serde::Deserialize)]
+struct DisableAutoMergePayload {
+    #[expect(dead_code, reason = "needed to anchor the mutation response")]
+    #[serde(rename = "disablePullRequestAutoMerge")]
+    disable: Option<serde_json::Value>,
+}
+
+#[derive(serde::Deserialize)]
+struct EnableAutoMergePayload {
+    #[expect(dead_code, reason = "needed to anchor the mutation response")]
+    #[serde(rename = "enablePullRequestAutoMerge")]
+    enable: Option<serde_json::Value>,
+}
+
+impl GitHubForge {
+    /// Fetch the `node_id` and `auto_merge` state of a PR via the REST API.
+    async fn fetch_pr_details(&self, pr_number: u64) -> Result<PrDetails, ForgeError> {
+        let route = format!("/repos/{}/{}/pulls/{pr_number}", self.owner, self.repo);
+        let details: PrDetails = self
+            .client
+            .get(&route, None::<&()>)
+            .await
+            .map_err(map_octocrab_error)?;
+        Ok(details)
     }
 }
 
@@ -149,6 +204,69 @@ impl Forge for GitHubForge {
             .map_err(map_octocrab_error)?;
         Ok(())
     }
+
+    async fn get_auto_merge_state(
+        &self,
+        pr_number: u64,
+    ) -> Result<Option<AutoMergeState>, ForgeError> {
+        let details = self.fetch_pr_details(pr_number).await?;
+        Ok(details.auto_merge.map(|am| AutoMergeState {
+            merge_method: parse_merge_method(&am.merge_method),
+        }))
+    }
+
+    async fn suspend_auto_merge(&self, pr_number: u64) -> Result<(), ForgeError> {
+        let details = self.fetch_pr_details(pr_number).await?;
+        let query = format!(
+            r#"mutation {{ disablePullRequestAutoMerge(input: {{ pullRequestId: "{}" }}) {{ clientMutationId }} }}"#,
+            details.node_id,
+        );
+        let response: GraphQlResponse<DisableAutoMergePayload> = self
+            .client
+            .graphql(&serde_json::json!({ "query": query }))
+            .await
+            .map_err(map_octocrab_error)?;
+        if let Some(errors) = response.errors {
+            let message = errors
+                .iter()
+                .map(|e| e.message.as_str())
+                .collect::<Vec<_>>()
+                .join("; ");
+            return Err(ForgeError::AutoMergeToggleFailed { pr_number, message });
+        }
+        Ok(())
+    }
+
+    async fn restore_auto_merge(
+        &self,
+        pr_number: u64,
+        method: MergeMethod,
+    ) -> Result<(), ForgeError> {
+        let details = self.fetch_pr_details(pr_number).await?;
+        let gql_method = match method {
+            MergeMethod::Merge => "MERGE",
+            MergeMethod::Squash => "SQUASH",
+            MergeMethod::Rebase => "REBASE",
+        };
+        let query = format!(
+            r#"mutation {{ enablePullRequestAutoMerge(input: {{ pullRequestId: "{}", mergeMethod: {gql_method} }}) {{ clientMutationId }} }}"#,
+            details.node_id,
+        );
+        let response: GraphQlResponse<EnableAutoMergePayload> = self
+            .client
+            .graphql(&serde_json::json!({ "query": query }))
+            .await
+            .map_err(map_octocrab_error)?;
+        if let Some(errors) = response.errors {
+            let message = errors
+                .iter()
+                .map(|e| e.message.as_str())
+                .collect::<Vec<_>>()
+                .join("; ");
+            return Err(ForgeError::AutoMergeToggleFailed { pr_number, message });
+        }
+        Ok(())
+    }
 }
 
 fn map_octocrab_error(e: octocrab::Error) -> ForgeError {
@@ -172,6 +290,14 @@ fn map_octocrab_error(e: octocrab::Error) -> ForgeError {
     ForgeError::Api {
         message,
         source: Box::new(e),
+    }
+}
+
+fn parse_merge_method(method: &str) -> MergeMethod {
+    match method {
+        "squash" => MergeMethod::Squash,
+        "rebase" => MergeMethod::Rebase,
+        _ => MergeMethod::Merge,
     }
 }
 

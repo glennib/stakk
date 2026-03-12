@@ -144,6 +144,8 @@ pub struct SubmissionPlan {
     pub draft: bool,
     /// The default branch name (e.g., "main").
     pub default_branch: String,
+    /// Whether to suspend auto-merge during base updates.
+    pub suspend_auto_merge: bool,
 }
 
 /// Phase 3 output: what was actually done.
@@ -241,6 +243,7 @@ pub async fn create_submission_plan<F: Forge>(
     forge: &F,
     remote: &str,
     draft: bool,
+    suspend_auto_merge: bool,
 ) -> Result<SubmissionPlan, SubmitError> {
     // Collect bookmark names for concurrent PR lookup.
     let bookmark_names: Vec<String> = analysis
@@ -311,6 +314,7 @@ pub async fn create_submission_plan<F: Forge>(
         remote: remote.to_string(),
         draft,
         default_branch: analysis.default_branch.clone(),
+        suspend_auto_merge,
     })
 }
 
@@ -388,8 +392,10 @@ pub async fn execute_submission_plan<R: JjRunner, F: Forge>(
     }
 
     // Step 2a: Concurrently update bases for existing PRs that need it.
-    pb.set_message("Updating PR bases...");
-    let base_update_futures: Vec<_> = plan
+    // If suspend_auto_merge is enabled, temporarily disable auto-merge on
+    // affected PRs to prevent GitHub from auto-merging during transient
+    // empty-diff states caused by base reordering.
+    let prs_needing_base_update: Vec<_> = plan
         .bookmark_plans
         .iter()
         .filter(|bp| bp.needs_base_update)
@@ -398,6 +404,40 @@ pub async fn execute_submission_plan<R: JjRunner, F: Forge>(
                 .as_ref()
                 .map(|pr| (bp.bookmark_name.clone(), pr.number, bp.base.clone()))
         })
+        .collect();
+
+    // Suspend auto-merge on affected PRs before updating bases.
+    let mut suspended_auto_merge: Vec<(u64, crate::forge::MergeMethod)> = Vec::new();
+    if plan.suspend_auto_merge && !prs_needing_base_update.is_empty() {
+        pb.set_message("Checking auto-merge status...");
+        for &(_, pr_number, _) in &prs_needing_base_update {
+            match forge.get_auto_merge_state(pr_number).await {
+                Ok(Some(state)) => {
+                    pb.set_message(format!("Suspending auto-merge on PR #{pr_number}..."));
+                    match forge.suspend_auto_merge(pr_number).await {
+                        Ok(()) => {
+                            suspended_auto_merge.push((pr_number, state.merge_method));
+                        }
+                        Err(e) => {
+                            pb.println(format!(
+                                "  Warning: failed to suspend auto-merge on PR #{pr_number}: {e}"
+                            ));
+                        }
+                    }
+                }
+                Ok(None) => {}
+                Err(e) => {
+                    pb.println(format!(
+                        "  Warning: failed to check auto-merge on PR #{pr_number}: {e}"
+                    ));
+                }
+            }
+        }
+    }
+
+    pb.set_message("Updating PR bases...");
+    let base_update_futures: Vec<_> = prs_needing_base_update
+        .into_iter()
         .map(|(name, number, base)| async move {
             forge.update_pr_base(number, &base).await.map_err(|source| {
                 SubmitError::BaseUpdateFailed {
@@ -410,6 +450,17 @@ pub async fn execute_submission_plan<R: JjRunner, F: Forge>(
     let base_results = futures::future::join_all(base_update_futures).await;
     for result in base_results {
         result?;
+    }
+
+    // Restore auto-merge on PRs that had it suspended.
+    for (pr_number, method) in &suspended_auto_merge {
+        pb.set_message(format!("Restoring auto-merge on PR #{pr_number}..."));
+        if let Err(e) = forge.restore_auto_merge(*pr_number, *method).await {
+            pb.println(format!(
+                "  Warning: failed to restore auto-merge on PR #{pr_number}: {e} — you may need \
+                 to re-enable it manually"
+            ));
+        }
     }
 
     // Step 2b: Create new PRs sequentially (base branch must exist first).
@@ -708,6 +759,25 @@ mod tests {
                 .push((comment_id, body.to_string()));
             async { Ok(()) }
         }
+
+        async fn get_auto_merge_state(
+            &self,
+            _pr_number: u64,
+        ) -> Result<Option<crate::forge::AutoMergeState>, ForgeError> {
+            Ok(None)
+        }
+
+        async fn suspend_auto_merge(&self, _pr_number: u64) -> Result<(), ForgeError> {
+            Ok(())
+        }
+
+        async fn restore_auto_merge(
+            &self,
+            _pr_number: u64,
+            _method: crate::forge::MergeMethod,
+        ) -> Result<(), ForgeError> {
+            Ok(())
+        }
     }
 
     // -- Mock JjRunner --
@@ -849,7 +919,7 @@ mod tests {
         };
 
         let forge = MockForge::new();
-        let plan = create_submission_plan(&analysis, &forge, "origin", false)
+        let plan = create_submission_plan(&analysis, &forge, "origin", false, false)
             .await
             .unwrap();
 
@@ -874,7 +944,7 @@ mod tests {
 
         let forge = MockForge::new().with_existing_pr("feat-a", make_pr(42, "feat-a", "main"));
 
-        let plan = create_submission_plan(&analysis, &forge, "origin", false)
+        let plan = create_submission_plan(&analysis, &forge, "origin", false, false)
             .await
             .unwrap();
 
@@ -901,7 +971,7 @@ mod tests {
             .with_existing_pr("feat-a", make_pr(10, "feat-a", "main"))
             .with_existing_pr("feat-b", make_pr(11, "feat-b", "main"));
 
-        let plan = create_submission_plan(&analysis, &forge, "origin", false)
+        let plan = create_submission_plan(&analysis, &forge, "origin", false, false)
             .await
             .unwrap();
 
@@ -927,7 +997,7 @@ mod tests {
 
         let forge = MockForge::new().with_existing_pr("feat-a", make_pr(10, "feat-a", "main"));
 
-        let plan = create_submission_plan(&analysis, &forge, "origin", false)
+        let plan = create_submission_plan(&analysis, &forge, "origin", false, false)
             .await
             .unwrap();
 
@@ -963,6 +1033,7 @@ mod tests {
             remote: "origin".to_string(),
             draft: false,
             default_branch: "main".to_string(),
+            suspend_auto_merge: false,
         };
 
         let output = plan.to_string();
@@ -1005,6 +1076,7 @@ mod tests {
             remote: "origin".to_string(),
             draft: false,
             default_branch: "main".to_string(),
+            suspend_auto_merge: false,
         };
 
         let (runner, _push_calls) = MockJjRunner::new();
@@ -1042,6 +1114,7 @@ mod tests {
             remote: "origin".to_string(),
             draft: false,
             default_branch: "main".to_string(),
+            suspend_auto_merge: false,
         };
 
         let (runner, _push_calls) = MockJjRunner::new();
@@ -1086,6 +1159,7 @@ mod tests {
             remote: "origin".to_string(),
             draft: false,
             default_branch: "main".to_string(),
+            suspend_auto_merge: false,
         };
 
         let (runner, _push_calls) = MockJjRunner::new();
@@ -1152,6 +1226,7 @@ mod tests {
             remote: "origin".to_string(),
             draft: false,
             default_branch: "main".to_string(),
+            suspend_auto_merge: false,
         };
 
         let (runner, _push_calls) = MockJjRunner::new();
@@ -1205,6 +1280,7 @@ mod tests {
             remote: "my-remote".to_string(),
             draft: false,
             default_branch: "main".to_string(),
+            suspend_auto_merge: false,
         };
 
         let (runner, push_calls) = MockJjRunner::new();
@@ -1238,6 +1314,7 @@ mod tests {
             remote: "origin".to_string(),
             draft: true,
             default_branch: "main".to_string(),
+            suspend_auto_merge: false,
         };
 
         let output = plan.to_string();
@@ -1263,6 +1340,7 @@ mod tests {
             remote: "origin".to_string(),
             draft: true,
             default_branch: "main".to_string(),
+            suspend_auto_merge: false,
         };
 
         let (runner, _push_calls) = MockJjRunner::new();
