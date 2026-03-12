@@ -58,4 +58,15 @@ pub struct SubmitArgs {
     )]
     #[arg(long, env = "STAKK_TEMPLATE", verbatim_doc_comment)]
     pub template: Option<String>,
+
+    /// [Experimental] Use the detach-reattach strategy for PR base updates.
+    ///
+    /// First detaches all PR bases to the default branch, pushes bookmarks,
+    /// then reattaches bases to their correct stack targets. Prevents GitHub
+    /// auto-merge from closing PRs during reorder operations.
+    ///
+    /// Can also be set with the STAKK_EXPERIMENTAL_DETACH_BASE environment
+    /// variable.
+    #[arg(long, env = "STAKK_EXPERIMENTAL_DETACH_BASE")]
+    pub experimental_detach_base: bool,
 }
