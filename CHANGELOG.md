@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.0](https://github.com/glennib/stakk/compare/v1.0.0...v1.1.0) - 2026-03-12
+
+### Added
+
+- make graph-discovery revsets configurable via CLI and env vars
+
+### Fixed
+
+- exclude immutable changes from graph discovery
+
 ## [1.0.0](https://github.com/glennib/stakk/compare/v0.2.9...v1.0.0) - 2026-03-09
 
 ### Highlights at 1.0
