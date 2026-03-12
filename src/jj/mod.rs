@@ -76,7 +76,7 @@ impl<R: JjRunner> Jj<R> {
                 "bookmark",
                 "list",
                 "-r",
-                "mine() ~ trunk()",
+                "mine() ~ trunk() ~ immutable()",
                 "-T",
                 BOOKMARK_TEMPLATE,
             ])
@@ -200,7 +200,7 @@ impl<R: JjRunner> Jj<R> {
             .run_jj(&[
                 "log",
                 "-r",
-                "heads((mine() ~ empty()) & trunk()..)",
+                "heads((mine() ~ empty() ~ immutable()) & trunk()..)",
                 "--no-graph",
                 "--limit",
                 "100",
@@ -441,6 +441,11 @@ mod tests {
             handler: |args: &[&str]| {
                 assert_eq!(args[0], "bookmark");
                 assert_eq!(args[1], "list");
+                assert!(
+                    args[3].contains("immutable()"),
+                    "revset should exclude immutable: {}",
+                    args[3]
+                );
                 Ok(r#"{"name":"my-feature","synced":false,"target":{"commit_id":"abc","parents":[],"change_id":"xyz","description":"feat","author":{"name":"A","email":"a@b.c","timestamp":"T"},"committer":{"name":"A","email":"a@b.c","timestamp":"T"}}}"#.to_string())
             },
         };
@@ -535,6 +540,11 @@ mod tests {
             handler: |args: &[&str]| {
                 assert_eq!(args[0], "log");
                 assert!(args[2].contains("heads("));
+                assert!(
+                    args[2].contains("immutable()"),
+                    "revset should exclude immutable: {}",
+                    args[2]
+                );
                 Ok(r#"{"commit":{"commit_id":"h1","parents":["c_a"],"change_id":"ch_h1","description":"unbookmarked head","author":{"name":"A","email":"a@b.c","timestamp":"T"},"committer":{"name":"A","email":"a@b.c","timestamp":"T"}},"local_bookmarks":[],"remote_bookmarks":[]}"#.to_string())
             },
         };
