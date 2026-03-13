@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.0](https://github.com/glennib/stakk/compare/v1.1.0...v1.2.0) - 2026-03-13
+
+### Added
+
+- show short change ID prefix in TUI selection screens
+
+### Other
+
+- Merge pull request #41 from glennib/renovate/clap-4.x-lockfile
+- *(deps)* update rust crate clap_complete to v4.6.0
+- remove jack-test from claude.md
+
 ## [1.1.0](https://github.com/glennib/stakk/compare/v1.0.0...v1.1.0) - 2026-03-12
 
 ### Added
