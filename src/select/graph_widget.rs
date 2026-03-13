@@ -129,7 +129,7 @@ impl<'a> GraphWidget<'a> {
         selected_leaf: Option<&&super::graph_layout::LayoutNode>,
     ) -> Line<'a> {
         let mut spans: Vec<Span> = Vec::new();
-        let mut labels: Vec<(String, bool)> = Vec::new(); // (label, is_on_path)
+        let mut pending_labels: Vec<Vec<Span>> = Vec::new();
 
         for col in 0..self.layout.total_cols {
             let is_on_path = selected_path.contains(&(row, col));
@@ -153,9 +153,9 @@ impl<'a> GraphWidget<'a> {
                 spans.push(Span::styled(format!("{node_char:<COL_WIDTH$}"), style));
 
                 if is_on_path || is_selected_leaf {
-                    let label = Self::node_label(node);
-                    if !label.is_empty() {
-                        labels.push((label, true));
+                    let label_spans = Self::node_label_spans(node);
+                    if !label_spans.is_empty() {
+                        pending_labels.push(label_spans);
                     }
                 }
             } else {
@@ -165,16 +165,11 @@ impl<'a> GraphWidget<'a> {
         }
 
         // Append labels after all columns.
-        for (i, (label, on_path)) in labels.iter().enumerate() {
+        for (i, label_spans) in pending_labels.into_iter().enumerate() {
             if i > 0 {
                 spans.push(Span::raw("  "));
             }
-            let style = if *on_path {
-                Style::default().fg(Color::White)
-            } else {
-                Style::default().fg(Color::DarkGray)
-            };
-            spans.push(Span::styled(label.clone(), style));
+            spans.extend(label_spans);
         }
 
         Line::from(spans)
@@ -275,25 +270,41 @@ impl<'a> GraphWidget<'a> {
         Line::from(spans)
     }
 
-    fn node_label(node: &super::graph_layout::LayoutNode) -> String {
-        let mut parts = Vec::new();
+    fn node_label_spans(node: &super::graph_layout::LayoutNode) -> Vec<Span<'static>> {
+        let mut spans = Vec::new();
 
         if !node.bookmark_names.is_empty() {
-            parts.push(node.bookmark_names.join(", "));
+            spans.push(Span::styled(
+                node.bookmark_names.join(", "),
+                Style::default().fg(Color::White),
+            ));
+            spans.push(Span::styled("  ", Style::default()));
         }
 
         if node.is_trunk {
-            if parts.is_empty() {
-                parts.push("trunk".to_string());
+            if spans.is_empty() {
+                spans.push(Span::styled("trunk", Style::default().fg(Color::White)));
             }
         } else {
+            spans.push(Span::styled(
+                format!("{:<4}", node.short_change_id),
+                Style::default().fg(Color::Magenta),
+            ));
             let summary = &node.summary;
-            if summary != "(no description)" {
-                parts.push(format!("\"{summary}\""));
+            if summary == "(no description)" {
+                spans.push(Span::styled(
+                    " (no description set)",
+                    Style::default().fg(Color::DarkGray),
+                ));
+            } else {
+                spans.push(Span::styled(
+                    format!(" \"{summary}\""),
+                    Style::default().fg(Color::White),
+                ));
             }
         }
 
-        parts.join("  ")
+        spans
     }
 }
 
@@ -383,6 +394,7 @@ mod tests {
                     change_id: change_id.to_string(),
                     description: desc.to_string(),
                     author_name: "Test".to_string(),
+                    short_change_id: change_id[..4.min(change_id.len())].to_string(),
                 })
                 .collect(),
         }

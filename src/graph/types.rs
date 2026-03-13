@@ -15,6 +15,8 @@ pub struct SegmentCommit {
         expect(dead_code, reason = "used in later milestones for PR creation")
     )]
     pub author_name: String,
+    /// Shortest unique change ID prefix (from jj).
+    pub short_change_id: String,
 }
 
 /// A group of consecutive commits belonging to one or more bookmarks.

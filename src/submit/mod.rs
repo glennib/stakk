@@ -561,6 +561,7 @@ mod tests {
                 change_id: change_id.to_string(),
                 description: desc.to_string(),
                 author_name: "Test".to_string(),
+                short_change_id: change_id[..4.min(change_id.len())].to_string(),
             }],
         }
     }
@@ -1290,6 +1291,7 @@ mod tests {
             change_id: "ch1".to_string(),
             description: "Add feature X\n\nThis adds feature X with foo and bar.".to_string(),
             author_name: "Test".to_string(),
+            short_change_id: "ch1".to_string(),
         }];
 
         let body = build_pr_body(&commits);
@@ -1306,6 +1308,7 @@ mod tests {
             change_id: "ch1".to_string(),
             description: "Add feature X".to_string(),
             author_name: "Test".to_string(),
+            short_change_id: "ch1".to_string(),
         }];
 
         let body = build_pr_body(&commits);
@@ -1320,12 +1323,14 @@ mod tests {
                 change_id: "ch1".to_string(),
                 description: "First commit".to_string(),
                 author_name: "Test".to_string(),
+                short_change_id: "ch1".to_string(),
             },
             SegmentCommit {
                 commit_id: "c2".to_string(),
                 change_id: "ch2".to_string(),
                 description: "Second commit".to_string(),
                 author_name: "Test".to_string(),
+                short_change_id: "ch2".to_string(),
             },
         ];
 

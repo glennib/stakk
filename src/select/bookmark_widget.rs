@@ -33,6 +33,8 @@ pub enum RowState {
 pub struct BookmarkRow {
     /// The jj change ID.
     pub change_id: String,
+    /// Shortest unique change ID prefix (from jj).
+    pub short_change_id: String,
     /// The commit summary.
     pub summary: String,
     /// Existing bookmark name, if any.
@@ -89,6 +91,7 @@ impl BookmarkAssignmentState {
 
                 BookmarkRow {
                     change_id: node.change_id.clone(),
+                    short_change_id: node.short_change_id.clone(),
                     summary: node.summary.clone(),
                     existing_bookmark,
                     state,
@@ -296,7 +299,23 @@ impl<'a> BookmarkWidget<'a> {
                 spans.push(Span::styled(format!("{name_str}  "), state_style));
             }
 
-            spans.push(Span::styled(row.summary.clone(), summary_style));
+            let change_id_style = if is_selected {
+                Style::default().fg(Color::Magenta)
+            } else {
+                Style::default().fg(Color::DarkGray)
+            };
+            spans.push(Span::styled(
+                format!("{:<4} ", row.short_change_id),
+                change_id_style,
+            ));
+            if row.summary == "(no description)" {
+                spans.push(Span::styled(
+                    "(no description set)",
+                    Style::default().fg(Color::DarkGray),
+                ));
+            } else {
+                spans.push(Span::styled(row.summary.clone(), summary_style));
+            }
 
             lines.push(Line::from(spans));
         }
@@ -372,6 +391,7 @@ mod tests {
             is_trunk,
             is_leaf,
             stack_index: 0,
+            short_change_id: change_id[..4.min(change_id.len())].to_string(),
         }
     }
 
@@ -531,6 +551,7 @@ mod tests {
     fn effective_name_returns_correct_values() {
         let row_existing = BookmarkRow {
             change_id: "a".to_string(),
+            short_change_id: "a".to_string(),
             summary: "work".to_string(),
             existing_bookmark: Some("feat".to_string()),
             state: RowState::UseExisting,
@@ -541,6 +562,7 @@ mod tests {
 
         let row_generated = BookmarkRow {
             change_id: "b".to_string(),
+            short_change_id: "b".to_string(),
             summary: "work".to_string(),
             existing_bookmark: None,
             state: RowState::UseGenerated,
@@ -551,6 +573,7 @@ mod tests {
 
         let row_unchecked = BookmarkRow {
             change_id: "c".to_string(),
+            short_change_id: "c".to_string(),
             summary: "work".to_string(),
             existing_bookmark: Some("feat".to_string()),
             state: RowState::Unchecked,

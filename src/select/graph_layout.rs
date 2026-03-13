@@ -28,6 +28,8 @@ pub struct LayoutNode {
     pub is_leaf: bool,
     /// Index of the stack this node belongs to.
     pub stack_index: usize,
+    /// Shortest unique change ID prefix (from jj).
+    pub short_change_id: String,
 }
 
 /// An edge connecting two nodes in the layout.
@@ -111,6 +113,7 @@ pub fn build_layout(graph: &ChangeGraph) -> GraphLayout {
         is_trunk: true,
         is_leaf: false,
         stack_index: 0,
+        short_change_id: String::new(),
     });
 
     let num_stacks = graph.stacks.len();
@@ -173,6 +176,7 @@ pub fn build_layout(graph: &ChangeGraph) -> GraphLayout {
                     is_trunk: false,
                     is_leaf,
                     stack_index: stack_idx,
+                    short_change_id: commit.short_change_id.clone(),
                 });
 
                 edges.push(LayoutEdge {
@@ -276,6 +280,7 @@ mod tests {
                     change_id: change_id.to_string(),
                     description: desc.to_string(),
                     author_name: "Test".to_string(),
+                    short_change_id: change_id[..4.min(change_id.len())].to_string(),
                 })
                 .collect(),
         }

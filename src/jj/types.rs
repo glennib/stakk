@@ -53,6 +53,8 @@ pub struct LogEntryRaw {
     pub commit: CommitData,
     pub local_bookmarks: Vec<CommitRefData>,
     pub remote_bookmarks: Vec<CommitRefData>,
+    /// Shortest unique change ID prefix (from `change_id.shortest(4)`).
+    pub short_change_id: String,
 }
 
 /// Raw bookmark entry from `jj bookmark list` with explicit field template.
@@ -98,6 +100,8 @@ pub struct LogEntry {
     pub author: Signature,
     pub local_bookmark_names: Vec<String>,
     pub remote_bookmark_names: Vec<String>,
+    /// Shortest unique change ID prefix (from jj).
+    pub short_change_id: String,
 }
 
 /// A git remote parsed from `jj git remote list`.
@@ -179,7 +183,8 @@ mod tests {
             ],
             "remote_bookmarks": [
                 {"name":"feature","remote":"origin","target":["abc123"],"tracking_target":["abc123"]}
-            ]
+            ],
+            "short_change_id": "xyz7"
         }"#;
         let entry: LogEntryRaw = serde_json::from_str(json).unwrap();
         assert_eq!(entry.commit.commit_id, "abc123");
