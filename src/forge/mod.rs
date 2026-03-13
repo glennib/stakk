@@ -43,6 +43,27 @@ pub enum ForgeError {
         help("wait {retry_after_seconds}s and retry")
     )]
     RateLimited { retry_after_seconds: u64 },
+
+    #[error("failed to toggle auto-merge on PR #{pr_number}: {message}")]
+    #[diagnostic(
+        code(stakk::forge::auto_merge_toggle_failed),
+        help("you may need to re-enable auto-merge manually on the PR")
+    )]
+    AutoMergeToggleFailed { pr_number: u64, message: String },
+}
+
+/// The merge method used for a pull request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MergeMethod {
+    Merge,
+    Squash,
+    Rebase,
+}
+
+/// Auto-merge state of a pull request.
+#[derive(Debug, Clone)]
+pub struct AutoMergeState {
+    pub merge_method: MergeMethod,
 }
 
 /// State of a pull request.
@@ -131,5 +152,24 @@ pub trait Forge: Send + Sync {
         &self,
         comment_id: u64,
         body: &str,
+    ) -> impl std::future::Future<Output = Result<(), ForgeError>> + Send;
+
+    /// Get the auto-merge state of a PR, if enabled.
+    fn get_auto_merge_state(
+        &self,
+        pr_number: u64,
+    ) -> impl std::future::Future<Output = Result<Option<AutoMergeState>, ForgeError>> + Send;
+
+    /// Disable auto-merge on a PR.
+    fn suspend_auto_merge(
+        &self,
+        pr_number: u64,
+    ) -> impl std::future::Future<Output = Result<(), ForgeError>> + Send;
+
+    /// Re-enable auto-merge on a PR with the given merge method.
+    fn restore_auto_merge(
+        &self,
+        pr_number: u64,
+        method: MergeMethod,
     ) -> impl std::future::Future<Output = Result<(), ForgeError>> + Send;
 }

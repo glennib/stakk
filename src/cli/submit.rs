@@ -24,6 +24,12 @@ pub struct SubmitArgs {
     #[arg(long, default_value = "origin", env = "STAKK_REMOTE")]
     pub remote: String,
 
+    /// Temporarily disable auto-merge on PRs while updating their base
+    /// branches, then re-enable it. Prevents GitHub from auto-merging PRs
+    /// during stack reordering. Experimental.
+    #[arg(long, env = "STAKK_EXPERIMENTAL_SUSPEND_AUTO_MERGE")]
+    pub experimental_suspend_auto_merge: bool,
+
     /// Path to a custom minijinja template for stack comments.
     ///
     /// The template is rendered with minijinja and receives the following
