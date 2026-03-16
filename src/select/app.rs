@@ -25,8 +25,10 @@ use super::SelectionResult;
 use super::bookmark_gen;
 use super::bookmark_gen::BookmarkGenError;
 use super::bookmark_gen::BookmarkNameCache;
+use super::bookmark_gen::CacheEntry;
 use super::bookmark_widget::BookmarkAssignmentState;
 use super::bookmark_widget::BookmarkWidget;
+use super::bookmark_widget::CustomNameState;
 use super::bookmark_widget::RowState;
 use super::bookmark_widget::SelectionError;
 use super::bookmark_widget::bookmark_help_line;
@@ -140,7 +142,17 @@ fn run_event_loop(
         // Check for completed background commands before drawing.
         drain_completed(&mut pending, bookmark_state);
 
-        let has_pending = !pending.is_empty();
+        // Resolve Loading rows whose cache key now has a Computed entry
+        // (e.g. from an orphaned task or a task spawned for a different row
+        // with the same segment key).
+        resolve_cached_names(bookmark_state, bookmark_cache);
+
+        let has_loading = bookmark_state.as_ref().is_some_and(|s| {
+            s.rows
+                .iter()
+                .any(|r| matches!(r.state, RowState::UseCustom(CustomNameState::Loading)))
+        });
+        let has_pending = !pending.is_empty() || has_loading;
 
         // Update spinner state for loading indicators.
         if has_pending {
@@ -294,27 +306,49 @@ fn run_event_loop(
     }
 }
 
-/// Spawn background tasks for any `UseCustom("")` sentinel rows. Also detects
-/// invalidated `UseCustom` rows whose dynamic segment changed.
+/// Spawn background tasks for any `UseCustom(Loading)` rows. Also detects
+/// invalidated `UseCustom` rows whose dynamic segment changed. Deduplicates
+/// against in-flight `CacheEntry::Computing` entries and applies synchronous
+/// `CacheEntry::Computed` hits without spawning.
 fn fire_pending_commands(
     state: &mut BookmarkAssignmentState,
     command: &str,
     cache: &Arc<Mutex<BookmarkNameCache>>,
     pending: &mut Vec<PendingCommand>,
 ) {
-    let cache_guard = cache.lock().expect("cache mutex poisoned");
+    let mut cache_guard = cache.lock().expect("cache mutex poisoned");
 
     let needs_fire: Vec<usize> = state
         .rows
         .iter()
         .enumerate()
         .filter_map(|(i, row)| match &row.state {
-            RowState::UseCustom(name) if name.is_empty() => Some(i),
-            RowState::UseCustom(_) => {
+            RowState::UseCustom(CustomNameState::Loading) => {
+                let segment = bookmark_gen::dynamic_segment_commits(&state.rows, i);
+                let key = bookmark_gen::cache_key(&segment);
+                match cache_guard.get(&key) {
+                    // Already in-flight and not expired — skip.
+                    Some(CacheEntry::Computing { .. })
+                        if !cache_guard.get(&key).unwrap().is_expired() =>
+                    {
+                        None
+                    }
+                    // Expired Computing — remove so we can retry.
+                    Some(CacheEntry::Computing { .. }) => {
+                        cache_guard.remove(&key);
+                        Some(i)
+                    }
+                    // Computed — will be applied synchronously below.
+                    Some(CacheEntry::Computed(_)) => Some(i),
+                    // No entry — needs spawn.
+                    None => Some(i),
+                }
+            }
+            RowState::UseCustom(CustomNameState::Ready(_)) => {
                 // Check if the dynamic segment changed.
                 let segment = bookmark_gen::dynamic_segment_commits(&state.rows, i);
                 let key = bookmark_gen::cache_key(&segment);
-                if let Some(cached_name) = cache_guard.get(&key)
+                if let Some(CacheEntry::Computed(cached_name)) = cache_guard.get(&key)
                     && row.custom_name.as_ref() == Some(cached_name)
                 {
                     return None;
@@ -337,14 +371,34 @@ fn fire_pending_commands(
         // Remove any existing pending command for this row.
         pending.retain(|p| p.row_idx != idx);
 
-        // Check cache first (synchronous hit — e.g. from an orphaned task).
+        // Check cache (synchronous hit — e.g. from an orphaned task or
+        // Computed entry detected above).
         let segment = bookmark_gen::dynamic_segment_commits(&state.rows, idx);
         let key = bookmark_gen::cache_key(&segment);
-        if let Some(cached_name) = cache_guard.get(&key) {
-            state.rows[idx].custom_name = Some(cached_name.clone());
-            state.rows[idx].state = RowState::UseCustom(cached_name.clone());
-            continue;
+        match cache_guard.get(&key) {
+            Some(CacheEntry::Computed(cached_name)) => {
+                let name = cached_name.clone();
+                state.rows[idx].custom_name = Some(name.clone());
+                state.rows[idx].state = RowState::UseCustom(CustomNameState::Ready(name));
+                continue;
+            }
+            Some(CacheEntry::Computing { .. }) if !cache_guard.get(&key).unwrap().is_expired() => {
+                // Already in-flight — ensure row shows loading.
+                state.rows[idx].state = RowState::UseCustom(CustomNameState::Loading);
+                continue;
+            }
+            _ => {
+                // No entry or expired — proceed to spawn.
+            }
         }
+
+        // Mark as Computing before spawning.
+        cache_guard.insert(
+            key.clone(),
+            CacheEntry::Computing {
+                since: std::time::Instant::now(),
+            },
+        );
 
         // Build the input before spawning (we need to read from state).
         let input = bookmark_gen::build_segment_input(&segment);
@@ -357,20 +411,23 @@ fn fire_pending_commands(
         handle.spawn(async move {
             let result = bookmark_gen::run_command(&cmd, &json).await;
 
-            // On success, validate and cache — even if the receiver is gone
-            // (orphaned task), the result is preserved for later lookups.
-            if let Ok(ref name) = result
-                && bookmark_gen::validate_bookmark_name(name).is_ok()
-                && let Ok(mut guard) = task_cache.lock()
-            {
-                guard.insert(key, name.clone());
+            if let Ok(mut guard) = task_cache.lock() {
+                match &result {
+                    Ok(name) if bookmark_gen::validate_bookmark_name(name).is_ok() => {
+                        guard.insert(key, CacheEntry::Computed(name.clone()));
+                    }
+                    _ => {
+                        // Remove the Computing entry so the key can be retried.
+                        guard.remove(&key);
+                    }
+                }
             }
 
             let _ = tx.send(result);
         });
 
-        // Set loading sentinel.
-        state.rows[idx].state = RowState::UseCustom(String::new());
+        // Set loading state.
+        state.rows[idx].state = RowState::UseCustom(CustomNameState::Loading);
 
         pending.push(PendingCommand { row_idx: idx, rx });
     }
@@ -379,7 +436,9 @@ fn fire_pending_commands(
 /// Drain completed background commands and update row state.
 ///
 /// The spawned tasks already validate and cache on success, so this function
-/// only updates the TUI row state from the result.
+/// only updates the TUI row state from the result. Guards against overwriting
+/// state if the user toggled away from `UseCustom(Loading)` while the task was
+/// running.
 fn drain_completed(
     pending: &mut Vec<PendingCommand>,
     bookmark_state: &mut Option<BookmarkAssignmentState>,
@@ -420,17 +479,68 @@ fn drain_completed(
             Ok(name) => {
                 if bookmark_gen::validate_bookmark_name(&name).is_ok() {
                     state.rows[row_idx].custom_name = Some(name.clone());
-                    state.rows[row_idx].state = RowState::UseCustom(name);
-                } else {
+                    if matches!(
+                        state.rows[row_idx].state,
+                        RowState::UseCustom(CustomNameState::Loading)
+                    ) {
+                        state.rows[row_idx].state =
+                            RowState::UseCustom(CustomNameState::Ready(name));
+                    }
+                } else if matches!(
+                    state.rows[row_idx].state,
+                    RowState::UseCustom(CustomNameState::Loading)
+                ) {
                     state.rows[row_idx].custom_name = None;
                     state.rows[row_idx].state = RowState::Unchecked;
                 }
             }
             Err(_e) => {
-                state.rows[row_idx].custom_name = None;
-                state.rows[row_idx].state = RowState::Unchecked;
+                if matches!(
+                    state.rows[row_idx].state,
+                    RowState::UseCustom(CustomNameState::Loading)
+                ) {
+                    state.rows[row_idx].custom_name = None;
+                    state.rows[row_idx].state = RowState::Unchecked;
+                }
             }
         }
+    }
+}
+
+/// Resolve `UseCustom(Loading)` rows whose cache key now has a `Computed`
+/// entry. This catches rows that were set to `Loading` because a `Computing`
+/// entry was already in-flight for their segment key — those rows have no
+/// `PendingCommand`, so `drain_completed` can't resolve them.
+fn resolve_cached_names(
+    bookmark_state: &mut Option<BookmarkAssignmentState>,
+    cache: &Arc<Mutex<BookmarkNameCache>>,
+) {
+    let Some(state) = bookmark_state.as_mut() else {
+        return;
+    };
+
+    let cache_guard = cache.lock().expect("cache mutex poisoned");
+
+    // Collect (row_index, resolved_name) pairs first to avoid borrow conflict.
+    let resolved: Vec<(usize, String)> = state
+        .rows
+        .iter()
+        .enumerate()
+        .filter(|(_, row)| matches!(row.state, RowState::UseCustom(CustomNameState::Loading)))
+        .filter_map(|(i, _)| {
+            let segment = bookmark_gen::dynamic_segment_commits(&state.rows, i);
+            let key = bookmark_gen::cache_key(&segment);
+            if let Some(CacheEntry::Computed(name)) = cache_guard.get(&key) {
+                Some((i, name.clone()))
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    for (i, name) in resolved {
+        state.rows[i].custom_name = Some(name.clone());
+        state.rows[i].state = RowState::UseCustom(CustomNameState::Ready(name));
     }
 }
 

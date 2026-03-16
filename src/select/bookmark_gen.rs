@@ -5,6 +5,8 @@
 //! and returns a single bookmark name on stdout.
 
 use std::collections::HashMap;
+use std::time::Duration;
+use std::time::Instant;
 
 use miette::Diagnostic;
 use serde::Serialize;
@@ -96,8 +98,31 @@ const MAX_BOOKMARK_LENGTH: usize = 255;
 /// Characters disallowed in bookmark names.
 const DISALLOWED_CHARS: &str = " ~^:?*[\\";
 
+/// Timeout for in-flight cache entries before they can be retried.
+pub const COMPUTING_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// A cache entry for a custom bookmark name.
+#[derive(Debug, Clone)]
+pub enum CacheEntry {
+    /// A background task is computing this name.
+    Computing { since: Instant },
+    /// The name has been computed and validated.
+    Computed(String),
+}
+
+impl CacheEntry {
+    /// Returns `true` if this is a `Computing` entry that has exceeded the
+    /// timeout.
+    pub fn is_expired(&self) -> bool {
+        match self {
+            CacheEntry::Computing { since } => since.elapsed() > COMPUTING_TIMEOUT,
+            CacheEntry::Computed(_) => false,
+        }
+    }
+}
+
 /// Cache for custom bookmark names, keyed by ordered commit IDs.
-pub type BookmarkNameCache = HashMap<Vec<String>, String>;
+pub type BookmarkNameCache = HashMap<Vec<String>, CacheEntry>;
 
 /// Generate the default `stakk-<change_id[:12]>` bookmark name.
 pub fn default_bookmark_name(change_id: &str) -> String {
@@ -189,8 +214,8 @@ pub async fn generate_custom_name(
     cache: &mut BookmarkNameCache,
 ) -> Result<String, BookmarkGenError> {
     let key = cache_key(rows);
-    if let Some(cached) = cache.get(&key) {
-        return Ok(cached.clone());
+    if let Some(CacheEntry::Computed(name)) = cache.get(&key) {
+        return Ok(name.clone());
     }
 
     let input = build_segment_input(rows);
@@ -199,7 +224,7 @@ pub async fn generate_custom_name(
     let name = run_command(command, &json).await?;
     validate_bookmark_name(&name)?;
 
-    cache.insert(key, name.clone());
+    cache.insert(key, CacheEntry::Computed(name.clone()));
     Ok(name)
 }
 
@@ -375,11 +400,63 @@ mod tests {
     fn cache_hit_and_miss() {
         let mut cache = BookmarkNameCache::new();
         let key = vec!["c1".to_string(), "c2".to_string()];
-        cache.insert(key.clone(), "cached-name".to_string());
-        assert_eq!(cache.get(&key), Some(&"cached-name".to_string()));
+        cache.insert(key.clone(), CacheEntry::Computed("cached-name".to_string()));
+        assert!(
+            matches!(cache.get(&key), Some(CacheEntry::Computed(name)) if name == "cached-name")
+        );
 
         let miss_key = vec!["c3".to_string()];
-        assert_eq!(cache.get(&miss_key), None);
+        assert!(cache.get(&miss_key).is_none());
+    }
+
+    #[test]
+    fn computing_entry_overwrites_on_generate() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let mut cache = BookmarkNameCache::new();
+        let row = make_row("c1", "ch1", RowState::UseGenerated, false);
+        let rows: Vec<&BookmarkRow> = vec![&row];
+        let key = cache_key(&rows);
+
+        // Insert a Computing entry.
+        cache.insert(
+            key.clone(),
+            CacheEntry::Computing {
+                since: Instant::now(),
+            },
+        );
+
+        // generate_custom_name should run the command and overwrite with
+        // Computed.
+        let name = rt
+            .block_on(generate_custom_name("echo my-branch", &rows, &mut cache))
+            .unwrap();
+        assert_eq!(name, "my-branch");
+        assert!(matches!(cache.get(&key), Some(CacheEntry::Computed(n)) if n == "my-branch"));
+    }
+
+    #[test]
+    fn expired_computing_entry_is_treated_as_absent() {
+        let mut cache = BookmarkNameCache::new();
+        let key = vec!["c1".to_string()];
+
+        // Insert an expired Computing entry.
+        cache.insert(
+            key.clone(),
+            CacheEntry::Computing {
+                since: Instant::now() - Duration::from_secs(61),
+            },
+        );
+
+        assert!(cache.get(&key).unwrap().is_expired());
+
+        // A non-expired entry should not be expired.
+        cache.insert(
+            key.clone(),
+            CacheEntry::Computing {
+                since: Instant::now(),
+            },
+        );
+        assert!(!cache.get(&key).unwrap().is_expired());
     }
 
     fn make_row(commit_id: &str, change_id: &str, state: RowState, is_trunk: bool) -> BookmarkRow {

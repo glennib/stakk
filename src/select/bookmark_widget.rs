@@ -19,6 +19,15 @@ use super::bookmark_gen;
 use super::graph_layout::LayoutNode;
 use crate::jj::types::Signature;
 
+/// Whether a custom bookmark name is still loading or has been resolved.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CustomNameState {
+    /// Waiting for the external command to return a name.
+    Loading,
+    /// The name has been resolved.
+    Ready(String),
+}
+
 /// The inclusion state of a bookmark row.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RowState {
@@ -28,7 +37,7 @@ pub enum RowState {
     /// Included in submission; a new stakk-xxx bookmark will be created.
     UseGenerated,
     /// Included in submission; a custom name from the bookmark command.
-    UseCustom(String),
+    UseCustom(CustomNameState),
     /// Excluded from submission.
     Unchecked,
 }
@@ -74,7 +83,8 @@ impl BookmarkRow {
         match &self.state {
             RowState::UseExisting(idx) => self.existing_bookmarks.get(*idx).map(String::as_str),
             RowState::UseGenerated => self.generated_name.as_deref(),
-            RowState::UseCustom(name) => Some(name.as_str()),
+            RowState::UseCustom(CustomNameState::Loading) => None,
+            RowState::UseCustom(CustomNameState::Ready(name)) => Some(name.as_str()),
             RowState::Unchecked => None,
         }
     }
@@ -89,15 +99,11 @@ pub enum SelectionError {
     StillLoading,
 }
 
-/// Helper to construct `UseCustom` state, using cached name or an empty
-/// sentinel that signals the caller to invoke the command.
-struct UseCustomSentinel;
-impl UseCustomSentinel {
-    fn make(row: &BookmarkRow) -> RowState {
-        match &row.custom_name {
-            Some(name) => RowState::UseCustom(name.clone()),
-            None => RowState::UseCustom(String::new()),
-        }
+/// Build `UseCustom` state from a row's cached custom name.
+fn make_use_custom(row: &BookmarkRow) -> RowState {
+    match &row.custom_name {
+        Some(name) => RowState::UseCustom(CustomNameState::Ready(name.clone())),
+        None => RowState::UseCustom(CustomNameState::Loading),
     }
 }
 
@@ -161,8 +167,8 @@ impl BookmarkAssignmentState {
     /// generated or any existing name.
     ///
     /// When toggling to `UseCustom`, the state is set to
-    /// `UseCustom(String::new())` as a sentinel — the caller (`app.rs`)
-    /// is responsible for firing the command and filling in the real name.
+    /// `UseCustom(Loading)` — the caller (`app.rs`) is responsible for
+    /// firing the command and filling in the real name.
     pub fn toggle_current(&mut self) {
         let Some(row) = self.rows.get_mut(self.cursor) else {
             return;
@@ -196,14 +202,14 @@ impl BookmarkAssignmentState {
                 } else if has_distinct_generated {
                     RowState::UseGenerated
                 } else if has_distinct_custom {
-                    UseCustomSentinel::make(row)
+                    make_use_custom(row)
                 } else {
                     RowState::Unchecked
                 }
             }
             RowState::UseGenerated => {
                 if has_distinct_custom {
-                    UseCustomSentinel::make(row)
+                    make_use_custom(row)
                 } else {
                     RowState::Unchecked
                 }
@@ -241,8 +247,8 @@ impl BookmarkAssignmentState {
     /// Build the selection result from included rows.
     ///
     /// Returns `Err` with the duplicate bookmark name if any two included rows
-    /// resolve to the same name, or if any row is still loading (`UseCustom`
-    /// with empty sentinel).
+    /// resolve to the same name, or if any row is still loading
+    /// (`UseCustom(Loading)`).
     pub fn build_result(&self) -> Result<Vec<BookmarkAssignment>, SelectionError> {
         let mut assignments = Vec::new();
         let mut seen = std::collections::HashSet::new();
@@ -266,10 +272,10 @@ impl BookmarkAssignmentState {
                         .expect("UseGenerated requires name"),
                     true,
                 ),
-                RowState::UseCustom(name) if name.is_empty() => {
+                RowState::UseCustom(CustomNameState::Loading) => {
                     return Err(SelectionError::StillLoading);
                 }
-                RowState::UseCustom(name) => (name.clone(), true),
+                RowState::UseCustom(CustomNameState::Ready(name)) => (name.clone(), true),
                 RowState::Unchecked => unreachable!("filtered above"),
             };
 
@@ -370,17 +376,16 @@ impl<'a> BookmarkWidget<'a> {
                     .as_ref()
                     .map(|n| format!("{n} (new)"))
                     .unwrap_or_default(),
-                RowState::UseCustom(name) => {
-                    if name.is_empty() {
-                        let frame = SPINNER_FRAMES[self.spinner_tick % SPINNER_FRAMES.len()];
-                        let label = self
-                            .bookmark_command
-                            .map(|cmd| shorten_middle(cmd, COMMAND_LABEL_MAX))
-                            .unwrap_or_default();
-                        format!("{frame}{label}{frame}")
-                    } else {
-                        format!("{name} (custom)")
-                    }
+                RowState::UseCustom(CustomNameState::Loading) => {
+                    let frame = SPINNER_FRAMES[self.spinner_tick % SPINNER_FRAMES.len()];
+                    let label = self
+                        .bookmark_command
+                        .map(|cmd| shorten_middle(cmd, COMMAND_LABEL_MAX))
+                        .unwrap_or_default();
+                    format!("{frame}{label}{frame}")
+                }
+                RowState::UseCustom(CustomNameState::Ready(name)) => {
+                    format!("{name} (custom)")
                 }
                 RowState::Unchecked => {
                     if let Some(first) = row.existing_bookmarks.first() {
@@ -717,8 +722,28 @@ mod tests {
         let row_unchecked = make_bare_row(RowState::Unchecked);
         assert_eq!(row_unchecked.effective_name(), None);
 
-        let row_custom = make_bare_row(RowState::UseCustom("my-branch".to_string()));
+        let row_custom = make_bare_row(RowState::UseCustom(CustomNameState::Ready(
+            "my-branch".to_string(),
+        )));
         assert_eq!(row_custom.effective_name(), Some("my-branch"));
+
+        let row_loading = make_bare_row(RowState::UseCustom(CustomNameState::Loading));
+        assert_eq!(row_loading.effective_name(), None);
+    }
+
+    #[test]
+    fn build_result_blocks_when_loading() {
+        let mut row = make_bare_row(RowState::UseCustom(CustomNameState::Loading));
+        // Ensure the row is not trunk so it's included.
+        row.is_trunk = false;
+        let state = BookmarkAssignmentState {
+            rows: vec![row],
+            cursor: 0,
+        };
+        assert!(matches!(
+            state.build_result(),
+            Err(SelectionError::StillLoading)
+        ));
     }
 
     #[test]
