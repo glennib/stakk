@@ -3,6 +3,8 @@
 use std::collections::HashMap;
 use std::collections::HashSet;
 
+use crate::jj::types::Signature;
+
 /// A commit within a bookmark segment, carrying metadata needed for display
 /// and later PR creation.
 #[derive(Debug, Clone)]
@@ -10,13 +12,11 @@ pub struct SegmentCommit {
     pub commit_id: String,
     pub change_id: String,
     pub description: String,
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "used in later milestones for PR creation")
-    )]
-    pub author_name: String,
+    pub author: Signature,
     /// Shortest unique change ID prefix (from jj).
     pub short_change_id: String,
+    /// Files changed by this commit.
+    pub files: Vec<String>,
 }
 
 /// A group of consecutive commits belonging to one or more bookmarks.

@@ -15,12 +15,10 @@ pub struct CommitData {
 }
 
 /// Author/committer signature.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct Signature {
     pub name: String,
-    #[expect(dead_code, reason = "deserialized for completeness, used later")]
     pub email: String,
-    #[expect(dead_code, reason = "deserialized for completeness, used later")]
     pub timestamp: String,
 }
 

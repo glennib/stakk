@@ -125,7 +125,18 @@ pub async fn build_change_graph<R: JjRunner>(
         .cloned()
         .collect();
 
-    let stacks = group_segments_into_stacks(&stack_leaves, &adjacency_list, &segments);
+    let mut stacks = group_segments_into_stacks(&stack_leaves, &adjacency_list, &segments);
+
+    // Pre-fetch file lists for all commits concurrently.
+    fetch_file_lists(jj, &mut stacks).await?;
+    // Also update the segments map so it stays in sync.
+    for stack in &stacks {
+        for segment in &stack.segments {
+            if let Some(seg) = segments.get_mut(&segment.change_id) {
+                *seg = segment.clone();
+            }
+        }
+    }
 
     Ok(ChangeGraph {
         adjacency_list,
@@ -273,8 +284,9 @@ async fn traverse_and_discover_segments<R: JjRunner>(
                     commit_id: change.commit_id.clone(),
                     change_id: change.change_id.clone(),
                     description: change.description.clone(),
-                    author_name: change.author.name.clone(),
+                    author: change.author.clone(),
                     short_change_id: change.short_change_id.clone(),
+                    files: vec![],
                 });
             }
         }
@@ -296,6 +308,37 @@ async fn traverse_and_discover_segments<R: JjRunner>(
         already_seen_change_id,
         excluded: false,
     })
+}
+
+/// Pre-fetch file lists for all commits in all stacks concurrently.
+async fn fetch_file_lists<R: JjRunner>(
+    jj: &Jj<R>,
+    stacks: &mut [BranchStack],
+) -> Result<(), StakkError> {
+    // Collect all (stack_idx, seg_idx, commit_idx, commit_id) tuples.
+    let mut tasks: Vec<(usize, usize, usize, String)> = Vec::new();
+    for (si, stack) in stacks.iter().enumerate() {
+        for (sgi, segment) in stack.segments.iter().enumerate() {
+            for (ci, commit) in segment.commits.iter().enumerate() {
+                if commit.files.is_empty() {
+                    tasks.push((si, sgi, ci, commit.commit_id.clone()));
+                }
+            }
+        }
+    }
+
+    let futures: Vec<_> = tasks
+        .iter()
+        .map(|(_, _, _, commit_id)| jj.get_diff_files(commit_id))
+        .collect();
+
+    let results = futures::future::join_all(futures).await;
+
+    for ((si, sgi, ci, _), result) in tasks.iter().zip(results) {
+        stacks[*si].segments[*sgi].commits[*ci].files = result?;
+    }
+
+    Ok(())
 }
 
 /// Walk from each leaf to root via the adjacency list, producing one
@@ -440,6 +483,9 @@ mod tests {
     async fn linear_stack() {
         let runner = MockJjRunner {
             handler: |args: &[&str]| {
+                if args[0] == "diff" {
+                    return Ok(String::new());
+                }
                 if args[0] == "bookmark" {
                     // Return two bookmarks.
                     let lines = [
@@ -497,6 +543,9 @@ mod tests {
     async fn branching_shared_root() {
         let runner = MockJjRunner {
             handler: |args: &[&str]| {
+                if args[0] == "diff" {
+                    return Ok(String::new());
+                }
                 if args[0] == "bookmark" {
                     let lines = [
                         bookmark_json("bm_b", "c_b", "ch_b"),
@@ -563,6 +612,9 @@ mod tests {
     async fn merge_commit_excluded() {
         let runner = MockJjRunner {
             handler: |args: &[&str]| {
+                if args[0] == "diff" {
+                    return Ok(String::new());
+                }
                 if args[0] == "bookmark" {
                     return Ok(bookmark_json("bm_merge", "c_merge", "ch_merge"));
                 }
@@ -605,6 +657,9 @@ mod tests {
     async fn merge_taint_propagation() {
         let runner = MockJjRunner {
             handler: |args: &[&str]| {
+                if args[0] == "diff" {
+                    return Ok(String::new());
+                }
                 if args[0] == "bookmark" {
                     let lines = [
                         bookmark_json("bm_b", "c_b", "ch_b"),
@@ -652,6 +707,9 @@ mod tests {
     async fn taint_from_previous_traversal() {
         let runner = MockJjRunner {
             handler: |args: &[&str]| {
+                if args[0] == "diff" {
+                    return Ok(String::new());
+                }
                 if args[0] == "bookmark" {
                     let lines = [
                         // bm_merge will be processed first, tainting ch_merge.
@@ -704,6 +762,9 @@ mod tests {
     async fn multiple_bookmarks_same_change() {
         let runner = MockJjRunner {
             handler: |args: &[&str]| {
+                if args[0] == "diff" {
+                    return Ok(String::new());
+                }
                 if args[0] == "bookmark" {
                     let lines = [
                         bookmark_json("bm_a", "c_x", "ch_x"),
@@ -750,6 +811,9 @@ mod tests {
     async fn no_bookmarks() {
         let runner = MockJjRunner {
             handler: |args: &[&str]| {
+                if args[0] == "diff" {
+                    return Ok(String::new());
+                }
                 if args[0] == "bookmark" {
                     return Ok(String::new());
                 }
@@ -784,6 +848,9 @@ mod tests {
     async fn multi_commit_segment() {
         let runner = MockJjRunner {
             handler: |args: &[&str]| {
+                if args[0] == "diff" {
+                    return Ok(String::new());
+                }
                 if args[0] == "bookmark" {
                     let lines = [
                         bookmark_json("bm_b", "c4", "ch_b"),
@@ -849,6 +916,9 @@ mod tests {
     async fn already_collected_early_stop() {
         let runner = MockJjRunner {
             handler: |args: &[&str]| {
+                if args[0] == "diff" {
+                    return Ok(String::new());
+                }
                 if args[0] == "bookmark" {
                     let lines = [
                         bookmark_json("bm_b", "c_b", "ch_b"),
@@ -911,6 +981,9 @@ mod tests {
     async fn topological_sort_linear() {
         let runner = MockJjRunner {
             handler: |args: &[&str]| {
+                if args[0] == "diff" {
+                    return Ok(String::new());
+                }
                 if args[0] == "bookmark" {
                     let lines = [
                         bookmark_json("bm_c", "c_c", "ch_c"),
@@ -957,6 +1030,9 @@ mod tests {
     async fn topological_sort_branching() {
         let runner = MockJjRunner {
             handler: |args: &[&str]| {
+                if args[0] == "diff" {
+                    return Ok(String::new());
+                }
                 if args[0] == "bookmark" {
                     let lines = [
                         bookmark_json("bm_b", "c_b", "ch_b"),
@@ -1013,6 +1089,9 @@ mod tests {
     async fn single_bookmark_single_commit() {
         let runner = MockJjRunner {
             handler: |args: &[&str]| {
+                if args[0] == "diff" {
+                    return Ok(String::new());
+                }
                 if args[0] == "bookmark" {
                     return Ok(bookmark_json("bm_x", "c_x", "ch_x"));
                 }
@@ -1053,6 +1132,9 @@ mod tests {
     async fn segment_commit_metadata() {
         let runner = MockJjRunner {
             handler: |args: &[&str]| {
+                if args[0] == "diff" {
+                    return Ok(String::new());
+                }
                 if args[0] == "bookmark" {
                     return Ok(bookmark_json("feat", "c1", "ch1"));
                 }
@@ -1079,7 +1161,7 @@ mod tests {
         assert_eq!(seg.commits[0].commit_id, "c1");
         assert_eq!(seg.commits[0].change_id, "ch1");
         assert_eq!(seg.commits[0].description, "desc c1");
-        assert_eq!(seg.commits[0].author_name, "T");
+        assert_eq!(seg.commits[0].author.name, "T");
     }
 
     /// `group_segments_into_stacks` is deterministic (sorted by leaf
@@ -1121,6 +1203,9 @@ mod tests {
     async fn non_user_bookmarks_filtered_from_segment() {
         let runner = MockJjRunner {
             handler: |args: &[&str]| {
+                if args[0] == "diff" {
+                    return Ok(String::new());
+                }
                 if args[0] == "bookmark" {
                     // Only bm_user belongs to the user.
                     return Ok(bookmark_json("bm_user", "c_x", "ch_x"));
@@ -1167,6 +1252,9 @@ mod tests {
     async fn only_non_user_bookmarks_no_segment_boundary() {
         let runner = MockJjRunner {
             handler: |args: &[&str]| {
+                if args[0] == "diff" {
+                    return Ok(String::new());
+                }
                 if args[0] == "bookmark" {
                     return Ok(bookmark_json("bm_user", "c_user", "ch_user"));
                 }
@@ -1221,6 +1309,9 @@ mod tests {
     async fn unbookmarked_head_discovered() {
         let runner = MockJjRunner {
             handler: |args: &[&str]| {
+                if args[0] == "diff" {
+                    return Ok(String::new());
+                }
                 if args[0] == "bookmark" {
                     return Ok(bookmark_json("bm_a", "c_a", "ch_a"));
                 }
@@ -1284,6 +1375,9 @@ mod tests {
     async fn unbookmarked_head_at_bookmarked_commit_skipped() {
         let runner = MockJjRunner {
             handler: |args: &[&str]| {
+                if args[0] == "diff" {
+                    return Ok(String::new());
+                }
                 if args[0] == "bookmark" {
                     return Ok(bookmark_json("bm_a", "c_a", "ch_a"));
                 }
@@ -1325,6 +1419,9 @@ mod tests {
     async fn multiple_unbookmarked_heads() {
         let runner = MockJjRunner {
             handler: |args: &[&str]| {
+                if args[0] == "diff" {
+                    return Ok(String::new());
+                }
                 if args[0] == "bookmark" {
                     return Ok(bookmark_json("bm_a", "c_a", "ch_a"));
                 }
@@ -1406,6 +1503,9 @@ mod tests {
     async fn unbookmarked_head_with_bookmarked_ancestor() {
         let runner = MockJjRunner {
             handler: |args: &[&str]| {
+                if args[0] == "diff" {
+                    return Ok(String::new());
+                }
                 if args[0] == "bookmark" {
                     return Ok(bookmark_json("bm_mid", "c_mid", "ch_mid"));
                 }
