@@ -6,6 +6,7 @@
 use std::collections::HashMap;
 
 use crate::graph::types::ChangeGraph;
+use crate::jj::types::Signature;
 
 /// A positioned node in the 2D graph layout.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -20,6 +21,8 @@ pub struct LayoutNode {
     pub commit_id: String,
     /// First line of the commit description.
     pub summary: String,
+    /// Full commit description.
+    pub description: String,
     /// Bookmark names on this commit (may be empty).
     pub bookmark_names: Vec<String>,
     /// Whether this node is the trunk node.
@@ -30,6 +33,10 @@ pub struct LayoutNode {
     pub stack_index: usize,
     /// Shortest unique change ID prefix (from jj).
     pub short_change_id: String,
+    /// Author signature.
+    pub author: Signature,
+    /// Files changed by this commit.
+    pub files: Vec<String>,
 }
 
 /// An edge connecting two nodes in the layout.
@@ -109,11 +116,18 @@ pub fn build_layout(graph: &ChangeGraph) -> GraphLayout {
         change_id: String::new(),
         commit_id: String::new(),
         summary: "trunk".to_string(),
+        description: String::new(),
         bookmark_names: vec![],
         is_trunk: true,
         is_leaf: false,
         stack_index: 0,
         short_change_id: String::new(),
+        author: Signature {
+            name: String::new(),
+            email: String::new(),
+            timestamp: String::new(),
+        },
+        files: vec![],
     });
 
     let num_stacks = graph.stacks.len();
@@ -172,11 +186,14 @@ pub fn build_layout(graph: &ChangeGraph) -> GraphLayout {
                     change_id: commit.change_id.clone(),
                     commit_id: commit.commit_id.clone(),
                     summary,
+                    description: commit.description.clone(),
                     bookmark_names,
                     is_trunk: false,
                     is_leaf,
                     stack_index: stack_idx,
                     short_change_id: commit.short_change_id.clone(),
+                    author: commit.author.clone(),
+                    files: commit.files.clone(),
                 });
 
                 edges.push(LayoutEdge {
@@ -279,7 +296,12 @@ mod tests {
                     commit_id: format!("c_{change_id}_{i}"),
                     change_id: change_id.to_string(),
                     description: desc.to_string(),
-                    author_name: "Test".to_string(),
+                    author: crate::jj::types::Signature {
+                        name: "Test".to_string(),
+                        email: "test@test.com".to_string(),
+                        timestamp: "T".to_string(),
+                    },
+                    files: vec![],
                     short_change_id: change_id[..4.min(change_id.len())].to_string(),
                 })
                 .collect(),

@@ -204,6 +204,21 @@ impl<R: JjRunner> Jj<R> {
         parse_log_entries(&output)
     }
 
+    /// Get the list of files changed by a specific commit.
+    pub async fn get_diff_files(&self, commit_id: &str) -> Result<Vec<String>, JjError> {
+        let output = self
+            .runner
+            .run_jj(&["diff", "-r", commit_id, "--name-only"])
+            .await?;
+
+        Ok(output
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+            .map(String::from)
+            .collect())
+    }
+
     /// Fetch from all remotes.
     #[expect(
         dead_code,

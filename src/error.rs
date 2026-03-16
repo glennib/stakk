@@ -4,6 +4,7 @@ use thiserror::Error;
 use crate::auth::AuthError;
 use crate::forge::ForgeError;
 use crate::jj::JjError;
+use crate::select::bookmark_gen::BookmarkGenError;
 use crate::submit::SubmitError;
 
 /// Errors that can occur in stakk.
@@ -28,6 +29,11 @@ pub enum StakkError {
     #[error(transparent)]
     #[diagnostic(transparent)]
     Submit(#[from] SubmitError),
+
+    /// An error from the bookmark name generation command.
+    #[error(transparent)]
+    #[diagnostic(transparent)]
+    BookmarkGen(#[from] BookmarkGenError),
 
     /// The specified remote is not a GitHub URL.
     #[error("remote '{name}' is not a GitHub URL: {url}")]

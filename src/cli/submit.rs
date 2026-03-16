@@ -58,4 +58,84 @@ pub struct SubmitArgs {
     )]
     #[arg(long, env = "STAKK_TEMPLATE", verbatim_doc_comment)]
     pub template: Option<String>,
+
+    /// [EXPERIMENTAL] Shell command for generating custom bookmark names.
+    ///
+    /// This feature is experimental and may change or be removed in future
+    /// releases.
+    ///
+    /// The command is invoked via `sh -c <command>` (Unix) or `cmd /C
+    /// <command>` (Windows). It receives a JSON object on stdin describing
+    /// a single segment of commits and must print exactly one bookmark name
+    /// to stdout (plain text, leading/trailing whitespace is trimmed).
+    ///
+    /// The custom name appears as an additional [*] toggle option in the
+    /// TUI, after the existing bookmarks [x] and generated name [+].
+    ///
+    /// JSON input schema:
+    ///
+    ///   rules               — object with validation constraints
+    ///     .max_length       — integer, max name length in bytes (255)
+    ///     .disallowed_chars — string of forbidden characters
+    ///   commits             — array of commit objects, ordered
+    ///                         trunk-to-tip (oldest first); the last
+    ///                         element is the tip being bookmarked
+    ///
+    /// Each commit object:
+    ///
+    ///   commit_id           — full hex commit hash (string)
+    ///   change_id           — full jj change ID (string)
+    ///   short_change_id     — shortest unique change ID prefix (string)
+    ///   description         — full commit message incl. body (string)
+    ///   author              — object with name, email, timestamp
+    ///     .name             — author name (string)
+    ///     .email            — author email (string)
+    ///     .timestamp        — commit timestamp (string, ISO 8601)
+    ///   files               — array of file paths changed by this commit
+    ///                         (array of strings, e.g. ["src/main.rs"])
+    ///
+    /// Minimal example (two commits):
+    ///
+    ///   {
+    ///     "rules": {
+    ///       "max_length": 255,
+    ///       "disallowed_chars": " ~^:?*[\\"
+    ///     },
+    ///     "commits": [
+    ///       {
+    ///         "commit_id": "aaa111",
+    ///         "change_id": "abc123",
+    ///         "short_change_id": "abc",
+    ///         "description": "add login page",
+    ///         "author": {
+    ///           "name": "Jo",
+    ///           "email": "jo@example.com",
+    ///           "timestamp": "2026-03-01T12:00:00+01:00"
+    ///         },
+    ///         "files": ["src/login.rs"]
+    ///       },
+    ///       {
+    ///         "commit_id": "bbb222",
+    ///         "change_id": "def456",
+    ///         "short_change_id": "def",
+    ///         "description": "style login form",
+    ///         "author": {
+    ///           "name": "Jo",
+    ///           "email": "jo@example.com",
+    ///           "timestamp": "2026-03-01T13:00:00+01:00"
+    ///         },
+    ///         "files": ["src/login.rs", "styles/login.css"]
+    ///       }
+    ///     ]
+    ///   }
+    ///
+    /// Expected stdout (one line, trimmed):
+    ///
+    ///   login-page
+    #[arg(
+        long = "experimental-bookmark-command",
+        env = "STAKK_EXPERIMENTAL_BOOKMARK_COMMAND",
+        verbatim_doc_comment
+    )]
+    pub bookmark_command: Option<String>,
 }

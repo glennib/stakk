@@ -393,7 +393,12 @@ mod tests {
                     commit_id: format!("c_{change_id}_{i}"),
                     change_id: change_id.to_string(),
                     description: desc.to_string(),
-                    author_name: "Test".to_string(),
+                    author: crate::jj::types::Signature {
+                        name: "Test".to_string(),
+                        email: "test@test.com".to_string(),
+                        timestamp: "T".to_string(),
+                    },
+                    files: vec![],
                     short_change_id: change_id[..4.min(change_id.len())].to_string(),
                 })
                 .collect(),

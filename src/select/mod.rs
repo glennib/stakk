@@ -4,6 +4,7 @@
 //! assignment view for toggling which commits get bookmarks.
 
 mod app;
+pub(crate) mod bookmark_gen;
 mod bookmark_widget;
 mod event;
 mod graph_layout;
@@ -41,6 +42,7 @@ pub struct SelectionResult {
 /// Returns `StakkError::PromptCancelled` if the user presses Escape/q.
 pub fn resolve_bookmark_interactively(
     graph: &ChangeGraph,
+    bookmark_command: Option<&str>,
 ) -> Result<Option<SelectionResult>, StakkError> {
     if graph.stacks.is_empty() {
         eprintln!("No bookmark stacks found.");
@@ -51,7 +53,7 @@ pub fn resolve_bookmark_interactively(
         return Err(StakkError::NotInteractive);
     }
 
-    app::run_tui(graph)
+    app::run_tui(graph, bookmark_command)
 }
 
 // ---------------------------------------------------------------------------
@@ -81,7 +83,7 @@ mod tests {
     #[test]
     fn resolve_no_stacks() {
         let graph = make_graph_empty();
-        let result = resolve_bookmark_interactively(&graph).unwrap();
+        let result = resolve_bookmark_interactively(&graph, None).unwrap();
         assert_eq!(result, None);
     }
 

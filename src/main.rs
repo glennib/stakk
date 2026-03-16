@@ -123,7 +123,10 @@ async fn submit_bookmark(args: &SubmitArgs) -> Result<(), StakkError> {
 
     let (bookmark, change_graph) = match &args.bookmark {
         Some(name) => (name.clone(), change_graph),
-        None => match select::resolve_bookmark_interactively(&change_graph)? {
+        None => match select::resolve_bookmark_interactively(
+            &change_graph,
+            args.bookmark_command.as_deref(),
+        )? {
             Some(result) => {
                 // Create any new bookmarks that were assigned.
                 let has_new = result.assignments.iter().any(|a| a.is_new);
