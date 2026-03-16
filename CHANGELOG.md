@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.0](https://github.com/glennib/stakk/compare/v1.3.0...v1.4.0) - 2026-03-16
+
+### Added
+
+- *(select)* experimental custom bookmark name generation via external command
+
 ## [1.3.0](https://github.com/glennib/stakk/compare/v1.2.0...v1.3.0) - 2026-03-16
 
 ### Added
