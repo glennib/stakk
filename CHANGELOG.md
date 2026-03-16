@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.1](https://github.com/glennib/stakk/compare/v1.4.0...v1.4.1) - 2026-03-16
+
+### Fixed
+
+- ignore BrokenPipe on stdin write in bookmark command
+- resolve clippy warnings from CacheEntry and CustomNameState refactor
+- *(select)* add [*]custom to bookmark help line legend when bookmark command is configured
+
+### Other
+
+- replace UseCustom(String) with CacheEntry enum and CustomNameState
+
 ## [1.4.0](https://github.com/glennib/stakk/compare/v1.3.0...v1.4.0) - 2026-03-16
 
 ### Added
