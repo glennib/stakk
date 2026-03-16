@@ -406,7 +406,7 @@ mod tests {
         );
 
         let miss_key = vec!["c3".to_string()];
-        assert!(cache.get(&miss_key).is_none());
+        assert!(!cache.contains_key(&miss_key));
     }
 
     #[test]
@@ -443,7 +443,7 @@ mod tests {
         cache.insert(
             key.clone(),
             CacheEntry::Computing {
-                since: Instant::now() - Duration::from_secs(61),
+                since: Instant::now().checked_sub(Duration::from_secs(61)).unwrap(),
             },
         );
 

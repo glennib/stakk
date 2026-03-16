@@ -83,9 +83,8 @@ impl BookmarkRow {
         match &self.state {
             RowState::UseExisting(idx) => self.existing_bookmarks.get(*idx).map(String::as_str),
             RowState::UseGenerated => self.generated_name.as_deref(),
-            RowState::UseCustom(CustomNameState::Loading) => None,
             RowState::UseCustom(CustomNameState::Ready(name)) => Some(name.as_str()),
-            RowState::Unchecked => None,
+            RowState::UseCustom(CustomNameState::Loading) | RowState::Unchecked => None,
         }
     }
 }

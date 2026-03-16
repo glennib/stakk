@@ -338,10 +338,9 @@ fn fire_pending_commands(
                         cache_guard.remove(&key);
                         Some(i)
                     }
-                    // Computed — will be applied synchronously below.
-                    Some(CacheEntry::Computed(_)) => Some(i),
-                    // No entry — needs spawn.
-                    None => Some(i),
+                    // Computed (apply synchronously below) or absent (needs
+                    // spawn).
+                    Some(CacheEntry::Computed(_)) | None => Some(i),
                 }
             }
             RowState::UseCustom(CustomNameState::Ready(_)) => {
