@@ -284,7 +284,13 @@ pub(super) async fn run_command(
     })?;
 
     if let Some(mut stdin) = child.stdin.take() {
-        stdin.write_all(stdin_data.as_bytes()).await?;
+        // Ignore BrokenPipe — the command may exit before reading all of
+        // stdin (e.g. `echo foo` ignores stdin entirely).
+        match stdin.write_all(stdin_data.as_bytes()).await {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => {}
+            Err(e) => return Err(e.into()),
+        }
         // Drop to close stdin so the child can finish.
     }
 
