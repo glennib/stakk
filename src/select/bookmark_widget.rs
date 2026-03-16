@@ -2,8 +2,8 @@
 //!
 //! Shows commits on the selected trunk→leaf path. Users can toggle existing
 //! bookmarks on/off and generate new `stakk-<change_id>` bookmarks for
-//! unmarked commits. Each non-trunk row cycles through three states:
-//! `UseExisting` → `UseGenerated` → `Unchecked`.
+//! unmarked commits. Each non-trunk row cycles through states:
+//! `UseExisting(0)` → … → `UseExisting(N-1)` → `UseGenerated` → `Unchecked`.
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
@@ -20,8 +20,9 @@ use super::graph_layout::LayoutNode;
 /// The inclusion state of a bookmark row.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RowState {
-    /// Included in submission using the existing bookmark.
-    UseExisting,
+    /// Included in submission using the existing bookmark at the given index
+    /// into `BookmarkRow::existing_bookmarks`.
+    UseExisting(usize),
     /// Included in submission; a new stakk-xxx bookmark will be created.
     UseGenerated,
     /// Excluded from submission.
@@ -37,8 +38,8 @@ pub struct BookmarkRow {
     pub short_change_id: String,
     /// The commit summary.
     pub summary: String,
-    /// Existing bookmark name, if any.
-    pub existing_bookmark: Option<String>,
+    /// Existing bookmark names on this change (may be empty).
+    pub existing_bookmarks: Vec<String>,
     /// Whether and how this row is included in the submission.
     pub state: RowState,
     /// Generated bookmark name (`stakk-<change_id_prefix>`).
@@ -55,7 +56,7 @@ impl BookmarkRow {
             return None;
         }
         match self.state {
-            RowState::UseExisting => self.existing_bookmark.as_deref(),
+            RowState::UseExisting(idx) => self.existing_bookmarks.get(idx).map(String::as_str),
             RowState::UseGenerated => self.generated_name.as_deref(),
             RowState::Unchecked => None,
         }
@@ -77,23 +78,23 @@ impl BookmarkAssignmentState {
         let rows: Vec<BookmarkRow> = path
             .iter()
             .map(|node| {
-                let existing_bookmark = node.bookmark_names.first().cloned();
+                let existing_bookmarks = node.bookmark_names.clone();
                 let generated_name = if node.is_trunk {
                     None
                 } else {
                     Some(generate_bookmark_name(&node.change_id))
                 };
-                let state = if existing_bookmark.is_some() {
-                    RowState::UseExisting
-                } else {
+                let state = if existing_bookmarks.is_empty() {
                     RowState::Unchecked
+                } else {
+                    RowState::UseExisting(0)
                 };
 
                 BookmarkRow {
                     change_id: node.change_id.clone(),
                     short_change_id: node.short_change_id.clone(),
                     summary: node.summary.clone(),
-                    existing_bookmark,
+                    existing_bookmarks,
                     state,
                     generated_name,
                     is_trunk: node.is_trunk,
@@ -107,14 +108,15 @@ impl BookmarkAssignmentState {
         Self { rows, cursor }
     }
 
-    /// Toggle the state of the current row through the three-state cycle.
+    /// Toggle the state of the current row through the cycle.
     ///
-    /// - **Existing ≠ generated** (three-state): `UseExisting → UseGenerated →
-    ///   Unchecked → UseExisting → …`
-    /// - **Existing == generated** (two-state): `UseExisting → Unchecked →
-    ///   UseExisting → …`
-    /// - **No existing** (two-state): `Unchecked → UseGenerated → Unchecked →
-    ///   …`
+    /// - **Multiple existing, generated distinct**: `UseExisting(0) → … →
+    ///   UseExisting(N-1) → UseGenerated → Unchecked → UseExisting(0) → …`
+    /// - **Single existing ≠ generated**: `UseExisting(0) → UseGenerated →
+    ///   Unchecked → UseExisting(0) → …`
+    /// - **Existing == generated** (or generated matches any existing):
+    ///   generated is skipped in the cycle.
+    /// - **No existing**: `Unchecked → UseGenerated → Unchecked → …`
     pub fn toggle_current(&mut self) {
         let Some(row) = self.rows.get_mut(self.cursor) else {
             return;
@@ -123,28 +125,30 @@ impl BookmarkAssignmentState {
             return;
         }
 
-        let can_use_generated = match (&row.existing_bookmark, &row.generated_name) {
-            (Some(existing), Some(generated)) => existing != generated,
-            (None, Some(_)) => true,
-            _ => false,
+        let has_distinct_generated = match &row.generated_name {
+            Some(generated) => !row.existing_bookmarks.iter().any(|e| e == generated),
+            None => false,
         };
 
-        row.state = match (row.state, can_use_generated) {
-            #[expect(
-                clippy::match_same_arms,
-                reason = "UseExisting+true → UseGenerated is a distinct cycle transition from \
-                          Unchecked → UseGenerated"
-            )]
-            (RowState::UseExisting, true) => RowState::UseGenerated,
-            #[expect(
-                clippy::match_same_arms,
-                reason = "UseExisting+false → Unchecked differs from UseGenerated which always → \
-                          Unchecked"
-            )]
-            (RowState::UseExisting, false) => RowState::Unchecked,
-            (RowState::UseGenerated, _) => RowState::Unchecked,
-            (RowState::Unchecked, _) if row.existing_bookmark.is_some() => RowState::UseExisting,
-            (RowState::Unchecked, _) => RowState::UseGenerated,
+        row.state = match row.state {
+            RowState::UseExisting(idx) => {
+                let next_idx = idx + 1;
+                if next_idx < row.existing_bookmarks.len() {
+                    RowState::UseExisting(next_idx)
+                } else if has_distinct_generated {
+                    RowState::UseGenerated
+                } else {
+                    RowState::Unchecked
+                }
+            }
+            RowState::UseGenerated => RowState::Unchecked,
+            RowState::Unchecked => {
+                if !row.existing_bookmarks.is_empty() {
+                    RowState::UseExisting(0)
+                } else {
+                    RowState::UseGenerated
+                }
+            }
         };
     }
 
@@ -174,10 +178,11 @@ impl BookmarkAssignmentState {
             .filter(|r| !r.is_trunk && r.state != RowState::Unchecked)
             .map(|r| {
                 let (bookmark_name, is_new) = match r.state {
-                    RowState::UseExisting => (
-                        r.existing_bookmark
-                            .clone()
-                            .expect("UseExisting requires name"),
+                    RowState::UseExisting(idx) => (
+                        r.existing_bookmarks
+                            .get(idx)
+                            .cloned()
+                            .expect("UseExisting index in bounds"),
                         false,
                     ),
                     RowState::UseGenerated => (
@@ -243,21 +248,23 @@ impl<'a> BookmarkWidget<'a> {
 
             // Per-state checkbox symbol and color.
             let (checkbox, state_color, state_bold) = match row.state {
-                RowState::UseExisting => ("[x]", Color::Green, true),
+                RowState::UseExisting(_) => ("[x]", Color::Green, true),
                 RowState::UseGenerated => ("[+]", Color::Yellow, true),
                 RowState::Unchecked => ("[ ]", Color::DarkGray, false),
             };
 
             let name_str = match row.state {
-                RowState::UseExisting => row.existing_bookmark.clone().unwrap_or_default(),
+                RowState::UseExisting(idx) => {
+                    row.existing_bookmarks.get(idx).cloned().unwrap_or_default()
+                }
                 RowState::UseGenerated => row
                     .generated_name
                     .as_ref()
                     .map(|n| format!("{n} (new)"))
                     .unwrap_or_default(),
                 RowState::Unchecked => {
-                    if let Some(ref existing) = row.existing_bookmark {
-                        existing.clone()
+                    if let Some(first) = row.existing_bookmarks.first() {
+                        first.clone()
                     } else if let Some(ref gen_name) = row.generated_name {
                         format!("{gen_name} (Space to create)")
                     } else {
@@ -419,14 +426,15 @@ mod tests {
         // Trunk is not toggleable.
         assert!(state.rows[0].is_trunk);
 
-        // Base has existing bookmark → UseExisting; generated_name is always set now.
-        assert_eq!(state.rows[1].state, RowState::UseExisting);
-        assert_eq!(state.rows[1].existing_bookmark, Some("base".to_string()));
+        // Base has existing bookmark → UseExisting(0); generated_name is always set
+        // now.
+        assert_eq!(state.rows[1].state, RowState::UseExisting(0));
+        assert_eq!(state.rows[1].existing_bookmarks, vec!["base".to_string()]);
         assert_eq!(state.rows[1].generated_name, Some("stakk-ch_a".to_string()));
 
         // Unmarked commit has generated name, Unchecked by default.
         assert_eq!(state.rows[2].state, RowState::Unchecked);
-        assert!(state.rows[2].existing_bookmark.is_none());
+        assert!(state.rows[2].existing_bookmarks.is_empty());
         assert!(state.rows[2].generated_name.is_some());
     }
 
@@ -441,7 +449,7 @@ mod tests {
 
         // Cursor should start on the non-trunk row; starts UseExisting.
         assert_eq!(state.cursor, 1);
-        assert_eq!(state.rows[1].state, RowState::UseExisting);
+        assert_eq!(state.rows[1].state, RowState::UseExisting(0));
 
         // "feat" != "stakk-ch_a" → three-state cycle.
         state.toggle_current();
@@ -451,7 +459,7 @@ mod tests {
         assert_eq!(state.rows[1].state, RowState::Unchecked);
 
         state.toggle_current();
-        assert_eq!(state.rows[1].state, RowState::UseExisting);
+        assert_eq!(state.rows[1].state, RowState::UseExisting(0));
     }
 
     #[test]
@@ -468,7 +476,7 @@ mod tests {
     #[test]
     fn toggle_two_state_when_names_match() {
         // change_id "abcdefghijkl" (12 chars) → generated "stakk-abcdefghijkl"
-        // existing bookmark matches generated → two-state: UseExisting ↔ Unchecked
+        // existing bookmark matches generated → two-state: UseExisting(0) ↔ Unchecked
         let nodes = [
             make_node("", "trunk", &[], true, false),
             make_node("abcdefghijkl", "work", &["stakk-abcdefghijkl"], false, true),
@@ -476,13 +484,13 @@ mod tests {
         let refs: Vec<&LayoutNode> = nodes.iter().collect();
         let mut state = BookmarkAssignmentState::from_path(&refs);
 
-        assert_eq!(state.rows[1].state, RowState::UseExisting);
+        assert_eq!(state.rows[1].state, RowState::UseExisting(0));
 
         state.toggle_current();
         assert_eq!(state.rows[1].state, RowState::Unchecked);
 
         state.toggle_current();
-        assert_eq!(state.rows[1].state, RowState::UseExisting);
+        assert_eq!(state.rows[1].state, RowState::UseExisting(0));
     }
 
     #[test]
@@ -553,8 +561,8 @@ mod tests {
             change_id: "a".to_string(),
             short_change_id: "a".to_string(),
             summary: "work".to_string(),
-            existing_bookmark: Some("feat".to_string()),
-            state: RowState::UseExisting,
+            existing_bookmarks: vec!["feat".to_string()],
+            state: RowState::UseExisting(0),
             generated_name: None,
             is_trunk: false,
         };
@@ -564,7 +572,7 @@ mod tests {
             change_id: "b".to_string(),
             short_change_id: "b".to_string(),
             summary: "work".to_string(),
-            existing_bookmark: None,
+            existing_bookmarks: vec![],
             state: RowState::UseGenerated,
             generated_name: Some("stakk-bbbbbbbbb".to_string()),
             is_trunk: false,
@@ -575,7 +583,7 @@ mod tests {
             change_id: "c".to_string(),
             short_change_id: "c".to_string(),
             summary: "work".to_string(),
-            existing_bookmark: Some("feat".to_string()),
+            existing_bookmarks: vec!["feat".to_string()],
             state: RowState::Unchecked,
             generated_name: None,
             is_trunk: false,
@@ -608,5 +616,102 @@ mod tests {
 
         assert!(content.contains("[x]"), "expected checkbox in output");
         assert!(content.contains("feat"), "expected bookmark name in output");
+    }
+
+    #[test]
+    fn toggle_multiple_existing_bookmarks() {
+        let nodes = [
+            make_node("", "trunk", &[], true, false),
+            make_node(
+                "ch_a",
+                "work",
+                &["feature", "wip", "experiment"],
+                false,
+                true,
+            ),
+        ];
+        let refs: Vec<&LayoutNode> = nodes.iter().collect();
+        let mut state = BookmarkAssignmentState::from_path(&refs);
+
+        assert_eq!(state.rows[1].state, RowState::UseExisting(0));
+
+        state.toggle_current();
+        assert_eq!(state.rows[1].state, RowState::UseExisting(1));
+
+        state.toggle_current();
+        assert_eq!(state.rows[1].state, RowState::UseExisting(2));
+
+        state.toggle_current();
+        assert_eq!(state.rows[1].state, RowState::UseGenerated);
+
+        state.toggle_current();
+        assert_eq!(state.rows[1].state, RowState::Unchecked);
+
+        state.toggle_current();
+        assert_eq!(state.rows[1].state, RowState::UseExisting(0));
+    }
+
+    #[test]
+    fn toggle_multiple_existing_one_matches_generated() {
+        // "feature" and "stakk-abcdefghijkl" are existing bookmarks.
+        // generated is "stakk-abcdefghijkl" which matches existing[1],
+        // so UseGenerated is skipped in the cycle.
+        let nodes = [
+            make_node("", "trunk", &[], true, false),
+            make_node(
+                "abcdefghijkl",
+                "work",
+                &["feature", "stakk-abcdefghijkl"],
+                false,
+                true,
+            ),
+        ];
+        let refs: Vec<&LayoutNode> = nodes.iter().collect();
+        let mut state = BookmarkAssignmentState::from_path(&refs);
+
+        assert_eq!(state.rows[1].state, RowState::UseExisting(0));
+
+        state.toggle_current();
+        assert_eq!(state.rows[1].state, RowState::UseExisting(1));
+
+        // Generated matches existing[1], so skip UseGenerated → Unchecked.
+        state.toggle_current();
+        assert_eq!(state.rows[1].state, RowState::Unchecked);
+
+        state.toggle_current();
+        assert_eq!(state.rows[1].state, RowState::UseExisting(0));
+    }
+
+    #[test]
+    fn build_result_with_second_existing_bookmark() {
+        let nodes = [
+            make_node("", "trunk", &[], true, false),
+            make_node("ch_a", "work", &["alpha", "beta"], false, true),
+        ];
+        let refs: Vec<&LayoutNode> = nodes.iter().collect();
+        let mut state = BookmarkAssignmentState::from_path(&refs);
+
+        // Toggle once: UseExisting(0) → UseExisting(1).
+        state.toggle_current();
+
+        let result = state.build_result();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].bookmark_name, "beta");
+        assert!(!result[0].is_new);
+    }
+
+    #[test]
+    fn state_from_path_preserves_all_bookmarks() {
+        let nodes = [
+            make_node("", "trunk", &[], true, false),
+            make_node("ch_a", "work", &["alpha", "beta", "gamma"], false, true),
+        ];
+        let refs: Vec<&LayoutNode> = nodes.iter().collect();
+        let state = BookmarkAssignmentState::from_path(&refs);
+
+        assert_eq!(state.rows[1].existing_bookmarks.len(), 3);
+        assert_eq!(state.rows[1].existing_bookmarks[0], "alpha");
+        assert_eq!(state.rows[1].existing_bookmarks[1], "beta");
+        assert_eq!(state.rows[1].existing_bookmarks[2], "gamma");
     }
 }
