@@ -468,7 +468,12 @@ impl Widget for BookmarkWidget<'_> {
 }
 
 /// Build a help line for the bottom of the bookmark view.
-pub fn bookmark_help_line() -> Line<'static> {
+pub fn bookmark_help_line(has_bookmark_command: bool) -> Line<'static> {
+    let cycle = if has_bookmark_command {
+        " [x]use \u{2192} [+]new \u{2192} [*]custom \u{2192} [ ]skip  "
+    } else {
+        " [x]use \u{2192} [+]new \u{2192} [ ]skip  "
+    };
     Line::from(vec![
         Span::styled(
             " \u{2191}\u{2193}/jk",
@@ -483,7 +488,7 @@ pub fn bookmark_help_line() -> Line<'static> {
                 .fg(Color::Yellow)
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::raw(" [x]use \u{2192} [+]new \u{2192} [ ]skip  "),
+        Span::raw(cycle),
         Span::styled(
             "Enter",
             Style::default()

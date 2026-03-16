@@ -612,5 +612,5 @@ fn render_bookmark_screen(
     let widget = BookmarkWidget::new(state, spinner_tick, bookmark_command);
     widget.render(content_area, frame.buffer_mut());
 
-    frame.render_widget(bookmark_help_line(), help_area);
+    frame.render_widget(bookmark_help_line(bookmark_command.is_some()), help_area);
 }
