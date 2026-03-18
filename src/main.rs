@@ -211,7 +211,9 @@ async fn submit_bookmark(args: &SubmitArgs) -> Result<(), StakkError> {
     let comment_env = forge::comment::build_comment_env(template_source.as_deref())?;
 
     // Phase 3: Execute.
-    let result = submit::execute_submission_plan(&plan, &jj, &forge, &comment_env).await?;
+    let result =
+        submit::execute_submission_plan(&plan, &jj, &forge, &comment_env, args.stack_placement)
+            .await?;
 
     println!("\nSubmitted {} bookmark(s).", result.stack_entries.len());
 

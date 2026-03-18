@@ -65,6 +65,8 @@ pub struct PullRequest {
     pub base_ref: String,
     #[expect(dead_code, reason = "populated by forge, read in future milestones")]
     pub state: PrState,
+    /// The PR body/description text.
+    pub body: Option<String>,
 }
 
 /// A comment on a pull request.
@@ -131,5 +133,18 @@ pub trait Forge: Send + Sync {
         &self,
         comment_id: u64,
         body: &str,
+    ) -> impl std::future::Future<Output = Result<(), ForgeError>> + Send;
+
+    /// Update the body/description of a pull request.
+    fn update_pr_body(
+        &self,
+        pr_number: u64,
+        body: &str,
+    ) -> impl std::future::Future<Output = Result<(), ForgeError>> + Send;
+
+    /// Delete a comment by ID.
+    fn delete_comment(
+        &self,
+        comment_id: u64,
     ) -> impl std::future::Future<Output = Result<(), ForgeError>> + Send;
 }

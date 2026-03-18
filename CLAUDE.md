@@ -139,11 +139,14 @@ There is intentionally no `git/` module.
 - Graph traversal uses `"trunk()"` as the revset base, not a branch name.
 - octocrab treats PR comments as issue comments — use `issues().list_comments()`.
 - octocrab `pulls().create()` borrows the handler — bind to a variable first.
-- PR body is only set on creation, not on update — avoids overwriting
-  manually-edited PR bodies.
+- Commit-derived PR body is only set on creation, not on update — avoids
+  overwriting manually-edited PR bodies. Body-mode stack placement updates
+  only the fenced section.
 - Stack comment metadata line (`<!--- STAKK_STACK: ... --->`) is always
   prepended programmatically — not part of the minijinja template.
 - `format_stack_comment` returns `Result` because user templates can fail.
+- Body-mode fences (`STAKK_BODY_START`/`STAKK_BODY_END`) are HTML comments,
+  invisible on GitHub. Migration between placement modes is automatic.
 - ratatui inline viewport: `enable_raw_mode()` before, `disable_raw_mode()` after.
 - Graph layout deduplicates shared segments by `commit_id` (not `change_id`).
 - Auto-generated bookmark names: `stakk-<first 12 chars of change_id>`.
@@ -152,7 +155,9 @@ There is intentionally no `git/` module.
 
 - **No jj-stack compatibility** — own `STAKK_STACK` prefix, snake_case serde.
 - **No anyhow** — concrete error types with `Diagnostic` all the way up.
-- **PR body only on creation** — never overwrites manually-edited PR bodies.
+- **PR body on creation; body-mode updates fenced section only** — commit-derived
+  body is set on PR creation and never overwritten. In `--stack-placement body`
+  mode, only the fenced `STAKK_BODY_START`/`STAKK_BODY_END` section is updated.
 - **`--dry-run` not in env vars** — one-off decision, surprising as a default.
 - **Generic `Jj<R: JjRunner>`** — zero-cost dispatch, edition 2024 async traits.
 - **Three-phase submission** — analyze (pure) → plan (queries forge) → execute.

@@ -12,6 +12,21 @@ use serde::Serialize;
 use super::Comment;
 use crate::submit::SubmitError;
 
+/// Where stack metadata is placed on a pull request.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, clap::ValueEnum)]
+pub enum StackPlacement {
+    /// Place the stack comment as a separate PR comment (issue comment).
+    #[default]
+    Comment,
+    /// Place the stack content in a fenced section of the PR body.
+    Body,
+}
+
+/// Start fence for stack content embedded in a PR body.
+const BODY_FENCE_START: &str = "<!-- STAKK_BODY_START -->";
+/// End fence for stack content embedded in a PR body.
+const BODY_FENCE_END: &str = "<!-- STAKK_BODY_END -->";
+
 /// Prefix for the metadata HTML comment.
 const COMMENT_DATA_PREFIX: &str = "<!--- STAKK_STACK: ";
 const COMMENT_DATA_POSTFIX: &str = " --->";
@@ -126,6 +141,57 @@ pub fn parse_stack_comment(body: &str) -> Option<StackCommentData> {
     let decoded = BASE64.decode(encoded).ok()?;
     let json_str = std::str::from_utf8(&decoded).ok()?;
     serde_json::from_str(json_str).ok()
+}
+
+/// Find the byte range of a fenced stack section in a PR body.
+///
+/// Returns `Some((start, end))` where `start` is the byte offset of the
+/// start fence and `end` is the byte offset just past the end fence
+/// (including its trailing newline if present).
+pub fn find_stack_in_body(body: &str) -> Option<(usize, usize)> {
+    let start = body.find(BODY_FENCE_START)?;
+    let end_marker_start = body[start..].find(BODY_FENCE_END)? + start;
+    let mut end = end_marker_start + BODY_FENCE_END.len();
+    // Consume one trailing newline if present.
+    if body[end..].starts_with('\n') {
+        end += 1;
+    }
+    Some((start, end))
+}
+
+/// Replace or append a fenced stack section in a PR body.
+///
+/// If the body already contains a fenced section, it is replaced in-place.
+/// Otherwise, the fenced section is appended (with a blank line separator
+/// if the body is non-empty).
+pub fn splice_stack_into_body(existing_body: &str, stack_content: &str) -> String {
+    let fenced = format!("{BODY_FENCE_START}\n\n---\n\n{stack_content}\n{BODY_FENCE_END}\n");
+
+    if let Some((start, end)) = find_stack_in_body(existing_body) {
+        let mut result = String::with_capacity(existing_body.len() + fenced.len());
+        result.push_str(&existing_body[..start]);
+        result.push_str(&fenced);
+        result.push_str(&existing_body[end..]);
+        result
+    } else if existing_body.is_empty() {
+        fenced
+    } else {
+        format!("{existing_body}\n\n{fenced}")
+    }
+}
+
+/// Remove the fenced stack section from a PR body.
+///
+/// Strips any trailing blank lines left behind after removal.
+pub fn strip_stack_from_body(body: &str) -> String {
+    if let Some((start, end)) = find_stack_in_body(body) {
+        let mut result = String::with_capacity(body.len());
+        result.push_str(&body[..start]);
+        result.push_str(&body[end..]);
+        result.trim_end().to_string()
+    } else {
+        body.to_string()
+    }
 }
 
 #[cfg(test)]
@@ -272,6 +338,74 @@ mod tests {
     #[test]
     fn parse_no_metadata_returns_none() {
         assert!(parse_stack_comment("just a regular comment").is_none());
+    }
+
+    // -- Body fence tests --
+
+    #[test]
+    fn find_stack_in_body_present() {
+        let body =
+            format!("Some PR description\n\n{BODY_FENCE_START}\nstack content\n{BODY_FENCE_END}\n");
+        let (start, end) = find_stack_in_body(&body).unwrap();
+        assert_eq!(
+            &body[start..end],
+            format!("{BODY_FENCE_START}\nstack content\n{BODY_FENCE_END}\n")
+        );
+    }
+
+    #[test]
+    fn find_stack_in_body_absent() {
+        assert!(find_stack_in_body("just a normal body").is_none());
+    }
+
+    #[test]
+    fn splice_into_empty_body() {
+        let result = splice_stack_into_body("", "stack content");
+        assert!(result.contains(BODY_FENCE_START));
+        assert!(result.contains("stack content"));
+        assert!(result.contains(BODY_FENCE_END));
+    }
+
+    #[test]
+    fn splice_appends_to_nonempty_body() {
+        let result = splice_stack_into_body("Existing body", "stack content");
+        assert!(result.starts_with("Existing body\n\n"));
+        assert!(result.contains(BODY_FENCE_START));
+        assert!(result.contains("stack content"));
+    }
+
+    #[test]
+    fn splice_replaces_existing_fence() {
+        let body = format!("Before\n\n{BODY_FENCE_START}\nold content\n{BODY_FENCE_END}\nAfter");
+        let result = splice_stack_into_body(&body, "new content");
+        assert!(result.contains("new content"));
+        assert!(!result.contains("old content"));
+        assert!(result.starts_with("Before\n\n"));
+        assert!(result.contains("After"));
+    }
+
+    #[test]
+    fn splice_roundtrip() {
+        let body = "My PR description\n\nSome details here.";
+        let spliced = splice_stack_into_body(body, "first version");
+        let spliced_again = splice_stack_into_body(&spliced, "second version");
+        assert!(spliced_again.contains("second version"));
+        assert!(!spliced_again.contains("first version"));
+        // Original body text is preserved.
+        assert!(spliced_again.contains("My PR description"));
+    }
+
+    #[test]
+    fn strip_removes_fence() {
+        let body = format!("Before\n\n{BODY_FENCE_START}\nstack content\n{BODY_FENCE_END}\n");
+        let result = strip_stack_from_body(&body);
+        assert_eq!(result, "Before");
+    }
+
+    #[test]
+    fn strip_no_fence_is_noop() {
+        let body = "Just a body";
+        assert_eq!(strip_stack_from_body(body), body);
     }
 
     #[test]

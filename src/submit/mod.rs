@@ -18,8 +18,12 @@ use crate::forge::comment::StackCommentContext;
 use crate::forge::comment::StackCommentData;
 use crate::forge::comment::StackEntry;
 use crate::forge::comment::StackEntryContext;
+use crate::forge::comment::StackPlacement;
 use crate::forge::comment::find_stack_comment;
+use crate::forge::comment::find_stack_in_body;
 use crate::forge::comment::format_stack_comment;
+use crate::forge::comment::splice_stack_into_body;
+use crate::forge::comment::strip_stack_from_body;
 use crate::graph::types::BookmarkSegment;
 use crate::graph::types::ChangeGraph;
 use crate::graph::types::SegmentCommit;
@@ -96,6 +100,15 @@ pub enum SubmitError {
         help("check the template syntax (minijinja/Jinja2)")
     )]
     TemplateRenderFailed { message: String },
+
+    /// Failed to update a PR body.
+    #[error("failed to update body of PR #{pr_number}")]
+    #[diagnostic(code(stakk::submit::body_update_failed))]
+    BodyUpdateFailed {
+        pr_number: u64,
+        #[source]
+        source: ForgeError,
+    },
 }
 
 // ---------------------------------------------------------------------------
@@ -368,6 +381,7 @@ pub async fn execute_submission_plan<R: JjRunner, F: Forge>(
     jj: &Jj<R>,
     forge: &F,
     comment_env: &minijinja::Environment<'_>,
+    placement: StackPlacement,
 ) -> Result<SubmissionResult, SubmitError> {
     let pb = indicatif::ProgressBar::new_spinner();
     pb.enable_steady_tick(std::time::Duration::from_millis(120));
@@ -478,48 +492,136 @@ pub async fn execute_submission_plan<R: JjRunner, F: Forge>(
         })
         .collect();
 
-    let comment_futures: Vec<_> = stack_entries
-        .iter()
-        .enumerate()
-        .map(|(i, entry)| {
-            // Build a context with is_current set for this PR.
-            let mut entries = entry_contexts.clone();
-            entries[i].is_current = true;
-            let ctx = StackCommentContext {
-                stack_size: entries.len(),
-                current_bookmark: entry.bookmark_name.clone(),
-                default_branch: plan.default_branch.clone(),
-                stakk_url: "https://github.com/glennib/stakk".to_string(),
-                stack: entries,
-            };
+    match placement {
+        StackPlacement::Comment => {
+            let comment_futures: Vec<_> =
+                stack_entries
+                    .iter()
+                    .enumerate()
+                    .map(|(i, entry)| {
+                        let mut entries = entry_contexts.clone();
+                        entries[i].is_current = true;
+                        let ctx = StackCommentContext {
+                            stack_size: entries.len(),
+                            current_bookmark: entry.bookmark_name.clone(),
+                            default_branch: plan.default_branch.clone(),
+                            stakk_url: "https://github.com/glennib/stakk".to_string(),
+                            stack: entries,
+                        };
 
-            let body = format_stack_comment(&comment_data, &ctx, &template);
-            let pr_number = entry.pr_number;
-            async move {
-                let body = body?;
-                let existing_comments = forge
-                    .list_comments(pr_number)
-                    .await
-                    .map_err(|source| SubmitError::CommentFailed { pr_number, source })?;
+                        let rendered = format_stack_comment(&comment_data, &ctx, &template);
+                        let pr_number = entry.pr_number;
+                        let existing_body = plan.bookmark_plans[i]
+                            .existing_pr
+                            .as_ref()
+                            .and_then(|pr| pr.body.clone());
+                        let pb = &pb;
+                        async move {
+                            let rendered = rendered?;
+                            let existing_comments =
+                                forge.list_comments(pr_number).await.map_err(|source| {
+                                    SubmitError::CommentFailed { pr_number, source }
+                                })?;
 
-                if let Some(existing) = find_stack_comment(&existing_comments) {
-                    forge
-                        .update_comment(existing.id, &body)
-                        .await
-                        .map_err(|source| SubmitError::CommentFailed { pr_number, source })?;
-                } else {
-                    forge
-                        .create_comment(pr_number, &body)
-                        .await
-                        .map_err(|source| SubmitError::CommentFailed { pr_number, source })?;
-                }
-                Ok::<(), SubmitError>(())
+                            if let Some(existing) = find_stack_comment(&existing_comments) {
+                                forge.update_comment(existing.id, &rendered).await.map_err(
+                                    |source| SubmitError::CommentFailed { pr_number, source },
+                                )?;
+                            } else {
+                                forge.create_comment(pr_number, &rendered).await.map_err(
+                                    |source| SubmitError::CommentFailed { pr_number, source },
+                                )?;
+
+                                // Migration: if switching from body mode, strip
+                                // the fenced section from the PR body.
+                                if let Some(body) = &existing_body
+                                    && find_stack_in_body(body).is_some()
+                                {
+                                    let stripped = strip_stack_from_body(body);
+                                    if let Err(e) = forge.update_pr_body(pr_number, &stripped).await
+                                    {
+                                        pb.println(format!(
+                                            "  Warning: failed to strip stack from PR \
+                                             #{pr_number} body during migration: {e}"
+                                        ));
+                                    }
+                                }
+                            }
+                            Ok::<(), SubmitError>(())
+                        }
+                    })
+                    .collect();
+            let comment_results = futures::future::join_all(comment_futures).await;
+            for result in comment_results {
+                result?;
             }
-        })
-        .collect();
-    let comment_results = futures::future::join_all(comment_futures).await;
-    for result in comment_results {
-        result?;
+        }
+        StackPlacement::Body => {
+            let body_futures: Vec<_> = stack_entries
+                .iter()
+                .enumerate()
+                .map(|(i, entry)| {
+                    let mut entries = entry_contexts.clone();
+                    entries[i].is_current = true;
+                    let ctx = StackCommentContext {
+                        stack_size: entries.len(),
+                        current_bookmark: entry.bookmark_name.clone(),
+                        default_branch: plan.default_branch.clone(),
+                        stakk_url: "https://github.com/glennib/stakk".to_string(),
+                        stack: entries,
+                    };
+
+                    let rendered = format_stack_comment(&comment_data, &ctx, &template);
+                    let pr_number = entry.pr_number;
+                    let bp = &plan.bookmark_plans[i];
+                    let existing_body = if bp.needs_create {
+                        // For newly created PRs, use the body we just
+                        // submitted.
+                        bp.body.clone().unwrap_or_default()
+                    } else {
+                        bp.existing_pr
+                            .as_ref()
+                            .and_then(|pr| pr.body.clone())
+                            .unwrap_or_default()
+                    };
+                    let had_fence = find_stack_in_body(&existing_body).is_some();
+                    let pb = &pb;
+                    async move {
+                        let rendered = rendered?;
+                        let new_body = splice_stack_into_body(&existing_body, &rendered);
+                        forge
+                            .update_pr_body(pr_number, &new_body)
+                            .await
+                            .map_err(|source| SubmitError::BodyUpdateFailed {
+                                pr_number,
+                                source,
+                            })?;
+
+                        // Migration: if no existing fenced section was found,
+                        // check for an old stack comment and delete it.
+                        if !had_fence {
+                            let comments =
+                                forge.list_comments(pr_number).await.map_err(|source| {
+                                    SubmitError::CommentFailed { pr_number, source }
+                                })?;
+                            if let Some(old) = find_stack_comment(&comments)
+                                && let Err(e) = forge.delete_comment(old.id).await
+                            {
+                                pb.println(format!(
+                                    "  Warning: failed to delete old stack comment on PR \
+                                     #{pr_number} during migration: {e}"
+                                ));
+                            }
+                        }
+                        Ok::<(), SubmitError>(())
+                    }
+                })
+                .collect();
+            let body_results = futures::future::join_all(body_futures).await;
+            for result in body_results {
+                result?;
+            }
+        }
     }
 
     pb.finish_and_clear();
@@ -591,6 +693,19 @@ mod tests {
             head_ref: head.to_string(),
             base_ref: base.to_string(),
             state: PrState::Open,
+            body: None,
+        }
+    }
+
+    fn make_pr_with_body(number: u64, head: &str, base: &str, body: &str) -> PullRequest {
+        PullRequest {
+            number,
+            html_url: format!("https://github.com/test/repo/pull/{number}"),
+            title: format!("PR for {head}"),
+            head_ref: head.to_string(),
+            base_ref: base.to_string(),
+            state: PrState::Open,
+            body: Some(body.to_string()),
         }
     }
 
@@ -602,6 +717,8 @@ mod tests {
         created_comments: Mutex<Vec<(u64, String)>>,
         updated_comments: Mutex<Vec<(u64, String)>>,
         updated_bases: Mutex<Vec<(u64, String)>>,
+        updated_bodies: Mutex<Vec<(u64, String)>>,
+        deleted_comments: Mutex<Vec<u64>>,
         existing_comments: HashMap<u64, Vec<Comment>>,
         next_pr_number: Mutex<u64>,
     }
@@ -614,6 +731,8 @@ mod tests {
                 created_comments: Mutex::new(Vec::new()),
                 updated_comments: Mutex::new(Vec::new()),
                 updated_bases: Mutex::new(Vec::new()),
+                updated_bodies: Mutex::new(Vec::new()),
+                deleted_comments: Mutex::new(Vec::new()),
                 existing_comments: HashMap::new(),
                 next_pr_number: Mutex::new(100),
             }
@@ -658,6 +777,7 @@ mod tests {
                 head_ref: params.head.clone(),
                 base_ref: params.base.clone(),
                 state: PrState::Open,
+                body: params.body.clone(),
             };
             self.created_prs.lock().unwrap().push(params);
             async move { Ok(pr) }
@@ -712,6 +832,26 @@ mod tests {
                 .lock()
                 .unwrap()
                 .push((comment_id, body.to_string()));
+            async { Ok(()) }
+        }
+
+        fn update_pr_body(
+            &self,
+            pr_number: u64,
+            body: &str,
+        ) -> impl std::future::Future<Output = Result<(), ForgeError>> + Send {
+            self.updated_bodies
+                .lock()
+                .unwrap()
+                .push((pr_number, body.to_string()));
+            async { Ok(()) }
+        }
+
+        fn delete_comment(
+            &self,
+            comment_id: u64,
+        ) -> impl std::future::Future<Output = Result<(), ForgeError>> + Send {
+            self.deleted_comments.lock().unwrap().push(comment_id);
             async { Ok(()) }
         }
     }
@@ -1018,7 +1158,7 @@ mod tests {
         let forge = MockForge::new();
         let env = test_comment_env();
 
-        let result = execute_submission_plan(&plan, &jj, &forge, &env)
+        let result = execute_submission_plan(&plan, &jj, &forge, &env, StackPlacement::Comment)
             .await
             .unwrap();
 
@@ -1055,7 +1195,7 @@ mod tests {
         let forge = MockForge::new();
         let env = test_comment_env();
 
-        execute_submission_plan(&plan, &jj, &forge, &env)
+        execute_submission_plan(&plan, &jj, &forge, &env, StackPlacement::Comment)
             .await
             .unwrap();
 
@@ -1099,7 +1239,7 @@ mod tests {
         let forge = MockForge::new();
         let env = test_comment_env();
 
-        execute_submission_plan(&plan, &jj, &forge, &env)
+        execute_submission_plan(&plan, &jj, &forge, &env, StackPlacement::Comment)
             .await
             .unwrap();
 
@@ -1170,7 +1310,7 @@ mod tests {
             }],
         );
 
-        execute_submission_plan(&plan, &jj, &forge, &env)
+        execute_submission_plan(&plan, &jj, &forge, &env, StackPlacement::Comment)
             .await
             .unwrap();
 
@@ -1218,7 +1358,7 @@ mod tests {
         let forge = MockForge::new();
         let env = test_comment_env();
 
-        execute_submission_plan(&plan, &jj, &forge, &env)
+        execute_submission_plan(&plan, &jj, &forge, &env, StackPlacement::Comment)
             .await
             .unwrap();
 
@@ -1276,7 +1416,7 @@ mod tests {
         let forge = MockForge::new();
         let env = test_comment_env();
 
-        execute_submission_plan(&plan, &jj, &forge, &env)
+        execute_submission_plan(&plan, &jj, &forge, &env, StackPlacement::Comment)
             .await
             .unwrap();
 
@@ -1370,5 +1510,224 @@ mod tests {
     fn build_pr_body_empty() {
         let body = build_pr_body(&[]);
         assert_eq!(body, None);
+    }
+
+    // -----------------------------------------------------------------------
+    // Body placement tests
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn execute_body_mode_creates_fenced_section() {
+        let plan = SubmissionPlan {
+            bookmark_plans: vec![BookmarkPlan {
+                bookmark_name: "feat-a".to_string(),
+                base: "main".to_string(),
+                title: "feature a".to_string(),
+                body: None,
+                existing_pr: None,
+                needs_push: true,
+                needs_create: true,
+                needs_base_update: false,
+            }],
+            remote: "origin".to_string(),
+            draft: false,
+            default_branch: "main".to_string(),
+        };
+
+        let (runner, _push_calls) = MockJjRunner::new();
+        let jj = Jj::new(runner);
+        let forge = MockForge::new();
+        let env = test_comment_env();
+
+        execute_submission_plan(&plan, &jj, &forge, &env, StackPlacement::Body)
+            .await
+            .unwrap();
+
+        let updated_bodies = forge.updated_bodies.lock().unwrap();
+        assert_eq!(updated_bodies.len(), 1);
+        assert!(
+            updated_bodies[0].1.contains("STAKK_BODY_START"),
+            "expected body fence: {}",
+            updated_bodies[0].1
+        );
+        assert!(
+            updated_bodies[0].1.contains("STAKK_STACK"),
+            "expected stack metadata in body: {}",
+            updated_bodies[0].1
+        );
+
+        // No comment API calls should be made in steady-state body mode.
+        let created_comments = forge.created_comments.lock().unwrap();
+        assert_eq!(created_comments.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn execute_body_mode_updates_existing_fence() {
+        use crate::forge::comment::splice_stack_into_body;
+
+        let existing_body = splice_stack_into_body("Original PR body", "old stack content");
+        let plan = SubmissionPlan {
+            bookmark_plans: vec![BookmarkPlan {
+                bookmark_name: "feat-a".to_string(),
+                base: "main".to_string(),
+                title: "feature a".to_string(),
+                body: None,
+                existing_pr: Some(make_pr_with_body(50, "feat-a", "main", &existing_body)),
+                needs_push: true,
+                needs_create: false,
+                needs_base_update: false,
+            }],
+            remote: "origin".to_string(),
+            draft: false,
+            default_branch: "main".to_string(),
+        };
+
+        let (runner, _push_calls) = MockJjRunner::new();
+        let jj = Jj::new(runner);
+        let forge = MockForge::new();
+        let env = test_comment_env();
+
+        execute_submission_plan(&plan, &jj, &forge, &env, StackPlacement::Body)
+            .await
+            .unwrap();
+
+        let updated_bodies = forge.updated_bodies.lock().unwrap();
+        assert_eq!(updated_bodies.len(), 1);
+        // Should still contain original body text.
+        assert!(updated_bodies[0].1.contains("Original PR body"));
+        // Should no longer contain old stack content.
+        assert!(!updated_bodies[0].1.contains("old stack content"));
+        // Should contain new STAKK_STACK metadata.
+        assert!(updated_bodies[0].1.contains("STAKK_STACK"));
+
+        // No comment API calls (existing fence = not first time).
+        let created_comments = forge.created_comments.lock().unwrap();
+        assert_eq!(created_comments.len(), 0);
+        let deleted = forge.deleted_comments.lock().unwrap();
+        assert_eq!(deleted.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn execute_body_mode_migration_deletes_old_comment() {
+        // Simulate a PR that has an old stack comment but no body fence.
+        let env = test_comment_env();
+        let tmpl = env.get_template("stack_comment").unwrap();
+        let old_comment_body = format_stack_comment(
+            &StackCommentData {
+                version: 0,
+                stack: vec![StackEntry {
+                    bookmark_name: "feat-a".to_string(),
+                    pr_url: "https://example.com/1".to_string(),
+                    pr_number: 50,
+                }],
+            },
+            &StackCommentContext {
+                stack: vec![StackEntryContext {
+                    bookmark_name: "feat-a".to_string(),
+                    pr_url: "https://example.com/1".to_string(),
+                    pr_number: 50,
+                    title: "feature a".to_string(),
+                    base: "main".to_string(),
+                    is_draft: false,
+                    position: 1,
+                    is_current: true,
+                }],
+                stack_size: 1,
+                default_branch: "main".to_string(),
+                current_bookmark: "feat-a".to_string(),
+                stakk_url: "https://github.com/glennib/stakk".to_string(),
+            },
+            &tmpl,
+        )
+        .unwrap();
+
+        let plan = SubmissionPlan {
+            bookmark_plans: vec![BookmarkPlan {
+                bookmark_name: "feat-a".to_string(),
+                base: "main".to_string(),
+                title: "feature a".to_string(),
+                body: None,
+                existing_pr: Some(make_pr_with_body(50, "feat-a", "main", "Plain body")),
+                needs_push: true,
+                needs_create: false,
+                needs_base_update: false,
+            }],
+            remote: "origin".to_string(),
+            draft: false,
+            default_branch: "main".to_string(),
+        };
+
+        let (runner, _push_calls) = MockJjRunner::new();
+        let jj = Jj::new(runner);
+        let forge = MockForge::new().with_existing_comments(
+            50,
+            vec![Comment {
+                id: 999,
+                body: old_comment_body,
+            }],
+        );
+
+        execute_submission_plan(&plan, &jj, &forge, &env, StackPlacement::Body)
+            .await
+            .unwrap();
+
+        // Should have written body.
+        let updated_bodies = forge.updated_bodies.lock().unwrap();
+        assert_eq!(updated_bodies.len(), 1);
+        assert!(updated_bodies[0].1.contains("STAKK_BODY_START"));
+
+        // Should have deleted the old comment (migration).
+        let deleted = forge.deleted_comments.lock().unwrap();
+        assert_eq!(deleted.len(), 1);
+        assert_eq!(deleted[0], 999);
+    }
+
+    #[tokio::test]
+    async fn execute_comment_mode_migration_strips_body() {
+        use crate::forge::comment::splice_stack_into_body;
+
+        // PR has a fenced section in the body (from previous body mode).
+        let body_with_fence = splice_stack_into_body("Original PR body", "old stack content");
+        let plan = SubmissionPlan {
+            bookmark_plans: vec![BookmarkPlan {
+                bookmark_name: "feat-a".to_string(),
+                base: "main".to_string(),
+                title: "feature a".to_string(),
+                body: None,
+                existing_pr: Some(make_pr_with_body(50, "feat-a", "main", &body_with_fence)),
+                needs_push: true,
+                needs_create: false,
+                needs_base_update: false,
+            }],
+            remote: "origin".to_string(),
+            draft: false,
+            default_branch: "main".to_string(),
+        };
+
+        let (runner, _push_calls) = MockJjRunner::new();
+        let jj = Jj::new(runner);
+        // No existing stack comment — so it will create one, triggering
+        // migration check.
+        let forge = MockForge::new();
+        let env = test_comment_env();
+
+        execute_submission_plan(&plan, &jj, &forge, &env, StackPlacement::Comment)
+            .await
+            .unwrap();
+
+        // Should have created a comment.
+        let created_comments = forge.created_comments.lock().unwrap();
+        assert_eq!(created_comments.len(), 1);
+        assert!(created_comments[0].1.contains("STAKK_STACK"));
+
+        // Should have stripped the fence from the body (migration).
+        let updated_bodies = forge.updated_bodies.lock().unwrap();
+        assert_eq!(updated_bodies.len(), 1);
+        assert!(
+            !updated_bodies[0].1.contains("STAKK_BODY_START"),
+            "fence should be stripped: {}",
+            updated_bodies[0].1
+        );
+        assert!(updated_bodies[0].1.contains("Original PR body"));
     }
 }

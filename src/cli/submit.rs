@@ -1,6 +1,7 @@
 use clap::Args;
 
 use crate::cli::graph::GraphArgs;
+use crate::forge::comment::StackPlacement;
 
 /// Arguments for the `submit` subcommand.
 #[derive(Debug, Args)]
@@ -58,6 +59,26 @@ pub struct SubmitArgs {
     )]
     #[arg(long, env = "STAKK_TEMPLATE", verbatim_doc_comment)]
     pub template: Option<String>,
+
+    /// Where to place the stack comment on each pull request.
+    ///
+    /// In body mode the stack is written inside a fenced section
+    /// (STAKK_BODY_START / STAKK_BODY_END) that is appended to the PR
+    /// description. Content you write outside the fences is preserved.
+    /// Do not edit the fenced section by hand — it is overwritten on
+    /// every run.
+    ///
+    /// Switching modes migrates automatically: moving to body mode
+    /// deletes the old stack comment, and moving to comment mode strips
+    /// the fenced section from the PR body.
+    #[arg(
+        long = "stack-placement",
+        env = "STAKK_STACK_PLACEMENT",
+        default_value = "comment",
+        value_enum,
+        verbatim_doc_comment
+    )]
+    pub stack_placement: StackPlacement,
 
     /// [EXPERIMENTAL] Shell command for generating custom bookmark names.
     ///

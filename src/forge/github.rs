@@ -70,6 +70,7 @@ impl Forge for GitHubForge {
             head_ref: pr.head.ref_field,
             base_ref: pr.base.ref_field,
             state: map_pr_state(pr.state.as_ref(), pr.merged_at.is_some()),
+            body: pr.body,
         }))
     }
 
@@ -94,6 +95,7 @@ impl Forge for GitHubForge {
             head_ref: pr.head.ref_field,
             base_ref: pr.base.ref_field,
             state: PrState::Open,
+            body: pr.body,
         })
     }
 
@@ -145,6 +147,26 @@ impl Forge for GitHubForge {
         self.client
             .issues(&self.owner, &self.repo)
             .update_comment(CommentId::from(comment_id), body)
+            .await
+            .map_err(map_octocrab_error)?;
+        Ok(())
+    }
+
+    async fn update_pr_body(&self, pr_number: u64, body: &str) -> Result<(), ForgeError> {
+        self.client
+            .pulls(&self.owner, &self.repo)
+            .update(pr_number)
+            .body(body)
+            .send()
+            .await
+            .map_err(map_octocrab_error)?;
+        Ok(())
+    }
+
+    async fn delete_comment(&self, comment_id: u64) -> Result<(), ForgeError> {
+        self.client
+            .issues(&self.owner, &self.repo)
+            .delete_comment(CommentId::from(comment_id))
             .await
             .map_err(map_octocrab_error)?;
         Ok(())
