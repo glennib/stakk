@@ -11,6 +11,7 @@ use std::fmt;
 use miette::Diagnostic;
 use thiserror::Error;
 
+use crate::cli::submit::PrMode;
 use crate::forge::CreatePrParams;
 use crate::forge::Forge;
 use crate::forge::ForgeError;
@@ -156,8 +157,8 @@ pub struct SubmissionPlan {
     pub bookmark_plans: Vec<BookmarkPlan>,
     /// The remote name to push to.
     pub remote: String,
-    /// Whether to create PRs as drafts.
-    pub draft: bool,
+    /// Whether to create PRs as regular or draft.
+    pub pr_mode: PrMode,
     /// The default branch name (e.g., "main").
     pub default_branch: String,
 }
@@ -277,7 +278,7 @@ pub async fn create_submission_plan<F: Forge>(
     analysis: &SubmissionAnalysis,
     forge: &F,
     remote: &str,
-    draft: bool,
+    pr_mode: PrMode,
 ) -> Result<SubmissionPlan, SubmitError> {
     // Collect bookmark names for concurrent PR lookup.
     let bookmark_names: Vec<String> = analysis
@@ -346,7 +347,7 @@ pub async fn create_submission_plan<F: Forge>(
     Ok(SubmissionPlan {
         bookmark_plans,
         remote: remote.to_string(),
-        draft,
+        pr_mode,
         default_branch: analysis.default_branch.clone(),
     })
 }
@@ -357,7 +358,11 @@ pub async fn create_submission_plan<F: Forge>(
 
 impl fmt::Display for SubmissionPlan {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let draft_label = if self.draft { ", draft" } else { "" };
+        let draft_label = if self.pr_mode == PrMode::Draft {
+            ", draft"
+        } else {
+            ""
+        };
         writeln!(
             f,
             "Submission plan ({} bookmark(s), remote: {}{draft_label}):",
@@ -466,7 +471,7 @@ pub async fn execute_submission_plan<R: JjRunner, F: Forge>(
                     head: bp.bookmark_name.clone(),
                     base: bp.base.clone(),
                     body: bp.body.clone(),
-                    draft: plan.draft,
+                    draft: plan.pr_mode == PrMode::Draft,
                 })
                 .await
                 .map_err(|source| SubmitError::PrCreateFailed {
@@ -512,7 +517,7 @@ pub async fn execute_submission_plan<R: JjRunner, F: Forge>(
                     pr_number: entry.pr_number,
                     title: bp.title.clone(),
                     base: bp.base.clone(),
-                    is_draft: plan.draft && bp.needs_create,
+                    is_draft: plan.pr_mode == PrMode::Draft && bp.needs_create,
                     position: i + 1,
                     is_current: false, // set per-PR below
                 }
@@ -1106,7 +1111,7 @@ mod tests {
         };
 
         let forge = MockForge::new();
-        let plan = create_submission_plan(&analysis, &forge, "origin", false)
+        let plan = create_submission_plan(&analysis, &forge, "origin", PrMode::Regular)
             .await
             .unwrap();
 
@@ -1131,7 +1136,7 @@ mod tests {
 
         let forge = MockForge::new().with_existing_pr("feat-a", make_pr(42, "feat-a", "main"));
 
-        let plan = create_submission_plan(&analysis, &forge, "origin", false)
+        let plan = create_submission_plan(&analysis, &forge, "origin", PrMode::Regular)
             .await
             .unwrap();
 
@@ -1158,7 +1163,7 @@ mod tests {
             .with_existing_pr("feat-a", make_pr(10, "feat-a", "main"))
             .with_existing_pr("feat-b", make_pr(11, "feat-b", "main"));
 
-        let plan = create_submission_plan(&analysis, &forge, "origin", false)
+        let plan = create_submission_plan(&analysis, &forge, "origin", PrMode::Regular)
             .await
             .unwrap();
 
@@ -1184,7 +1189,7 @@ mod tests {
 
         let forge = MockForge::new().with_existing_pr("feat-a", make_pr(10, "feat-a", "main"));
 
-        let plan = create_submission_plan(&analysis, &forge, "origin", false)
+        let plan = create_submission_plan(&analysis, &forge, "origin", PrMode::Regular)
             .await
             .unwrap();
 
@@ -1218,7 +1223,7 @@ mod tests {
                 },
             ],
             remote: "origin".to_string(),
-            draft: false,
+            pr_mode: PrMode::Regular,
             default_branch: "main".to_string(),
         };
 
@@ -1260,7 +1265,7 @@ mod tests {
                 },
             ],
             remote: "origin".to_string(),
-            draft: false,
+            pr_mode: PrMode::Regular,
             default_branch: "main".to_string(),
         };
 
@@ -1297,7 +1302,7 @@ mod tests {
                 needs_base_update: true,
             }],
             remote: "origin".to_string(),
-            draft: false,
+            pr_mode: PrMode::Regular,
             default_branch: "main".to_string(),
         };
 
@@ -1341,7 +1346,7 @@ mod tests {
                 },
             ],
             remote: "origin".to_string(),
-            draft: false,
+            pr_mode: PrMode::Regular,
             default_branch: "main".to_string(),
         };
 
@@ -1419,7 +1424,7 @@ mod tests {
                 },
             ],
             remote: "origin".to_string(),
-            draft: false,
+            pr_mode: PrMode::Regular,
             default_branch: "main".to_string(),
         };
 
@@ -1473,7 +1478,7 @@ mod tests {
                 },
             ],
             remote: "my-remote".to_string(),
-            draft: false,
+            pr_mode: PrMode::Regular,
             default_branch: "main".to_string(),
         };
 
@@ -1506,7 +1511,7 @@ mod tests {
                 needs_base_update: false,
             }],
             remote: "origin".to_string(),
-            draft: true,
+            pr_mode: PrMode::Draft,
             default_branch: "main".to_string(),
         };
 
@@ -1531,7 +1536,7 @@ mod tests {
                 needs_base_update: false,
             }],
             remote: "origin".to_string(),
-            draft: true,
+            pr_mode: PrMode::Draft,
             default_branch: "main".to_string(),
         };
 
@@ -1686,7 +1691,7 @@ mod tests {
                 },
             ],
             remote: "origin".to_string(),
-            draft: false,
+            pr_mode: PrMode::Regular,
             default_branch: "main".to_string(),
         };
 
@@ -1746,7 +1751,7 @@ mod tests {
                 },
             ],
             remote: "origin".to_string(),
-            draft: false,
+            pr_mode: PrMode::Regular,
             default_branch: "main".to_string(),
         };
 
@@ -1834,7 +1839,7 @@ mod tests {
                 },
             ],
             remote: "origin".to_string(),
-            draft: false,
+            pr_mode: PrMode::Regular,
             default_branch: "main".to_string(),
         };
 
@@ -1893,7 +1898,7 @@ mod tests {
                 },
             ],
             remote: "origin".to_string(),
-            draft: false,
+            pr_mode: PrMode::Regular,
             default_branch: "main".to_string(),
         };
 
@@ -1942,7 +1947,7 @@ mod tests {
                 needs_base_update: false,
             }],
             remote: "origin".to_string(),
-            draft: false,
+            pr_mode: PrMode::Regular,
             default_branch: "main".to_string(),
         };
 
@@ -2015,7 +2020,7 @@ mod tests {
                 needs_base_update: false,
             }],
             remote: "origin".to_string(),
-            draft: false,
+            pr_mode: PrMode::Regular,
             default_branch: "main".to_string(),
         };
 
@@ -2060,7 +2065,7 @@ mod tests {
                 needs_base_update: false,
             }],
             remote: "origin".to_string(),
-            draft: false,
+            pr_mode: PrMode::Regular,
             default_branch: "main".to_string(),
         };
 
