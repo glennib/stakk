@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.6.0](https://github.com/glennib/stakk/compare/v1.5.0...v1.6.0) - 2026-03-18
+
+### Added
+
+- *(submit)* skip stack info for single-bookmark submissions
+
 ## [1.5.0](https://github.com/glennib/stakk/compare/v1.4.1...v1.5.0) - 2026-03-18
 
 ### Added
