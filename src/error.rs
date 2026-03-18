@@ -2,6 +2,7 @@ use miette::Diagnostic;
 use thiserror::Error;
 
 use crate::auth::AuthError;
+use crate::config::ConfigError;
 use crate::forge::ForgeError;
 use crate::jj::JjError;
 use crate::select::bookmark_gen::BookmarkGenError;
@@ -35,6 +36,11 @@ pub enum StakkError {
     #[diagnostic(transparent)]
     BookmarkGen(#[from] BookmarkGenError),
 
+    /// A configuration error.
+    #[error(transparent)]
+    #[diagnostic(transparent)]
+    Config(#[from] ConfigError),
+
     /// The specified remote is not a GitHub URL.
     #[error("remote '{name}' is not a GitHub URL: {url}")]
     #[diagnostic(
@@ -66,6 +72,11 @@ pub enum StakkError {
         help("check that the file exists and is readable")
     )]
     TemplateLoadFailed { path: String, reason: String },
+
+    /// A CLI argument parsing error.
+    #[error("{0}")]
+    #[diagnostic(code(stakk::cli))]
+    Cli(#[from] clap::Error),
 
     /// A terminal I/O error.
     #[error("terminal I/O error: {0}")]

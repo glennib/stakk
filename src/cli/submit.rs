@@ -8,7 +8,8 @@ use crate::forge::comment::StackPlacement;
 ///
 /// This only affects newly created PRs. Existing PRs keep their
 /// current draft/ready state.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, clap::ValueEnum)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Deserialize, clap::ValueEnum)]
+#[serde(rename_all = "kebab-case")]
 pub enum PrMode {
     /// Create pull requests as regular (non-draft) PRs.
     #[default]

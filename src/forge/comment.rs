@@ -5,6 +5,7 @@
 
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64;
+use clap::ValueEnum;
 use minijinja::Environment;
 use serde::Deserialize;
 use serde::Serialize;
@@ -13,13 +14,23 @@ use super::Comment;
 use crate::submit::SubmitError;
 
 /// Where stack metadata is placed on a pull request.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, clap::ValueEnum)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, clap::ValueEnum, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum StackPlacement {
     /// Place the stack comment as a separate PR comment (issue comment).
     #[default]
     Comment,
     /// Place the stack content in a fenced section of the PR body.
     Body,
+}
+
+impl std::fmt::Display for StackPlacement {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let pv = self
+            .to_possible_value()
+            .expect("all variants have possible values");
+        f.write_str(pv.get_name())
+    }
 }
 
 /// Start fence for stack content embedded in a PR body.

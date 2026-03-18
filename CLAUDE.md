@@ -15,6 +15,8 @@ and comprehensive error handling.
 ## Testing
 
 - **Unit/integration tests**: `cargo nextest run --all-targets`.
+- **Final pre-commit check**: `mise run ci` — run this after implementing plans
+  and before committing.
 
 ## Development Principles
 
