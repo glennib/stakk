@@ -463,41 +463,43 @@ pub async fn execute_submission_plan<R: JjRunner, F: Forge>(
     }
 
     // Step 3: Concurrently create/update stack comments on all PRs.
-    pb.set_message("Updating stack comments...");
-    let comment_data = StackCommentData {
-        version: 0,
-        stack: stack_entries.clone(),
-    };
+    // For single-bookmark submissions, skip stack info entirely and just
+    // clean up any stale stack artifacts from a previously larger stack.
+    if stack_entries.len() > 1 {
+        pb.set_message("Updating stack comments...");
+        let comment_data = StackCommentData {
+            version: 0,
+            stack: stack_entries.clone(),
+        };
 
-    let template = comment_env.get_template("stack_comment").map_err(|e| {
-        SubmitError::TemplateRenderFailed {
-            message: e.to_string(),
-        }
-    })?;
-
-    // Build the shared entry contexts from stack_entries + bookmark_plans.
-    let entry_contexts: Vec<StackEntryContext> = stack_entries
-        .iter()
-        .enumerate()
-        .map(|(i, entry)| {
-            let bp = &plan.bookmark_plans[i];
-            StackEntryContext {
-                bookmark_name: entry.bookmark_name.clone(),
-                pr_url: entry.pr_url.clone(),
-                pr_number: entry.pr_number,
-                title: bp.title.clone(),
-                base: bp.base.clone(),
-                is_draft: plan.draft && bp.needs_create,
-                position: i + 1,
-                is_current: false, // set per-PR below
+        let template = comment_env.get_template("stack_comment").map_err(|e| {
+            SubmitError::TemplateRenderFailed {
+                message: e.to_string(),
             }
-        })
-        .collect();
+        })?;
 
-    match placement {
-        StackPlacement::Comment => {
-            let comment_futures: Vec<_> =
-                stack_entries
+        // Build the shared entry contexts from stack_entries + bookmark_plans.
+        let entry_contexts: Vec<StackEntryContext> = stack_entries
+            .iter()
+            .enumerate()
+            .map(|(i, entry)| {
+                let bp = &plan.bookmark_plans[i];
+                StackEntryContext {
+                    bookmark_name: entry.bookmark_name.clone(),
+                    pr_url: entry.pr_url.clone(),
+                    pr_number: entry.pr_number,
+                    title: bp.title.clone(),
+                    base: bp.base.clone(),
+                    is_draft: plan.draft && bp.needs_create,
+                    position: i + 1,
+                    is_current: false, // set per-PR below
+                }
+            })
+            .collect();
+
+        match placement {
+            StackPlacement::Comment => {
+                let comment_futures: Vec<_> = stack_entries
                     .iter()
                     .enumerate()
                     .map(|(i, entry)| {
@@ -554,75 +556,107 @@ pub async fn execute_submission_plan<R: JjRunner, F: Forge>(
                         }
                     })
                     .collect();
-            let comment_results = futures::future::join_all(comment_futures).await;
-            for result in comment_results {
-                result?;
+                let comment_results = futures::future::join_all(comment_futures).await;
+                for result in comment_results {
+                    result?;
+                }
+            }
+            StackPlacement::Body => {
+                let body_futures: Vec<_> =
+                    stack_entries
+                        .iter()
+                        .enumerate()
+                        .map(|(i, entry)| {
+                            let mut entries = entry_contexts.clone();
+                            entries[i].is_current = true;
+                            let ctx = StackCommentContext {
+                                stack_size: entries.len(),
+                                current_bookmark: entry.bookmark_name.clone(),
+                                default_branch: plan.default_branch.clone(),
+                                stakk_url: STAKK_REPO_URL.to_string(),
+                                stack: entries,
+                            };
+
+                            let rendered = format_stack_comment(&comment_data, &ctx, &template);
+                            let pr_number = entry.pr_number;
+                            let bp = &plan.bookmark_plans[i];
+                            let existing_body = if bp.needs_create {
+                                // For newly created PRs, use the body we just
+                                // submitted.
+                                bp.body.clone().unwrap_or_default()
+                            } else {
+                                bp.existing_pr
+                                    .as_ref()
+                                    .and_then(|pr| pr.body.clone())
+                                    .unwrap_or_default()
+                            };
+                            let had_fence = find_stack_in_body(&existing_body).is_some();
+                            let pb = &pb;
+                            async move {
+                                let rendered = rendered?;
+                                let new_body = splice_stack_into_body(&existing_body, &rendered);
+                                forge.update_pr_body(pr_number, &new_body).await.map_err(
+                                    |source| SubmitError::BodyUpdateFailed { pr_number, source },
+                                )?;
+
+                                // Migration: if no existing fenced section was found,
+                                // check for an old stack comment and delete it.
+                                if !had_fence {
+                                    let comments =
+                                        forge.list_comments(pr_number).await.map_err(|source| {
+                                            SubmitError::CommentFailed { pr_number, source }
+                                        })?;
+                                    if let Some(old) = find_stack_comment(&comments)
+                                        && let Err(e) = forge.delete_comment(old.id).await
+                                    {
+                                        pb.println(format!(
+                                            "  Warning: failed to delete old stack comment on PR \
+                                             #{pr_number} during migration: {e}"
+                                        ));
+                                    }
+                                }
+                                Ok::<(), SubmitError>(())
+                            }
+                        })
+                        .collect();
+                let body_results = futures::future::join_all(body_futures).await;
+                for result in body_results {
+                    result?;
+                }
             }
         }
-        StackPlacement::Body => {
-            let body_futures: Vec<_> = stack_entries
-                .iter()
-                .enumerate()
-                .map(|(i, entry)| {
-                    let mut entries = entry_contexts.clone();
-                    entries[i].is_current = true;
-                    let ctx = StackCommentContext {
-                        stack_size: entries.len(),
-                        current_bookmark: entry.bookmark_name.clone(),
-                        default_branch: plan.default_branch.clone(),
-                        stakk_url: STAKK_REPO_URL.to_string(),
-                        stack: entries,
-                    };
+    } else if stack_entries.len() == 1 {
+        // Single bookmark — not a stack. Clean up any stale stack artifacts
+        // from when this PR was part of a larger stack.
+        let entry = &stack_entries[0];
+        let pr_number = entry.pr_number;
+        let existing_body = plan.bookmark_plans[0]
+            .existing_pr
+            .as_ref()
+            .and_then(|pr| pr.body.clone());
 
-                    let rendered = format_stack_comment(&comment_data, &ctx, &template);
-                    let pr_number = entry.pr_number;
-                    let bp = &plan.bookmark_plans[i];
-                    let existing_body = if bp.needs_create {
-                        // For newly created PRs, use the body we just
-                        // submitted.
-                        bp.body.clone().unwrap_or_default()
-                    } else {
-                        bp.existing_pr
-                            .as_ref()
-                            .and_then(|pr| pr.body.clone())
-                            .unwrap_or_default()
-                    };
-                    let had_fence = find_stack_in_body(&existing_body).is_some();
-                    let pb = &pb;
-                    async move {
-                        let rendered = rendered?;
-                        let new_body = splice_stack_into_body(&existing_body, &rendered);
-                        forge
-                            .update_pr_body(pr_number, &new_body)
-                            .await
-                            .map_err(|source| SubmitError::BodyUpdateFailed {
-                                pr_number,
-                                source,
-                            })?;
+        // Clean up old stack comment (from either comment mode or pre-migration).
+        let comments = forge
+            .list_comments(pr_number)
+            .await
+            .map_err(|source| SubmitError::CommentFailed { pr_number, source })?;
+        if let Some(old) = find_stack_comment(&comments) {
+            if let Err(e) = forge.delete_comment(old.id).await {
+                pb.println(format!(
+                    "  Warning: failed to clean up old stack comment on PR #{pr_number}: {e}"
+                ));
+            }
+        }
 
-                        // Migration: if no existing fenced section was found,
-                        // check for an old stack comment and delete it.
-                        if !had_fence {
-                            let comments =
-                                forge.list_comments(pr_number).await.map_err(|source| {
-                                    SubmitError::CommentFailed { pr_number, source }
-                                })?;
-                            if let Some(old) = find_stack_comment(&comments)
-                                && let Err(e) = forge.delete_comment(old.id).await
-                            {
-                                pb.println(format!(
-                                    "  Warning: failed to delete old stack comment on PR \
-                                     #{pr_number} during migration: {e}"
-                                ));
-                            }
-                        }
-                        Ok::<(), SubmitError>(())
-                    }
-                })
-                .collect();
-            let body_results = futures::future::join_all(body_futures).await;
-            for result in body_results {
-                result?;
+        // Clean up old body fence (from body mode).
+        if let Some(body) = &existing_body
+            && find_stack_in_body(body).is_some()
+        {
+            let stripped = strip_stack_from_body(body);
+            if let Err(e) = forge.update_pr_body(pr_number, &stripped).await {
+                pb.println(format!(
+                    "  Warning: failed to strip stack from PR #{pr_number} body: {e}"
+                ));
             }
         }
     }
@@ -1288,16 +1322,28 @@ mod tests {
         .unwrap();
 
         let plan = SubmissionPlan {
-            bookmark_plans: vec![BookmarkPlan {
-                bookmark_name: "feat-a".to_string(),
-                base: "main".to_string(),
-                title: "feature a".to_string(),
-                body: None,
-                existing_pr: Some(make_pr(50, "feat-a", "main")),
-                needs_push: true,
-                needs_create: false,
-                needs_base_update: false,
-            }],
+            bookmark_plans: vec![
+                BookmarkPlan {
+                    bookmark_name: "feat-a".to_string(),
+                    base: "main".to_string(),
+                    title: "feature a".to_string(),
+                    body: None,
+                    existing_pr: Some(make_pr(50, "feat-a", "main")),
+                    needs_push: true,
+                    needs_create: false,
+                    needs_base_update: false,
+                },
+                BookmarkPlan {
+                    bookmark_name: "feat-b".to_string(),
+                    base: "feat-a".to_string(),
+                    title: "feature b".to_string(),
+                    body: None,
+                    existing_pr: None,
+                    needs_push: true,
+                    needs_create: true,
+                    needs_base_update: false,
+                },
+            ],
             remote: "origin".to_string(),
             draft: false,
             default_branch: "main".to_string(),
@@ -1317,9 +1363,10 @@ mod tests {
             .await
             .unwrap();
 
-        // Should have updated the existing comment, not created a new one.
+        // Should have updated the existing comment on PR #50, not created a
+        // new one. A new comment is created for the second PR.
         let created = forge.created_comments.lock().unwrap();
-        assert_eq!(created.len(), 0);
+        assert_eq!(created.len(), 1);
 
         let updated = forge.updated_comments.lock().unwrap();
         assert_eq!(updated.len(), 1);
@@ -1522,16 +1569,28 @@ mod tests {
     #[tokio::test]
     async fn execute_body_mode_creates_fenced_section() {
         let plan = SubmissionPlan {
-            bookmark_plans: vec![BookmarkPlan {
-                bookmark_name: "feat-a".to_string(),
-                base: "main".to_string(),
-                title: "feature a".to_string(),
-                body: None,
-                existing_pr: None,
-                needs_push: true,
-                needs_create: true,
-                needs_base_update: false,
-            }],
+            bookmark_plans: vec![
+                BookmarkPlan {
+                    bookmark_name: "feat-a".to_string(),
+                    base: "main".to_string(),
+                    title: "feature a".to_string(),
+                    body: None,
+                    existing_pr: None,
+                    needs_push: true,
+                    needs_create: true,
+                    needs_base_update: false,
+                },
+                BookmarkPlan {
+                    bookmark_name: "feat-b".to_string(),
+                    base: "feat-a".to_string(),
+                    title: "feature b".to_string(),
+                    body: None,
+                    existing_pr: None,
+                    needs_push: true,
+                    needs_create: true,
+                    needs_base_update: false,
+                },
+            ],
             remote: "origin".to_string(),
             draft: false,
             default_branch: "main".to_string(),
@@ -1547,7 +1606,7 @@ mod tests {
             .unwrap();
 
         let updated_bodies = forge.updated_bodies.lock().unwrap();
-        assert_eq!(updated_bodies.len(), 1);
+        assert_eq!(updated_bodies.len(), 2);
         assert!(
             updated_bodies[0].1.contains("STAKK_BODY_START"),
             "expected body fence: {}",
@@ -1570,16 +1629,28 @@ mod tests {
 
         let existing_body = splice_stack_into_body("Original PR body", "old stack content");
         let plan = SubmissionPlan {
-            bookmark_plans: vec![BookmarkPlan {
-                bookmark_name: "feat-a".to_string(),
-                base: "main".to_string(),
-                title: "feature a".to_string(),
-                body: None,
-                existing_pr: Some(make_pr_with_body(50, "feat-a", "main", &existing_body)),
-                needs_push: true,
-                needs_create: false,
-                needs_base_update: false,
-            }],
+            bookmark_plans: vec![
+                BookmarkPlan {
+                    bookmark_name: "feat-a".to_string(),
+                    base: "main".to_string(),
+                    title: "feature a".to_string(),
+                    body: None,
+                    existing_pr: Some(make_pr_with_body(50, "feat-a", "main", &existing_body)),
+                    needs_push: true,
+                    needs_create: false,
+                    needs_base_update: false,
+                },
+                BookmarkPlan {
+                    bookmark_name: "feat-b".to_string(),
+                    base: "feat-a".to_string(),
+                    title: "feature b".to_string(),
+                    body: None,
+                    existing_pr: None,
+                    needs_push: true,
+                    needs_create: true,
+                    needs_base_update: false,
+                },
+            ],
             remote: "origin".to_string(),
             draft: false,
             default_branch: "main".to_string(),
@@ -1595,15 +1666,16 @@ mod tests {
             .unwrap();
 
         let updated_bodies = forge.updated_bodies.lock().unwrap();
-        assert_eq!(updated_bodies.len(), 1);
-        // Should still contain original body text.
+        assert_eq!(updated_bodies.len(), 2);
+        // PR #50 (feat-a) should still contain original body text.
         assert!(updated_bodies[0].1.contains("Original PR body"));
         // Should no longer contain old stack content.
         assert!(!updated_bodies[0].1.contains("old stack content"));
         // Should contain new STAKK_STACK metadata.
         assert!(updated_bodies[0].1.contains("STAKK_STACK"));
 
-        // No comment API calls (existing fence = not first time).
+        // No comment API calls (existing fence = not first time for feat-a,
+        // new PR for feat-b has no old comment either).
         let created_comments = forge.created_comments.lock().unwrap();
         assert_eq!(created_comments.len(), 0);
         let deleted = forge.deleted_comments.lock().unwrap();
@@ -1645,16 +1717,28 @@ mod tests {
         .unwrap();
 
         let plan = SubmissionPlan {
-            bookmark_plans: vec![BookmarkPlan {
-                bookmark_name: "feat-a".to_string(),
-                base: "main".to_string(),
-                title: "feature a".to_string(),
-                body: None,
-                existing_pr: Some(make_pr_with_body(50, "feat-a", "main", "Plain body")),
-                needs_push: true,
-                needs_create: false,
-                needs_base_update: false,
-            }],
+            bookmark_plans: vec![
+                BookmarkPlan {
+                    bookmark_name: "feat-a".to_string(),
+                    base: "main".to_string(),
+                    title: "feature a".to_string(),
+                    body: None,
+                    existing_pr: Some(make_pr_with_body(50, "feat-a", "main", "Plain body")),
+                    needs_push: true,
+                    needs_create: false,
+                    needs_base_update: false,
+                },
+                BookmarkPlan {
+                    bookmark_name: "feat-b".to_string(),
+                    base: "feat-a".to_string(),
+                    title: "feature b".to_string(),
+                    body: None,
+                    existing_pr: None,
+                    needs_push: true,
+                    needs_create: true,
+                    needs_base_update: false,
+                },
+            ],
             remote: "origin".to_string(),
             draft: false,
             default_branch: "main".to_string(),
@@ -1674,12 +1758,12 @@ mod tests {
             .await
             .unwrap();
 
-        // Should have written body.
+        // Should have written body for both PRs.
         let updated_bodies = forge.updated_bodies.lock().unwrap();
-        assert_eq!(updated_bodies.len(), 1);
+        assert_eq!(updated_bodies.len(), 2);
         assert!(updated_bodies[0].1.contains("STAKK_BODY_START"));
 
-        // Should have deleted the old comment (migration).
+        // Should have deleted the old comment on PR #50 (migration).
         let deleted = forge.deleted_comments.lock().unwrap();
         assert_eq!(deleted.len(), 1);
         assert_eq!(deleted[0], 999);
@@ -1690,6 +1774,185 @@ mod tests {
         use crate::forge::comment::splice_stack_into_body;
 
         // PR has a fenced section in the body (from previous body mode).
+        let body_with_fence = splice_stack_into_body("Original PR body", "old stack content");
+        let plan = SubmissionPlan {
+            bookmark_plans: vec![
+                BookmarkPlan {
+                    bookmark_name: "feat-a".to_string(),
+                    base: "main".to_string(),
+                    title: "feature a".to_string(),
+                    body: None,
+                    existing_pr: Some(make_pr_with_body(50, "feat-a", "main", &body_with_fence)),
+                    needs_push: true,
+                    needs_create: false,
+                    needs_base_update: false,
+                },
+                BookmarkPlan {
+                    bookmark_name: "feat-b".to_string(),
+                    base: "feat-a".to_string(),
+                    title: "feature b".to_string(),
+                    body: None,
+                    existing_pr: None,
+                    needs_push: true,
+                    needs_create: true,
+                    needs_base_update: false,
+                },
+            ],
+            remote: "origin".to_string(),
+            draft: false,
+            default_branch: "main".to_string(),
+        };
+
+        let (runner, _push_calls) = MockJjRunner::new();
+        let jj = Jj::new(runner);
+        // No existing stack comment — so it will create one, triggering
+        // migration check.
+        let forge = MockForge::new();
+        let env = test_comment_env();
+
+        execute_submission_plan(&plan, &jj, &forge, &env, StackPlacement::Comment)
+            .await
+            .unwrap();
+
+        // Should have created comments for both PRs.
+        let created_comments = forge.created_comments.lock().unwrap();
+        assert_eq!(created_comments.len(), 2);
+        assert!(created_comments[0].1.contains("STAKK_STACK"));
+
+        // Should have stripped the fence from the body of PR #50 (migration).
+        let updated_bodies = forge.updated_bodies.lock().unwrap();
+        assert_eq!(updated_bodies.len(), 1);
+        assert!(
+            !updated_bodies[0].1.contains("STAKK_BODY_START"),
+            "fence should be stripped: {}",
+            updated_bodies[0].1
+        );
+        assert!(updated_bodies[0].1.contains("Original PR body"));
+    }
+
+    // -----------------------------------------------------------------------
+    // Single-bookmark (no stack info) tests
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn execute_single_bookmark_skips_stack_comment() {
+        let plan = SubmissionPlan {
+            bookmark_plans: vec![BookmarkPlan {
+                bookmark_name: "feat-a".to_string(),
+                base: "main".to_string(),
+                title: "feature a".to_string(),
+                body: None,
+                existing_pr: None,
+                needs_push: true,
+                needs_create: true,
+                needs_base_update: false,
+            }],
+            remote: "origin".to_string(),
+            draft: false,
+            default_branch: "main".to_string(),
+        };
+
+        let (runner, _push_calls) = MockJjRunner::new();
+        let jj = Jj::new(runner);
+        let forge = MockForge::new();
+        let env = test_comment_env();
+
+        let result = execute_submission_plan(&plan, &jj, &forge, &env, StackPlacement::Comment)
+            .await
+            .unwrap();
+
+        assert_eq!(result.stack_entries.len(), 1);
+
+        // PR should be created.
+        let created_prs = forge.created_prs.lock().unwrap();
+        assert_eq!(created_prs.len(), 1);
+
+        // No stack comments should be created.
+        let created_comments = forge.created_comments.lock().unwrap();
+        assert_eq!(created_comments.len(), 0);
+
+        // No body updates for stack info.
+        let updated_bodies = forge.updated_bodies.lock().unwrap();
+        assert_eq!(updated_bodies.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn execute_single_bookmark_cleans_up_old_comment() {
+        let env = test_comment_env();
+        let tmpl = env.get_template("stack_comment").unwrap();
+        let old_comment_body = format_stack_comment(
+            &StackCommentData {
+                version: 0,
+                stack: vec![StackEntry {
+                    bookmark_name: "feat-a".to_string(),
+                    pr_url: "https://example.com/1".to_string(),
+                    pr_number: 50,
+                }],
+            },
+            &StackCommentContext {
+                stack: vec![StackEntryContext {
+                    bookmark_name: "feat-a".to_string(),
+                    pr_url: "https://example.com/1".to_string(),
+                    pr_number: 50,
+                    title: "feature a".to_string(),
+                    base: "main".to_string(),
+                    is_draft: false,
+                    position: 1,
+                    is_current: true,
+                }],
+                stack_size: 1,
+                default_branch: "main".to_string(),
+                current_bookmark: "feat-a".to_string(),
+                stakk_url: STAKK_REPO_URL.to_string(),
+            },
+            &tmpl,
+        )
+        .unwrap();
+
+        let plan = SubmissionPlan {
+            bookmark_plans: vec![BookmarkPlan {
+                bookmark_name: "feat-a".to_string(),
+                base: "main".to_string(),
+                title: "feature a".to_string(),
+                body: None,
+                existing_pr: Some(make_pr(50, "feat-a", "main")),
+                needs_push: true,
+                needs_create: false,
+                needs_base_update: false,
+            }],
+            remote: "origin".to_string(),
+            draft: false,
+            default_branch: "main".to_string(),
+        };
+
+        let (runner, _push_calls) = MockJjRunner::new();
+        let jj = Jj::new(runner);
+        let forge = MockForge::new().with_existing_comments(
+            50,
+            vec![Comment {
+                id: 999,
+                body: old_comment_body,
+            }],
+        );
+
+        execute_submission_plan(&plan, &jj, &forge, &env, StackPlacement::Comment)
+            .await
+            .unwrap();
+
+        // Old stack comment should be deleted.
+        let deleted = forge.deleted_comments.lock().unwrap();
+        assert_eq!(deleted.len(), 1);
+        assert_eq!(deleted[0], 999);
+
+        // No new comments should be created.
+        let created = forge.created_comments.lock().unwrap();
+        assert_eq!(created.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn execute_single_bookmark_cleans_up_old_body_fence() {
+        use crate::forge::comment::splice_stack_into_body;
+
         let body_with_fence = splice_stack_into_body("Original PR body", "old stack content");
         let plan = SubmissionPlan {
             bookmark_plans: vec![BookmarkPlan {
@@ -1709,21 +1972,14 @@ mod tests {
 
         let (runner, _push_calls) = MockJjRunner::new();
         let jj = Jj::new(runner);
-        // No existing stack comment — so it will create one, triggering
-        // migration check.
         let forge = MockForge::new();
         let env = test_comment_env();
 
-        execute_submission_plan(&plan, &jj, &forge, &env, StackPlacement::Comment)
+        execute_submission_plan(&plan, &jj, &forge, &env, StackPlacement::Body)
             .await
             .unwrap();
 
-        // Should have created a comment.
-        let created_comments = forge.created_comments.lock().unwrap();
-        assert_eq!(created_comments.len(), 1);
-        assert!(created_comments[0].1.contains("STAKK_STACK"));
-
-        // Should have stripped the fence from the body (migration).
+        // Body fence should be stripped.
         let updated_bodies = forge.updated_bodies.lock().unwrap();
         assert_eq!(updated_bodies.len(), 1);
         assert!(
@@ -1732,5 +1988,9 @@ mod tests {
             updated_bodies[0].1
         );
         assert!(updated_bodies[0].1.contains("Original PR body"));
+
+        // No new comments should be created.
+        let created = forge.created_comments.lock().unwrap();
+        assert_eq!(created.len(), 0);
     }
 }
