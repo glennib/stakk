@@ -140,7 +140,9 @@ fn run_event_loop(
 
     loop {
         // Check for completed background commands before drawing.
-        drain_completed(&mut pending, bookmark_state);
+        if let Some(msg) = drain_completed(&mut pending, bookmark_state) {
+            error_message = Some(msg);
+        }
 
         // Resolve Loading rows whose cache key now has a Computed entry
         // (e.g. from an orphaned task or a task spawned for a different row
@@ -441,11 +443,12 @@ fn fire_pending_commands(
 fn drain_completed(
     pending: &mut Vec<PendingCommand>,
     bookmark_state: &mut Option<BookmarkAssignmentState>,
-) {
+) -> Option<String> {
     let Some(state) = bookmark_state.as_mut() else {
         pending.clear();
-        return;
+        return None;
     };
+    let mut first_error: Option<String> = None;
 
     let mut completed = Vec::new();
     for (i, cmd) in pending.iter_mut().enumerate() {
@@ -485,15 +488,24 @@ fn drain_completed(
                         state.rows[row_idx].state =
                             RowState::UseCustom(CustomNameState::Ready(name));
                     }
-                } else if matches!(
-                    state.rows[row_idx].state,
-                    RowState::UseCustom(CustomNameState::Loading)
-                ) {
-                    state.rows[row_idx].custom_name = None;
-                    state.rows[row_idx].state = RowState::Unchecked;
+                } else {
+                    let err = bookmark_gen::validate_bookmark_name(&name).unwrap_err();
+                    if first_error.is_none() {
+                        first_error = Some(format!("Bookmark command: {err}"));
+                    }
+                    if matches!(
+                        state.rows[row_idx].state,
+                        RowState::UseCustom(CustomNameState::Loading)
+                    ) {
+                        state.rows[row_idx].custom_name = None;
+                        state.rows[row_idx].state = RowState::Unchecked;
+                    }
                 }
             }
-            Err(_e) => {
+            Err(e) => {
+                if first_error.is_none() {
+                    first_error = Some(format!("Bookmark command: {e}"));
+                }
                 if matches!(
                     state.rows[row_idx].state,
                     RowState::UseCustom(CustomNameState::Loading)
@@ -504,6 +516,8 @@ fn drain_completed(
             }
         }
     }
+
+    first_error
 }
 
 /// Resolve `UseCustom(Loading)` rows whose cache key now has a `Computed`
