@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.0](https://github.com/glennib/stakk/compare/v1.4.1...v1.5.0) - 2026-03-18
+
+### Added
+
+- *(comment)* add warning preamble and STAKK_REPO_URL constant
+- *(submit)* add --stack-placement body mode for stack info in PR body
+
+### Fixed
+
+- *(select)* surface bookmark command errors in TUI subtitle
+
 ## [1.4.1](https://github.com/glennib/stakk/compare/v1.4.0...v1.4.1) - 2026-03-16
 
 ### Fixed
