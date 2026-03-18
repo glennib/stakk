@@ -33,6 +33,9 @@ const COMMENT_DATA_POSTFIX: &str = " --->";
 
 const DEFAULT_TEMPLATE: &str = include_str!("default_comment.md.jinja");
 
+/// Public URL of the stakk repository.
+pub const STAKK_REPO_URL: &str = "https://github.com/glennib/stakk";
+
 /// Metadata embedded in stack comments as base64-encoded JSON.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct StackCommentData {
@@ -95,8 +98,9 @@ pub fn build_comment_env(
 
 /// Format a stack comment body for a specific PR in the stack.
 ///
-/// The metadata line (`<!--- STAKK_STACK: ... --->`) is always prepended
-/// programmatically and is NOT part of the template.
+/// Returns the metadata line (`<!--- STAKK_STACK: ... --->`) followed by the
+/// rendered template. Callers are responsible for adding any placement-specific
+/// preamble (e.g. warning lines) between the metadata and the rendered content.
 pub fn format_stack_comment(
     data: &StackCommentData,
     context: &StackCommentContext,
@@ -112,6 +116,25 @@ pub fn format_stack_comment(
         })?;
 
     Ok(format!("{metadata_line}\n{rendered}"))
+}
+
+/// Warning preamble for comment-mode stack comments.
+pub const COMMENT_WARNING: &str =
+    "<!-- This comment is managed by stakk. Manual edits will be overwritten. -->";
+
+/// Warning preamble for body-mode fenced stack sections.
+pub const BODY_WARNING: &str =
+    "<!-- This section is managed by stakk. Manual edits will be overwritten. -->";
+
+/// Insert the comment-mode warning preamble after the metadata line.
+///
+/// The preamble is inserted between line 1 (metadata) and the rest of the
+/// rendered content.
+pub fn with_comment_preamble(formatted: &str) -> String {
+    let mut lines = formatted.splitn(2, '\n');
+    let metadata = lines.next().unwrap_or("");
+    let rest = lines.next().unwrap_or("");
+    format!("{metadata}\n{COMMENT_WARNING}\n<!-- {STAKK_REPO_URL} -->\n{rest}")
 }
 
 /// Find the existing stack comment among a list of comments.
@@ -165,7 +188,10 @@ pub fn find_stack_in_body(body: &str) -> Option<(usize, usize)> {
 /// Otherwise, the fenced section is appended (with a blank line separator
 /// if the body is non-empty).
 pub fn splice_stack_into_body(existing_body: &str, stack_content: &str) -> String {
-    let fenced = format!("{BODY_FENCE_START}\n\n---\n\n{stack_content}\n{BODY_FENCE_END}\n");
+    let fenced = format!(
+        "{BODY_FENCE_START}\n{BODY_WARNING}\n<!-- {STAKK_REPO_URL} \
+         -->\n\n---\n\n{stack_content}\n{BODY_FENCE_END}\n"
+    );
 
     if let Some((start, end)) = find_stack_in_body(existing_body) {
         let mut result = String::with_capacity(existing_body.len() + fenced.len());
@@ -244,7 +270,7 @@ mod tests {
             current_bookmark: entries[current_index].bookmark_name.clone(),
             stack: entries,
             default_branch: "main".to_string(),
-            stakk_url: "https://github.com/glennib/stakk".to_string(),
+            stakk_url: STAKK_REPO_URL.to_string(),
         }
     }
 
@@ -432,7 +458,7 @@ mod tests {
             stack_size: 1,
             default_branch: "main".to_string(),
             current_bookmark: "solo".to_string(),
-            stakk_url: "https://github.com/glennib/stakk".to_string(),
+            stakk_url: STAKK_REPO_URL.to_string(),
         };
         let env = default_env();
         let tmpl = env.get_template("stack_comment").unwrap();
@@ -498,6 +524,56 @@ mod tests {
         assert!(
             body.contains("2. https://github.com/owner/repo/pull/2"),
             "expected entry 2: {body}"
+        );
+    }
+
+    #[test]
+    fn with_comment_preamble_inserts_warning() {
+        let data = sample_data();
+        let ctx = sample_context(0);
+        let env = default_env();
+        let tmpl = env.get_template("stack_comment").unwrap();
+        let formatted = format_stack_comment(&data, &ctx, &tmpl).unwrap();
+        let body = with_comment_preamble(&formatted);
+        assert!(
+            body.contains(COMMENT_WARNING),
+            "expected warning line in comment: {body}"
+        );
+        assert!(
+            body.contains(&format!("<!-- {STAKK_REPO_URL} -->")),
+            "expected repo URL line in comment: {body}"
+        );
+        // Metadata is still on the first line.
+        assert!(body.starts_with(COMMENT_DATA_PREFIX));
+    }
+
+    #[test]
+    fn format_stack_comment_has_no_warning() {
+        let data = sample_data();
+        let ctx = sample_context(0);
+        let env = default_env();
+        let tmpl = env.get_template("stack_comment").unwrap();
+        let body = format_stack_comment(&data, &ctx, &tmpl).unwrap();
+        assert!(
+            !body.contains(COMMENT_WARNING),
+            "format_stack_comment should not include comment warning: {body}"
+        );
+        assert!(
+            !body.contains(BODY_WARNING),
+            "format_stack_comment should not include body warning: {body}"
+        );
+    }
+
+    #[test]
+    fn splice_includes_warning_preamble() {
+        let result = splice_stack_into_body("", "stack content");
+        assert!(
+            result.contains(BODY_WARNING),
+            "expected warning line in fenced block: {result}"
+        );
+        assert!(
+            result.contains(&format!("<!-- {STAKK_REPO_URL} -->")),
+            "expected repo URL line in fenced block: {result}"
         );
     }
 }

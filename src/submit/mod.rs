@@ -14,6 +14,7 @@ use crate::forge::CreatePrParams;
 use crate::forge::Forge;
 use crate::forge::ForgeError;
 use crate::forge::PullRequest;
+use crate::forge::comment::STAKK_REPO_URL;
 use crate::forge::comment::StackCommentContext;
 use crate::forge::comment::StackCommentData;
 use crate::forge::comment::StackEntry;
@@ -24,6 +25,7 @@ use crate::forge::comment::find_stack_in_body;
 use crate::forge::comment::format_stack_comment;
 use crate::forge::comment::splice_stack_into_body;
 use crate::forge::comment::strip_stack_from_body;
+use crate::forge::comment::with_comment_preamble;
 use crate::graph::types::BookmarkSegment;
 use crate::graph::types::ChangeGraph;
 use crate::graph::types::SegmentCommit;
@@ -505,11 +507,12 @@ pub async fn execute_submission_plan<R: JjRunner, F: Forge>(
                             stack_size: entries.len(),
                             current_bookmark: entry.bookmark_name.clone(),
                             default_branch: plan.default_branch.clone(),
-                            stakk_url: "https://github.com/glennib/stakk".to_string(),
+                            stakk_url: STAKK_REPO_URL.to_string(),
                             stack: entries,
                         };
 
-                        let rendered = format_stack_comment(&comment_data, &ctx, &template);
+                        let rendered = format_stack_comment(&comment_data, &ctx, &template)
+                            .map(|s| with_comment_preamble(&s));
                         let pr_number = entry.pr_number;
                         let existing_body = plan.bookmark_plans[i]
                             .existing_pr
@@ -567,7 +570,7 @@ pub async fn execute_submission_plan<R: JjRunner, F: Forge>(
                         stack_size: entries.len(),
                         current_bookmark: entry.bookmark_name.clone(),
                         default_branch: plan.default_branch.clone(),
-                        stakk_url: "https://github.com/glennib/stakk".to_string(),
+                        stakk_url: STAKK_REPO_URL.to_string(),
                         stack: entries,
                     };
 
@@ -1278,7 +1281,7 @@ mod tests {
                 stack_size: 1,
                 default_branch: "main".to_string(),
                 current_bookmark: "old".to_string(),
-                stakk_url: "https://github.com/glennib/stakk".to_string(),
+                stakk_url: STAKK_REPO_URL.to_string(),
             },
             &tmpl,
         )
@@ -1635,7 +1638,7 @@ mod tests {
                 stack_size: 1,
                 default_branch: "main".to_string(),
                 current_bookmark: "feat-a".to_string(),
-                stakk_url: "https://github.com/glennib/stakk".to_string(),
+                stakk_url: STAKK_REPO_URL.to_string(),
             },
             &tmpl,
         )

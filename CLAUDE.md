@@ -144,6 +144,10 @@ There is intentionally no `git/` module.
   only the fenced section.
 - Stack comment metadata line (`<!--- STAKK_STACK: ... --->`) is always
   prepended programmatically — not part of the minijinja template.
+  Warning/repo-URL preambles are added per-placement-mode: comment mode uses
+  `with_comment_preamble()`, body mode adds `BODY_WARNING` inside the fence.
+  `format_stack_comment` itself is placement-neutral (no warning lines).
+  `STAKK_REPO_URL` is the single source of truth for the repo URL.
 - `format_stack_comment` returns `Result` because user templates can fail.
 - Body-mode fences (`STAKK_BODY_START`/`STAKK_BODY_END`) are HTML comments,
   invisible on GitHub. Migration between placement modes is automatic.
