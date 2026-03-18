@@ -640,12 +640,12 @@ pub async fn execute_submission_plan<R: JjRunner, F: Forge>(
             .list_comments(pr_number)
             .await
             .map_err(|source| SubmitError::CommentFailed { pr_number, source })?;
-        if let Some(old) = find_stack_comment(&comments) {
-            if let Err(e) = forge.delete_comment(old.id).await {
-                pb.println(format!(
-                    "  Warning: failed to clean up old stack comment on PR #{pr_number}: {e}"
-                ));
-            }
+        if let Some(old) = find_stack_comment(&comments)
+            && let Err(e) = forge.delete_comment(old.id).await
+        {
+            pb.println(format!(
+                "  Warning: failed to clean up old stack comment on PR #{pr_number}: {e}"
+            ));
         }
 
         // Clean up old body fence (from body mode).
