@@ -201,15 +201,27 @@ pub fn analyze_submission(
         .position(|seg| seg.bookmark_names.contains(&target_bookmark.to_string()))
         .expect("bookmark was found in stack above");
 
-    let segments: Vec<BookmarkSegment> = stack.segments[..=target_index]
-        .iter()
-        .filter(|seg| {
-            seg.bookmark_names
-                .iter()
-                .any(|name| selected_bookmarks.contains(name))
-        })
-        .cloned()
-        .collect();
+    let mut segments = Vec::new();
+    let mut accumulated_commits: Vec<SegmentCommit> = Vec::new();
+
+    for seg in &stack.segments[..=target_index] {
+        let is_selected = seg
+            .bookmark_names
+            .iter()
+            .any(|name| selected_bookmarks.contains(name));
+
+        if is_selected {
+            let mut commits = seg.commits.clone();
+            commits.append(&mut accumulated_commits);
+            segments.push(BookmarkSegment {
+                bookmark_names: seg.bookmark_names.clone(),
+                change_id: seg.change_id.clone(),
+                commits,
+            });
+        } else {
+            accumulated_commits.extend(seg.commits.iter().cloned());
+        }
+    }
 
     Ok(SubmissionAnalysis {
         segments,
@@ -1044,11 +1056,13 @@ mod tests {
             segments: vec![seg_a, seg_b, seg_c],
         }]);
 
-        // Only select the leaf — intermediate bookmarks should be excluded.
+        // Only select the leaf — intermediate bookmarks should be excluded,
+        // but their commits fold into the next retained segment.
         let selected = HashSet::from(["feat-c".to_string()]);
         let result = analyze_submission("feat-c", &graph, "main", &selected).unwrap();
         assert_eq!(result.segments.len(), 1);
         assert_eq!(result.segments[0].bookmark_names, vec!["feat-c"]);
+        assert_eq!(result.segments[0].commits.len(), 3); // C's own + B's + A's
     }
 
     #[test]
@@ -1060,12 +1074,15 @@ mod tests {
             segments: vec![seg_a, seg_b, seg_c],
         }]);
 
-        // Select first and last — middle should be excluded.
+        // Select first and last — middle should be excluded,
+        // and middle's commits fold into the next retained segment.
         let selected = HashSet::from(["feat-a".to_string(), "feat-c".to_string()]);
         let result = analyze_submission("feat-c", &graph, "main", &selected).unwrap();
         assert_eq!(result.segments.len(), 2);
         assert_eq!(result.segments[0].bookmark_names, vec!["feat-a"]);
+        assert_eq!(result.segments[0].commits.len(), 1); // A's own only
         assert_eq!(result.segments[1].bookmark_names, vec!["feat-c"]);
+        assert_eq!(result.segments[1].commits.len(), 2); // C's own + B's inherited
     }
 
     // -----------------------------------------------------------------------
