@@ -7,6 +7,8 @@ mod jj;
 mod select;
 mod submit;
 
+use std::collections::HashSet;
+
 use clap::CommandFactory;
 use clap::Parser;
 
@@ -121,8 +123,11 @@ async fn submit_bookmark(args: &SubmitArgs) -> Result<(), StakkError> {
     // Resolve bookmark: explicit argument or interactive selection.
     pb.finish_and_clear();
 
-    let (bookmark, change_graph) = match &args.bookmark {
-        Some(name) => (name.clone(), change_graph),
+    let (bookmark, change_graph, selected_bookmarks) = match &args.bookmark {
+        Some(name) => {
+            let selected = HashSet::from([name.clone()]);
+            (name.clone(), change_graph, selected)
+        }
         None => match select::resolve_bookmark_interactively(
             &change_graph,
             args.bookmark_command.as_deref(),
@@ -143,6 +148,13 @@ async fn submit_bookmark(args: &SubmitArgs) -> Result<(), StakkError> {
                         pb.finish_and_clear();
                     }
                 }
+
+                // Collect selected bookmark names for filtering.
+                let selected: HashSet<String> = result
+                    .assignments
+                    .iter()
+                    .map(|a| a.bookmark_name.clone())
+                    .collect();
 
                 // Use the leaf-most assignment's bookmark name.
                 let leaf_bookmark = result
@@ -168,7 +180,7 @@ async fn submit_bookmark(args: &SubmitArgs) -> Result<(), StakkError> {
                     change_graph
                 };
 
-                (leaf_bookmark, graph)
+                (leaf_bookmark, graph, selected)
             }
             None => return Ok(()),
         },
@@ -178,7 +190,12 @@ async fn submit_bookmark(args: &SubmitArgs) -> Result<(), StakkError> {
     let pb = indicatif::ProgressBar::new_spinner();
     pb.enable_steady_tick(std::time::Duration::from_millis(120));
     pb.set_message("Analyzing submission...");
-    let analysis = submit::analyze_submission(&bookmark, &change_graph, &default_branch)?;
+    let analysis = submit::analyze_submission(
+        &bookmark,
+        &change_graph,
+        &default_branch,
+        &selected_bookmarks,
+    )?;
 
     // Phase 2: Plan.
     pb.set_message("Checking for existing pull requests...");

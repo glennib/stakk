@@ -5,6 +5,7 @@
 
 mod unwrap;
 
+use std::collections::HashSet;
 use std::fmt;
 
 use miette::Diagnostic;
@@ -180,6 +181,7 @@ pub fn analyze_submission(
     target_bookmark: &str,
     change_graph: &ChangeGraph,
     default_branch: &str,
+    selected_bookmarks: &HashSet<String>,
 ) -> Result<SubmissionAnalysis, SubmitError> {
     let stack = change_graph
         .stacks
@@ -199,7 +201,15 @@ pub fn analyze_submission(
         .position(|seg| seg.bookmark_names.contains(&target_bookmark.to_string()))
         .expect("bookmark was found in stack above");
 
-    let segments = stack.segments[..=target_index].to_vec();
+    let segments: Vec<BookmarkSegment> = stack.segments[..=target_index]
+        .iter()
+        .filter(|seg| {
+            seg.bookmark_names
+                .iter()
+                .any(|name| selected_bookmarks.contains(name))
+        })
+        .cloned()
+        .collect();
 
     Ok(SubmissionAnalysis {
         segments,
@@ -947,7 +957,8 @@ mod tests {
             segments: vec![seg],
         }]);
 
-        let result = analyze_submission("feat-a", &graph, "main").unwrap();
+        let all = HashSet::from(["feat-a".to_string()]);
+        let result = analyze_submission("feat-a", &graph, "main", &all).unwrap();
         assert_eq!(result.segments.len(), 1);
         assert_eq!(result.segments[0].bookmark_names, vec!["feat-a"]);
 
@@ -963,7 +974,12 @@ mod tests {
             segments: vec![seg_a, seg_b, seg_c],
         }]);
 
-        let result = analyze_submission("feat-b", &graph, "main").unwrap();
+        let all = HashSet::from([
+            "feat-a".to_string(),
+            "feat-b".to_string(),
+            "feat-c".to_string(),
+        ]);
+        let result = analyze_submission("feat-b", &graph, "main", &all).unwrap();
         assert_eq!(result.segments.len(), 2);
         assert_eq!(result.segments[0].bookmark_names, vec!["feat-a"]);
         assert_eq!(result.segments[1].bookmark_names, vec!["feat-b"]);
@@ -977,7 +993,8 @@ mod tests {
             segments: vec![seg_a, seg_b],
         }]);
 
-        let result = analyze_submission("feat-b", &graph, "main").unwrap();
+        let all = HashSet::from(["feat-a".to_string(), "feat-b".to_string()]);
+        let result = analyze_submission("feat-b", &graph, "main", &all).unwrap();
         assert_eq!(result.segments.len(), 2);
     }
 
@@ -988,7 +1005,8 @@ mod tests {
             segments: vec![seg],
         }]);
 
-        let result = analyze_submission("nonexistent", &graph, "main");
+        let all = HashSet::from(["nonexistent".to_string()]);
+        let result = analyze_submission("nonexistent", &graph, "main", &all);
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(
@@ -1010,10 +1028,44 @@ mod tests {
         };
         let graph = make_graph(vec![stack1, stack2]);
 
-        let result = analyze_submission("gamma", &graph, "main").unwrap();
+        let all = HashSet::from(["beta".to_string(), "gamma".to_string()]);
+        let result = analyze_submission("gamma", &graph, "main", &all).unwrap();
         assert_eq!(result.segments.len(), 2);
         assert_eq!(result.segments[0].bookmark_names, vec!["beta"]);
         assert_eq!(result.segments[1].bookmark_names, vec!["gamma"]);
+    }
+
+    #[test]
+    fn analyze_filters_unselected_bookmarks() {
+        let seg_a = make_segment(&["feat-a"], "ch_a", "feature a");
+        let seg_b = make_segment(&["feat-b"], "ch_b", "feature b");
+        let seg_c = make_segment(&["feat-c"], "ch_c", "feature c");
+        let graph = make_graph(vec![BranchStack {
+            segments: vec![seg_a, seg_b, seg_c],
+        }]);
+
+        // Only select the leaf — intermediate bookmarks should be excluded.
+        let selected = HashSet::from(["feat-c".to_string()]);
+        let result = analyze_submission("feat-c", &graph, "main", &selected).unwrap();
+        assert_eq!(result.segments.len(), 1);
+        assert_eq!(result.segments[0].bookmark_names, vec!["feat-c"]);
+    }
+
+    #[test]
+    fn analyze_filters_keeps_selected_subset() {
+        let seg_a = make_segment(&["feat-a"], "ch_a", "feature a");
+        let seg_b = make_segment(&["feat-b"], "ch_b", "feature b");
+        let seg_c = make_segment(&["feat-c"], "ch_c", "feature c");
+        let graph = make_graph(vec![BranchStack {
+            segments: vec![seg_a, seg_b, seg_c],
+        }]);
+
+        // Select first and last — middle should be excluded.
+        let selected = HashSet::from(["feat-a".to_string(), "feat-c".to_string()]);
+        let result = analyze_submission("feat-c", &graph, "main", &selected).unwrap();
+        assert_eq!(result.segments.len(), 2);
+        assert_eq!(result.segments[0].bookmark_names, vec!["feat-a"]);
+        assert_eq!(result.segments[1].bookmark_names, vec!["feat-c"]);
     }
 
     // -----------------------------------------------------------------------
