@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.6.1](https://github.com/glennib/stakk/compare/v1.6.0...v1.6.1) - 2026-03-20
+
+### Fixed
+
+- fold unselected segments' commits into next retained segment
+- filter unselected bookmarks from submission analysis
+
+### Other
+
+- clippy fix
+
 ## [1.6.0](https://github.com/glennib/stakk/compare/v1.5.0...v1.6.0) - 2026-03-18
 
 ### Added
