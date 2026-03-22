@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.9.0](https://github.com/glennib/stakk/compare/v1.8.0...v1.9.0) - 2026-03-22
+
+### Added
+
+- r/R cycles within bookmark states, Space skips between state types
+
+### Other
+
+- update claude.md
+
 ## [1.8.0](https://github.com/glennib/stakk/compare/v1.7.0...v1.8.0) - 2026-03-22
 
 ### Added
