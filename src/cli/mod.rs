@@ -17,7 +17,7 @@ use crate::config::Config;
 
 /// stakk — bridge Jujutsu bookmarks to GitHub stacked pull requests.
 #[derive(Debug, Parser)]
-#[command(version, about)]
+#[command(version, about, after_long_help = env!("CARGO_PKG_REPOSITORY"))]
 #[command(args_conflicts_with_subcommands = true)]
 pub struct Cli {
     /// Path to a config file (overrides automatic discovery).
