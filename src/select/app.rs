@@ -259,7 +259,13 @@ fn run_event_loop(
                 Action::Quit => {
                     return Err(Interrupted);
                 }
-                Action::Up | Action::Down | Action::Toggle | Action::Regenerate | Action::None => {}
+                Action::Up
+                | Action::Down
+                | Action::Toggle
+                | Action::ReverseToggle
+                | Action::Regenerate
+                | Action::ReverseRegenerate
+                | Action::None => {}
             },
             Screen::BookmarkAssignment => match action {
                 Action::Up => {
@@ -272,10 +278,14 @@ fn run_event_loop(
                         state.cursor_down();
                     }
                 }
-                Action::Toggle => {
+                Action::Toggle | Action::ReverseToggle => {
                     error_message = None;
                     if let Some(state) = bookmark_state {
-                        state.toggle_current();
+                        if action == Action::ReverseToggle {
+                            state.toggle_current_reverse();
+                        } else {
+                            state.toggle_current();
+                        }
 
                         if let Some(cmd) = bookmark_command {
                             fire_pending_commands(state, cmd, bookmark_cache, &mut pending);
@@ -299,10 +309,15 @@ fn run_event_loop(
                         }
                     }
                 }
-                Action::Regenerate => {
+                Action::Regenerate | Action::ReverseRegenerate => {
                     error_message = None;
                     if let Some(state) = bookmark_state {
-                        match state.regenerate_current() {
+                        let result = if action == Action::ReverseRegenerate {
+                            state.regenerate_current_reverse()
+                        } else {
+                            state.regenerate_current()
+                        };
+                        match result {
                             RegenerateResult::NeedsRefire => {
                                 if let Some(cmd) = bookmark_command {
                                     fire_pending_commands(state, cmd, bookmark_cache, &mut pending);

@@ -311,6 +311,102 @@ impl BookmarkAssignmentState {
         self.refresh_tfidf_names();
     }
 
+    /// Toggle the state of the current row backward through the cycle.
+    ///
+    /// The reverse cycle is: `Unchecked` → `UseCustom` → `UseGenerated`
+    /// → `UseTfidf` → `UseExisting(N-1..0)` → back to `Unchecked`.
+    ///
+    /// Skipping rules mirror `toggle_current`: states that produce no name
+    /// or a duplicate name are skipped.
+    pub fn toggle_current_reverse(&mut self) {
+        let cursor = self.cursor;
+        let Some(row) = self.rows.get(cursor) else {
+            return;
+        };
+        if row.is_trunk {
+            return;
+        }
+
+        let has_distinct_generated = match &row.generated_name {
+            Some(generated) => !row.existing_bookmarks.iter().any(|e| e == generated),
+            None => false,
+        };
+
+        let has_distinct_custom = row.has_bookmark_command
+            && match &row.custom_name {
+                Some(custom) => {
+                    let matches_generated = row.generated_name.as_ref() == Some(custom);
+                    let matches_existing = row.existing_bookmarks.iter().any(|e| e == custom);
+                    !matches_generated && !matches_existing
+                }
+                None => true,
+            };
+
+        let current_state = row.state.clone();
+
+        let prev = match &current_state {
+            RowState::Unchecked => {
+                self.prev_before_unchecked(cursor, has_distinct_generated, has_distinct_custom)
+            }
+            RowState::UseCustom(_) => {
+                if has_distinct_generated {
+                    RowState::UseGenerated
+                } else {
+                    self.prev_before_generated(cursor)
+                }
+            }
+            RowState::UseGenerated => self.prev_before_generated(cursor),
+            RowState::UseTfidf(_) => {
+                if row.existing_bookmarks.is_empty() {
+                    RowState::Unchecked
+                } else {
+                    RowState::UseExisting(row.existing_bookmarks.len() - 1)
+                }
+            }
+            RowState::UseExisting(idx) => {
+                if *idx > 0 {
+                    RowState::UseExisting(idx - 1)
+                } else {
+                    RowState::Unchecked
+                }
+            }
+        };
+
+        self.rows[cursor].state = prev;
+        self.refresh_tfidf_names();
+    }
+
+    /// Compute the previous state before `Unchecked`: try `UseCustom`, then
+    /// `UseGenerated`, then `UseTfidf`, then last `UseExisting`.
+    fn prev_before_unchecked(
+        &mut self,
+        cursor: usize,
+        has_distinct_generated: bool,
+        has_distinct_custom: bool,
+    ) -> RowState {
+        if has_distinct_custom {
+            return make_use_custom(&self.rows[cursor]);
+        }
+        if has_distinct_generated {
+            return RowState::UseGenerated;
+        }
+        self.prev_before_generated(cursor)
+    }
+
+    /// Compute the previous state before `UseGenerated`: try `UseTfidf`, then
+    /// last `UseExisting`, then `Unchecked`.
+    fn prev_before_generated(&mut self, cursor: usize) -> RowState {
+        if let Some(tfidf_state) = self.try_make_tfidf(cursor, 0) {
+            return RowState::UseTfidf(tfidf_state);
+        }
+        let row = &self.rows[cursor];
+        if row.existing_bookmarks.is_empty() {
+            RowState::Unchecked
+        } else {
+            RowState::UseExisting(row.existing_bookmarks.len() - 1)
+        }
+    }
+
     /// Compute the next state after exhausting existing bookmarks (or from
     /// Unchecked with no existing bookmarks): try `UseTfidf`, then
     /// `UseGenerated`, then `UseCustom`, then `Unchecked`.
@@ -389,6 +485,40 @@ impl BookmarkAssignmentState {
             }
             RowState::UseCustom(_) => {
                 // Invalidate cached custom name and set to Loading.
+                self.rows[cursor].custom_name = None;
+                self.rows[cursor].state = RowState::UseCustom(CustomNameState::Loading);
+                RegenerateResult::NeedsRefire
+            }
+            _ => RegenerateResult::Noop,
+        }
+    }
+
+    /// Regenerate the current row's name backward (cycle TF-IDF variation in
+    /// reverse or invalidate custom name cache).
+    pub fn regenerate_current_reverse(&mut self) -> RegenerateResult {
+        let cursor = self.cursor;
+        let Some(row) = self.rows.get(cursor) else {
+            return RegenerateResult::Noop;
+        };
+        if row.is_trunk {
+            return RegenerateResult::Noop;
+        }
+
+        match &row.state {
+            RowState::UseTfidf(ts) => {
+                let old_variation = ts.variation;
+                // Try up to 6 variations in reverse.
+                for delta in 1..=6 {
+                    let new_variation = (old_variation + 6 - delta) % 6;
+                    if let Some(tfidf_state) = self.try_make_tfidf(cursor, new_variation) {
+                        self.rows[cursor].state = RowState::UseTfidf(tfidf_state);
+                        return RegenerateResult::TfidfCycled;
+                    }
+                }
+                RegenerateResult::TfidfNoVariation
+            }
+            RowState::UseCustom(_) => {
+                // Same as forward — invalidate and re-fire.
                 self.rows[cursor].custom_name = None;
                 self.rows[cursor].state = RowState::UseCustom(CustomNameState::Loading);
                 RegenerateResult::NeedsRefire
@@ -695,9 +825,9 @@ pub fn bookmark_help_line(has_bookmark_command: bool) -> Line<'static> {
     Line::from(vec![
         Span::styled(" \u{2191}\u{2193}/jk", key_style),
         Span::raw(" navigate  "),
-        Span::styled("Space", key_style),
+        Span::styled("Space/b", key_style),
         Span::raw(cycle),
-        Span::styled("r", key_style),
+        Span::styled("r/R", key_style),
         Span::raw(" regenerate  "),
         Span::styled("Enter", key_style),
         Span::raw(" confirm  "),
@@ -805,6 +935,161 @@ mod tests {
 
         state.toggle_current();
         assert_eq!(state.rows[1].state, RowState::UseExisting(0));
+    }
+
+    #[test]
+    fn reverse_toggle_checks_and_unchecks() {
+        let nodes = [
+            make_node("", "trunk", &[], true, false),
+            make_node("ch_a", "work", &["feat"], false, true),
+        ];
+        let refs: Vec<&LayoutNode> = nodes.iter().collect();
+        let mut state = BookmarkAssignmentState::from_path(&refs, false, None);
+
+        // Starts UseExisting(0).
+        assert_eq!(state.rows[1].state, RowState::UseExisting(0));
+
+        // Reverse: UseExisting(0) → Unchecked.
+        state.toggle_current_reverse();
+        assert_eq!(state.rows[1].state, RowState::Unchecked);
+
+        // Reverse: Unchecked → UseGenerated (no custom cmd).
+        // "work" produces a TF-IDF name, and generated is distinct, so:
+        // Unchecked → UseGenerated.
+        state.toggle_current_reverse();
+        assert_eq!(state.rows[1].state, RowState::UseGenerated);
+
+        // Reverse: UseGenerated → UseTfidf.
+        state.toggle_current_reverse();
+        assert!(
+            matches!(&state.rows[1].state, RowState::UseTfidf(_)),
+            "expected UseTfidf, got {:?}",
+            state.rows[1].state
+        );
+
+        // Reverse: UseTfidf → UseExisting(0) (last existing, which is idx 0).
+        state.toggle_current_reverse();
+        assert_eq!(state.rows[1].state, RowState::UseExisting(0));
+    }
+
+    #[test]
+    fn reverse_toggle_multiple_existing() {
+        let nodes = [
+            make_node("", "trunk", &[], true, false),
+            make_node(
+                "ch_a",
+                "work",
+                &["feature", "wip", "experiment"],
+                false,
+                true,
+            ),
+        ];
+        let refs: Vec<&LayoutNode> = nodes.iter().collect();
+        let mut state = BookmarkAssignmentState::from_path(&refs, false, None);
+
+        // Forward to Unchecked first.
+        // UseExisting(0) → UseExisting(1) → UseExisting(2) → UseTfidf →
+        // UseGenerated → Unchecked.
+        state.toggle_current();
+        state.toggle_current();
+        state.toggle_current();
+        state.toggle_current();
+        state.toggle_current();
+        assert_eq!(state.rows[1].state, RowState::Unchecked);
+
+        // Reverse from Unchecked: → UseGenerated (no custom cmd).
+        state.toggle_current_reverse();
+        assert_eq!(state.rows[1].state, RowState::UseGenerated);
+
+        // → UseTfidf
+        state.toggle_current_reverse();
+        assert!(matches!(&state.rows[1].state, RowState::UseTfidf(_)));
+
+        // → UseExisting(2) (last existing)
+        state.toggle_current_reverse();
+        assert_eq!(state.rows[1].state, RowState::UseExisting(2));
+
+        // → UseExisting(1)
+        state.toggle_current_reverse();
+        assert_eq!(state.rows[1].state, RowState::UseExisting(1));
+
+        // → UseExisting(0)
+        state.toggle_current_reverse();
+        assert_eq!(state.rows[1].state, RowState::UseExisting(0));
+
+        // → Unchecked
+        state.toggle_current_reverse();
+        assert_eq!(state.rows[1].state, RowState::Unchecked);
+    }
+
+    #[test]
+    fn reverse_toggle_no_existing() {
+        let nodes = [
+            make_node("", "trunk", &[], true, false),
+            make_node("ch_x", "feature", &[], false, true),
+        ];
+        let refs: Vec<&LayoutNode> = nodes.iter().collect();
+        let mut state = BookmarkAssignmentState::from_path(&refs, false, None);
+
+        assert_eq!(state.rows[1].state, RowState::Unchecked);
+
+        // Reverse: Unchecked → UseGenerated.
+        state.toggle_current_reverse();
+        assert_eq!(state.rows[1].state, RowState::UseGenerated);
+
+        // Reverse: UseGenerated → UseTfidf.
+        state.toggle_current_reverse();
+        assert!(matches!(&state.rows[1].state, RowState::UseTfidf(_)));
+
+        // Reverse: UseTfidf → Unchecked (no existing bookmarks).
+        state.toggle_current_reverse();
+        assert_eq!(state.rows[1].state, RowState::Unchecked);
+    }
+
+    #[test]
+    fn reverse_toggle_tfidf_skipped_when_all_stop_words() {
+        let nodes = [
+            make_node("", "trunk", &[], true, false),
+            make_node("ch_x", "add update remove", &[], false, true),
+        ];
+        let refs: Vec<&LayoutNode> = nodes.iter().collect();
+        let mut state = BookmarkAssignmentState::from_path(&refs, false, None);
+
+        assert_eq!(state.rows[1].state, RowState::Unchecked);
+
+        // Reverse: Unchecked → UseGenerated (TF-IDF skipped).
+        state.toggle_current_reverse();
+        assert_eq!(state.rows[1].state, RowState::UseGenerated);
+
+        // Reverse: UseGenerated → Unchecked (TF-IDF skipped, no existing).
+        state.toggle_current_reverse();
+        assert_eq!(state.rows[1].state, RowState::Unchecked);
+    }
+
+    #[test]
+    fn reverse_toggle_trunk_is_noop() {
+        let nodes = [make_node("", "trunk", &[], true, false)];
+        let refs: Vec<&LayoutNode> = nodes.iter().collect();
+        let mut state = BookmarkAssignmentState::from_path(&refs, false, None);
+        state.cursor = 0;
+        let state_before = state.rows[0].state.clone();
+        state.toggle_current_reverse();
+        assert_eq!(state.rows[0].state, state_before);
+    }
+
+    #[test]
+    fn forward_then_reverse_is_identity() {
+        let nodes = [
+            make_node("", "trunk", &[], true, false),
+            make_node("ch_a", "work", &["feat"], false, true),
+        ];
+        let refs: Vec<&LayoutNode> = nodes.iter().collect();
+        let mut state = BookmarkAssignmentState::from_path(&refs, false, None);
+
+        let initial = state.rows[1].state.clone();
+        state.toggle_current();
+        state.toggle_current_reverse();
+        assert_eq!(state.rows[1].state, initial);
     }
 
     #[test]

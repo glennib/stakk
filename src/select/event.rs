@@ -18,10 +18,14 @@ pub enum Action {
     Right,
     /// Confirm current selection / enter.
     Select,
-    /// Toggle checkbox (bookmark assignment screen).
+    /// Toggle checkbox forward (bookmark assignment screen).
     Toggle,
-    /// Regenerate name (TF-IDF variation or re-fire custom command).
+    /// Toggle checkbox backward (bookmark assignment screen).
+    ReverseToggle,
+    /// Regenerate name forward (TF-IDF variation or re-fire custom command).
     Regenerate,
+    /// Regenerate name backward (TF-IDF variation in reverse).
+    ReverseRegenerate,
     /// Cancel / go back.
     Cancel,
     /// Quit immediately (Ctrl-C).
@@ -53,7 +57,9 @@ fn map_key(code: KeyCode, modifiers: KeyModifiers) -> Action {
         KeyCode::Right | KeyCode::Char('l') => Action::Right,
         KeyCode::Enter => Action::Select,
         KeyCode::Char(' ') => Action::Toggle,
+        KeyCode::Char('b') => Action::ReverseToggle,
         KeyCode::Char('r') => Action::Regenerate,
+        KeyCode::Char('R') => Action::ReverseRegenerate,
         KeyCode::Esc | KeyCode::Char('q') => Action::Cancel,
         _ => Action::None,
     }
@@ -118,6 +124,22 @@ mod tests {
         assert_eq!(
             map_event(&key_event(KeyCode::Char('r'))),
             Action::Regenerate
+        );
+    }
+
+    #[test]
+    fn uppercase_r_is_reverse_regenerate() {
+        assert_eq!(
+            map_event(&key_event(KeyCode::Char('R'))),
+            Action::ReverseRegenerate
+        );
+    }
+
+    #[test]
+    fn b_is_reverse_toggle() {
+        assert_eq!(
+            map_event(&key_event(KeyCode::Char('b'))),
+            Action::ReverseToggle
         );
     }
 
