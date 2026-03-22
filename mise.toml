@@ -33,6 +33,10 @@ run = "cargo nextest run --all-targets --no-tests=pass"
 description = "Build release binary"
 run = "cargo build --release"
 
+[tasks."build:debug"]
+description = "Check that the project compiles"
+run = "cargo build"
+
 [tasks.ci]
 description = "Run all CI checks"
-depends = ["fmt:check", "clippy", "test", "build"]
+depends = ["fmt:check", "clippy", "test", "build:debug"]
