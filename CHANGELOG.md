@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.10.4](https://github.com/glennib/stakk/compare/v1.10.3...v1.10.4) - 2026-03-22
+
+### Other
+
+- upgrade windows-sys
+- cargo update incompatible
+- cargo update
+- pin mise tools
+- upgrade dist
+- *(deps)* update actions/checkout action to v6
+- ignore auto-generated release workflow in renovate config
+
 ## [1.10.3](https://github.com/glennib/stakk/compare/v1.10.2...v1.10.3) - 2026-03-22
 
 ### Other
