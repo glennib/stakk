@@ -437,7 +437,8 @@ impl BookmarkAssignmentState {
     /// Compute the previous state before `UserInput`: try `UseTfidf`, then
     /// last `UseExisting`, then `Unchecked`.
     fn prev_before_user_input(&mut self, cursor: usize) -> RowState {
-        if let Some(tfidf_state) = self.try_make_tfidf(cursor, 0) {
+        let cached_variation = self.rows[cursor].tfidf_name.as_ref().map_or(0, |(_, v)| *v);
+        if let Some(tfidf_state) = self.try_make_tfidf(cursor, cached_variation) {
             return RowState::UseTfidf(tfidf_state);
         }
         let row = &self.rows[cursor];
@@ -452,7 +453,8 @@ impl BookmarkAssignmentState {
     /// Unchecked with no existing bookmarks): try `UseTfidf`, then
     /// `UseGenerated`, then `UseCustom`, then `Unchecked`.
     fn next_after_existing(&mut self, cursor: usize) -> RowState {
-        if let Some(tfidf_state) = self.try_make_tfidf(cursor, 0) {
+        let cached_variation = self.rows[cursor].tfidf_name.as_ref().map_or(0, |(_, v)| *v);
+        if let Some(tfidf_state) = self.try_make_tfidf(cursor, cached_variation) {
             return RowState::UseTfidf(tfidf_state);
         }
         self.next_after_tfidf(cursor)
