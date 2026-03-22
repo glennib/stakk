@@ -417,7 +417,9 @@ pub async fn execute_submission_plan<R: JjRunner, F: Forge>(
 
     let mut stack_entries = Vec::new();
 
-    // Step 1: Push all bookmarks.
+    // Process each bookmark trunk-to-leaf: push, update base, create PR.
+    // Each bookmark must be fully processed before the next is pushed to
+    // prevent transient empty diffs that trigger GitHub auto-close (#35).
     for bp in &plan.bookmark_plans {
         if bp.needs_push {
             pb.set_message(format!("Pushing bookmark: {}", bp.bookmark_name));
@@ -428,35 +430,20 @@ pub async fn execute_submission_plan<R: JjRunner, F: Forge>(
                     source,
                 })?;
         }
-    }
 
-    // Step 2a: Concurrently update bases for existing PRs that need it.
-    pb.set_message("Updating PR bases...");
-    let base_update_futures: Vec<_> = plan
-        .bookmark_plans
-        .iter()
-        .filter(|bp| bp.needs_base_update)
-        .filter_map(|bp| {
-            bp.existing_pr
-                .as_ref()
-                .map(|pr| (bp.bookmark_name.clone(), pr.number, bp.base.clone()))
-        })
-        .map(|(name, number, base)| async move {
-            forge.update_pr_base(number, &base).await.map_err(|source| {
-                SubmitError::BaseUpdateFailed {
-                    bookmark: name,
+        if bp.needs_base_update
+            && let Some(pr) = &bp.existing_pr
+        {
+            pb.set_message(format!("Updating PR #{} base...", pr.number));
+            forge
+                .update_pr_base(pr.number, &bp.base)
+                .await
+                .map_err(|source| SubmitError::BaseUpdateFailed {
+                    bookmark: bp.bookmark_name.clone(),
                     source,
-                }
-            })
-        })
-        .collect();
-    let base_results = futures::future::join_all(base_update_futures).await;
-    for result in base_results {
-        result?;
-    }
+                })?;
+        }
 
-    // Step 2b: Create new PRs sequentially (base branch must exist first).
-    for bp in &plan.bookmark_plans {
         let pr = if let Some(existing) = &bp.existing_pr {
             pb.println(format!(
                 "  Existing PR #{}: {}",
@@ -712,6 +699,17 @@ mod tests {
     use crate::graph::types::SegmentCommit;
     use crate::jj::JjError;
 
+    // -- Shared operation log for ordering tests --
+
+    type OpLog = Arc<Mutex<Vec<Op>>>;
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    enum Op {
+        Push(String),
+        BaseUpdate(u64),
+        CreatePr(String),
+    }
+
     // -- Test helpers --
 
     fn test_comment_env() -> minijinja::Environment<'static> {
@@ -790,6 +788,7 @@ mod tests {
         deleted_comments: Mutex<Vec<u64>>,
         existing_comments: HashMap<u64, Vec<Comment>>,
         next_pr_number: Mutex<u64>,
+        ops: Option<OpLog>,
     }
 
     impl MockForge {
@@ -804,7 +803,13 @@ mod tests {
                 deleted_comments: Mutex::new(Vec::new()),
                 existing_comments: HashMap::new(),
                 next_pr_number: Mutex::new(100),
+                ops: None,
             }
+        }
+
+        fn with_ops(mut self, ops: OpLog) -> Self {
+            self.ops = Some(ops);
+            self
         }
 
         fn with_existing_pr(mut self, head: &str, pr: PullRequest) -> Self {
@@ -848,6 +853,9 @@ mod tests {
                 state: PrState::Open,
                 body: params.body.clone(),
             };
+            if let Some(ops) = &self.ops {
+                ops.lock().unwrap().push(Op::CreatePr(params.head.clone()));
+            }
             self.created_prs.lock().unwrap().push(params);
             async move { Ok(pr) }
         }
@@ -857,6 +865,9 @@ mod tests {
             pr_number: u64,
             new_base: &str,
         ) -> impl std::future::Future<Output = Result<(), ForgeError>> + Send {
+            if let Some(ops) = &self.ops {
+                ops.lock().unwrap().push(Op::BaseUpdate(pr_number));
+            }
             self.updated_bases
                 .lock()
                 .unwrap()
@@ -931,6 +942,7 @@ mod tests {
 
     struct MockJjRunner {
         push_calls: PushLog,
+        ops: Option<OpLog>,
     }
 
     impl MockJjRunner {
@@ -939,6 +951,18 @@ mod tests {
             (
                 Self {
                     push_calls: Arc::clone(&calls),
+                    ops: None,
+                },
+                calls,
+            )
+        }
+
+        fn new_with_ops(ops: OpLog) -> (Self, PushLog) {
+            let calls: PushLog = Arc::new(Mutex::new(Vec::new()));
+            (
+                Self {
+                    push_calls: Arc::clone(&calls),
+                    ops: Some(ops),
                 },
                 calls,
             )
@@ -962,6 +986,9 @@ mod tests {
                     .position(|a| *a == "--remote")
                     .map(|i| args[i + 1].to_string())
                     .unwrap_or_default();
+                if let Some(ops) = &self.ops {
+                    ops.lock().unwrap().push(Op::Push(bookmark.clone()));
+                }
                 self.push_calls.lock().unwrap().push((bookmark, remote));
             }
             async { Ok(String::new()) }
@@ -2091,5 +2118,196 @@ mod tests {
         // No new comments should be created.
         let created = forge.created_comments.lock().unwrap();
         assert_eq!(created.len(), 0);
+    }
+
+    // -----------------------------------------------------------------------
+    // Interleaved push+update ordering tests (issue #35)
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn execute_interleaves_push_and_base_update() {
+        // Two existing PRs both needing push + base update (simulates a swap).
+        let ops: OpLog = Arc::new(Mutex::new(Vec::new()));
+
+        let plan = SubmissionPlan {
+            bookmark_plans: vec![
+                BookmarkPlan {
+                    bookmark_name: "feat-a".to_string(),
+                    base: "main".to_string(),
+                    title: "feature a".to_string(),
+                    body: None,
+                    existing_pr: Some(make_pr(10, "feat-a", "feat-b")),
+                    needs_push: true,
+                    needs_create: false,
+                    needs_base_update: true,
+                },
+                BookmarkPlan {
+                    bookmark_name: "feat-b".to_string(),
+                    base: "feat-a".to_string(),
+                    title: "feature b".to_string(),
+                    body: None,
+                    existing_pr: Some(make_pr(11, "feat-b", "main")),
+                    needs_push: true,
+                    needs_create: false,
+                    needs_base_update: true,
+                },
+            ],
+            remote: "origin".to_string(),
+            pr_mode: PrMode::Draft,
+            default_branch: "main".to_string(),
+        };
+
+        let (runner, _push_calls) = MockJjRunner::new_with_ops(Arc::clone(&ops));
+        let jj = Jj::new(runner);
+        let forge = MockForge::new()
+            .with_existing_pr("feat-a", make_pr(10, "feat-a", "feat-b"))
+            .with_existing_pr("feat-b", make_pr(11, "feat-b", "main"))
+            .with_ops(Arc::clone(&ops));
+        let env = test_comment_env();
+
+        execute_submission_plan(&plan, &jj, &forge, &env, StackPlacement::Comment)
+            .await
+            .unwrap();
+
+        let ops = ops.lock().unwrap();
+        assert_eq!(
+            *ops,
+            vec![
+                Op::Push("feat-a".to_string()),
+                Op::BaseUpdate(10),
+                Op::Push("feat-b".to_string()),
+                Op::BaseUpdate(11),
+            ],
+            "each bookmark must be pushed and have its base updated before the next bookmark is \
+             pushed (prevents transient empty diffs)"
+        );
+    }
+
+    #[tokio::test]
+    async fn execute_interleaves_three_bookmark_reorder() {
+        // Three existing PRs all needing push + base update.
+        let ops: OpLog = Arc::new(Mutex::new(Vec::new()));
+
+        let plan = SubmissionPlan {
+            bookmark_plans: vec![
+                BookmarkPlan {
+                    bookmark_name: "feat-a".to_string(),
+                    base: "main".to_string(),
+                    title: "feature a".to_string(),
+                    body: None,
+                    existing_pr: Some(make_pr(10, "feat-a", "feat-c")),
+                    needs_push: true,
+                    needs_create: false,
+                    needs_base_update: true,
+                },
+                BookmarkPlan {
+                    bookmark_name: "feat-b".to_string(),
+                    base: "feat-a".to_string(),
+                    title: "feature b".to_string(),
+                    body: None,
+                    existing_pr: Some(make_pr(11, "feat-b", "main")),
+                    needs_push: true,
+                    needs_create: false,
+                    needs_base_update: true,
+                },
+                BookmarkPlan {
+                    bookmark_name: "feat-c".to_string(),
+                    base: "feat-b".to_string(),
+                    title: "feature c".to_string(),
+                    body: None,
+                    existing_pr: Some(make_pr(12, "feat-c", "feat-a")),
+                    needs_push: true,
+                    needs_create: false,
+                    needs_base_update: true,
+                },
+            ],
+            remote: "origin".to_string(),
+            pr_mode: PrMode::Draft,
+            default_branch: "main".to_string(),
+        };
+
+        let (runner, _push_calls) = MockJjRunner::new_with_ops(Arc::clone(&ops));
+        let jj = Jj::new(runner);
+        let forge = MockForge::new()
+            .with_existing_pr("feat-a", make_pr(10, "feat-a", "feat-c"))
+            .with_existing_pr("feat-b", make_pr(11, "feat-b", "main"))
+            .with_existing_pr("feat-c", make_pr(12, "feat-c", "feat-a"))
+            .with_ops(Arc::clone(&ops));
+        let env = test_comment_env();
+
+        execute_submission_plan(&plan, &jj, &forge, &env, StackPlacement::Comment)
+            .await
+            .unwrap();
+
+        let ops = ops.lock().unwrap();
+        assert_eq!(
+            *ops,
+            vec![
+                Op::Push("feat-a".to_string()),
+                Op::BaseUpdate(10),
+                Op::Push("feat-b".to_string()),
+                Op::BaseUpdate(11),
+                Op::Push("feat-c".to_string()),
+                Op::BaseUpdate(12),
+            ],
+            "strict interleaving: push(i), update(i), push(i+1), update(i+1), ..."
+        );
+    }
+
+    #[tokio::test]
+    async fn execute_interleaves_push_update_and_create() {
+        // First bookmark has existing PR needing base update, second is new.
+        let ops: OpLog = Arc::new(Mutex::new(Vec::new()));
+
+        let plan = SubmissionPlan {
+            bookmark_plans: vec![
+                BookmarkPlan {
+                    bookmark_name: "feat-a".to_string(),
+                    base: "main".to_string(),
+                    title: "feature a".to_string(),
+                    body: None,
+                    existing_pr: Some(make_pr(10, "feat-a", "feat-b")),
+                    needs_push: true,
+                    needs_create: false,
+                    needs_base_update: true,
+                },
+                BookmarkPlan {
+                    bookmark_name: "feat-b".to_string(),
+                    base: "feat-a".to_string(),
+                    title: "feature b".to_string(),
+                    body: None,
+                    existing_pr: None,
+                    needs_push: true,
+                    needs_create: true,
+                    needs_base_update: false,
+                },
+            ],
+            remote: "origin".to_string(),
+            pr_mode: PrMode::Draft,
+            default_branch: "main".to_string(),
+        };
+
+        let (runner, _push_calls) = MockJjRunner::new_with_ops(Arc::clone(&ops));
+        let jj = Jj::new(runner);
+        let forge = MockForge::new()
+            .with_existing_pr("feat-a", make_pr(10, "feat-a", "feat-b"))
+            .with_ops(Arc::clone(&ops));
+        let env = test_comment_env();
+
+        execute_submission_plan(&plan, &jj, &forge, &env, StackPlacement::Comment)
+            .await
+            .unwrap();
+
+        let ops = ops.lock().unwrap();
+        assert_eq!(
+            *ops,
+            vec![
+                Op::Push("feat-a".to_string()),
+                Op::BaseUpdate(10),
+                Op::Push("feat-b".to_string()),
+                Op::CreatePr("feat-b".to_string()),
+            ],
+            "base update for feat-a must complete before feat-b is pushed"
+        );
     }
 }
