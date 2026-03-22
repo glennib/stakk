@@ -945,7 +945,11 @@ impl Widget for BookmarkWidget<'_> {
 }
 
 /// Build a help line for the bottom of the bookmark view.
-pub fn bookmark_help_line(has_bookmark_command: bool, editing: bool) -> Line<'static> {
+pub fn bookmark_help_line(
+    has_bookmark_command: bool,
+    editing: bool,
+    current_row_state: Option<&RowState>,
+) -> Line<'static> {
     let key_style = Style::default()
         .fg(Color::Yellow)
         .add_modifier(Modifier::BOLD);
@@ -966,20 +970,32 @@ pub fn bookmark_help_line(has_bookmark_command: bool, editing: bool) -> Line<'st
     } else {
         " [x]use \u{2192} [~]auto \u{2192} [>]type \u{2192} [+]new \u{2192} [ ]skip  "
     };
-    Line::from(vec![
+    let mut spans = vec![
         Span::styled(" \u{2191}\u{2193}/jk", key_style),
         Span::raw(" navigate  "),
         Span::styled("Space/b", key_style),
         Span::raw(cycle),
-        Span::styled("i", key_style),
-        Span::raw(" edit  "),
-        Span::styled("r/R", key_style),
-        Span::raw(" regenerate  "),
-        Span::styled("Enter", key_style),
-        Span::raw(" confirm  "),
-        Span::styled("Esc", key_style),
-        Span::raw(" back"),
-    ])
+    ];
+    if matches!(current_row_state, Some(RowState::UserInput(_))) {
+        spans.push(Span::styled("i", key_style));
+        spans.push(Span::raw(" edit  "));
+    }
+    match current_row_state {
+        Some(RowState::UseTfidf(_)) => {
+            spans.push(Span::styled("r/R", key_style));
+            spans.push(Span::raw(" vary  "));
+        }
+        Some(RowState::UseCustom(_)) => {
+            spans.push(Span::styled("r/R", key_style));
+            spans.push(Span::raw(" regenerate  "));
+        }
+        _ => {}
+    }
+    spans.push(Span::styled("Enter", key_style));
+    spans.push(Span::raw(" confirm  "));
+    spans.push(Span::styled("Esc/q", key_style));
+    spans.push(Span::raw(" back"));
+    Line::from(spans)
 }
 
 #[cfg(test)]

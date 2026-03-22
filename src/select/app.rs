@@ -721,7 +721,11 @@ fn render_bookmark_screen(
     widget.render(content_area, frame.buffer_mut());
 
     frame.render_widget(
-        bookmark_help_line(bookmark_command.is_some(), editing),
+        bookmark_help_line(
+            bookmark_command.is_some(),
+            editing,
+            state.rows.get(state.cursor).map(|r| &r.state),
+        ),
         help_area,
     );
 }
