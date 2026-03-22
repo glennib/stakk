@@ -30,8 +30,23 @@ pub enum Action {
     Cancel,
     /// Quit immediately (Ctrl-C).
     Quit,
+    /// Enter edit mode on a UserInput row.
+    EnterEdit,
     /// No action for this event.
     None,
+}
+
+/// Actions specific to edit mode (user typing a bookmark name).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EditAction {
+    /// Insert a character.
+    InsertChar(char),
+    /// Delete the last character.
+    Backspace,
+    /// Exit edit mode (Esc or Enter).
+    ExitEdit,
+    /// Quit immediately (Ctrl+C).
+    Quit,
 }
 
 /// Map a crossterm event to an app action.
@@ -58,10 +73,34 @@ fn map_key(code: KeyCode, modifiers: KeyModifiers) -> Action {
         KeyCode::Enter => Action::Select,
         KeyCode::Char(' ') => Action::Toggle,
         KeyCode::Char('b') => Action::ReverseToggle,
+        KeyCode::Char('i') => Action::EnterEdit,
         KeyCode::Char('r') => Action::Regenerate,
         KeyCode::Char('R') => Action::ReverseRegenerate,
         KeyCode::Esc | KeyCode::Char('q') => Action::Cancel,
         _ => Action::None,
+    }
+}
+
+/// Map a crossterm event to an edit-mode action.
+pub fn map_event_editing(event: &Event) -> Option<EditAction> {
+    match event {
+        Event::Key(KeyEvent {
+            code, modifiers, ..
+        }) => map_key_editing(*code, *modifiers),
+        _ => None,
+    }
+}
+
+fn map_key_editing(code: KeyCode, modifiers: KeyModifiers) -> Option<EditAction> {
+    if modifiers.contains(KeyModifiers::CONTROL) && code == KeyCode::Char('c') {
+        return Some(EditAction::Quit);
+    }
+
+    match code {
+        KeyCode::Esc | KeyCode::Enter => Some(EditAction::ExitEdit),
+        KeyCode::Backspace => Some(EditAction::Backspace),
+        KeyCode::Char(c) => Some(EditAction::InsertChar(c)),
+        _ => None,
     }
 }
 
@@ -144,7 +183,52 @@ mod tests {
     }
 
     #[test]
+    fn i_is_enter_edit() {
+        assert_eq!(map_event(&key_event(KeyCode::Char('i'))), Action::EnterEdit);
+    }
+
+    #[test]
     fn unknown_key_is_none() {
         assert_eq!(map_event(&key_event(KeyCode::Char('x'))), Action::None);
+    }
+
+    #[test]
+    fn edit_mode_char_insert() {
+        assert_eq!(
+            map_event_editing(&key_event(KeyCode::Char('a'))),
+            Some(EditAction::InsertChar('a'))
+        );
+    }
+
+    #[test]
+    fn edit_mode_backspace() {
+        assert_eq!(
+            map_event_editing(&key_event(KeyCode::Backspace)),
+            Some(EditAction::Backspace)
+        );
+    }
+
+    #[test]
+    fn edit_mode_esc_exits() {
+        assert_eq!(
+            map_event_editing(&key_event(KeyCode::Esc)),
+            Some(EditAction::ExitEdit)
+        );
+    }
+
+    #[test]
+    fn edit_mode_enter_exits() {
+        assert_eq!(
+            map_event_editing(&key_event(KeyCode::Enter)),
+            Some(EditAction::ExitEdit)
+        );
+    }
+
+    #[test]
+    fn edit_mode_ctrl_c_quits() {
+        assert_eq!(
+            map_event_editing(&key_event_ctrl(KeyCode::Char('c'))),
+            Some(EditAction::Quit)
+        );
     }
 }

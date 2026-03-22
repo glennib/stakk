@@ -20,6 +20,15 @@ use super::graph_layout::LayoutNode;
 use super::tfidf;
 use crate::jj::types::Signature;
 
+/// Whether the user-input row is in normal mode or edit (typing) mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InputMode {
+    /// Not typing — normal key dispatch.
+    Normal,
+    /// Actively typing into the bookmark name field.
+    Editing,
+}
+
 /// Whether a custom bookmark name is still loading or has been resolved.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CustomNameState {
@@ -50,6 +59,8 @@ pub enum RowState {
     UseTfidf(TfidfNameState),
     /// Included in submission; a custom name from the bookmark command.
     UseCustom(CustomNameState),
+    /// Included in submission; a user-typed bookmark name.
+    UserInput(String),
     /// Excluded from submission.
     Unchecked,
 }
@@ -77,6 +88,8 @@ pub struct BookmarkRow {
     pub custom_name: Option<String>,
     /// TF-IDF name and its variation index (computed on demand).
     pub tfidf_name: Option<(String, usize)>,
+    /// Cached user-typed bookmark name (preserved across state cycles).
+    pub user_input_name: Option<String>,
     /// Whether this is the trunk row (not toggleable).
     pub is_trunk: bool,
     /// Author signature.
@@ -99,7 +112,10 @@ impl BookmarkRow {
             RowState::UseGenerated => self.generated_name.as_deref(),
             RowState::UseTfidf(ts) => Some(ts.name.as_str()),
             RowState::UseCustom(CustomNameState::Ready(name)) => Some(name.as_str()),
-            RowState::UseCustom(CustomNameState::Loading) | RowState::Unchecked => None,
+            RowState::UserInput(s) if !s.is_empty() => Some(s.as_str()),
+            RowState::UserInput(_)
+            | RowState::UseCustom(CustomNameState::Loading)
+            | RowState::Unchecked => None,
         }
     }
 }
@@ -111,6 +127,8 @@ pub enum SelectionError {
     DuplicateName(String),
     /// A custom name is still being computed.
     StillLoading,
+    /// A user-typed bookmark name failed validation.
+    InvalidName(String),
 }
 
 /// Result of a [`BookmarkAssignmentState::regenerate_current`] call.
@@ -177,6 +195,8 @@ pub struct BookmarkAssignmentState {
     pub cursor: usize,
     /// Optional prefix for auto-generated (TF-IDF) bookmark names.
     auto_prefix: Option<String>,
+    /// Whether the user is currently typing into a `UserInput` row.
+    pub input_mode: InputMode,
 }
 
 impl BookmarkAssignmentState {
@@ -212,6 +232,7 @@ impl BookmarkAssignmentState {
                     generated_name,
                     custom_name: None,
                     tfidf_name: None,
+                    user_input_name: None,
                     is_trunk: node.is_trunk,
                     author: node.author.clone(),
                     files: node.files.clone(),
@@ -227,6 +248,7 @@ impl BookmarkAssignmentState {
             rows,
             cursor,
             auto_prefix: auto_prefix.map(String::from),
+            input_mode: InputMode::Normal,
         }
     }
 
@@ -280,11 +302,14 @@ impl BookmarkAssignmentState {
                 if next_idx < row.existing_bookmarks.len() {
                     RowState::UseExisting(next_idx)
                 } else {
-                    self.next_after_existing(cursor, has_distinct_generated, has_distinct_custom)
+                    self.next_after_existing(cursor)
                 }
             }
-            RowState::UseTfidf(_) => {
-                self.next_after_tfidf(cursor, has_distinct_generated, has_distinct_custom)
+            RowState::UseTfidf(_) => self.next_after_tfidf(cursor),
+            RowState::UserInput(text) => {
+                // Cache typed text before leaving.
+                self.rows[cursor].user_input_name = Some(text.clone());
+                self.next_after_user_input(cursor, has_distinct_generated, has_distinct_custom)
             }
             RowState::UseGenerated => {
                 if has_distinct_custom {
@@ -296,7 +321,7 @@ impl BookmarkAssignmentState {
             RowState::UseCustom(_) => RowState::Unchecked,
             RowState::Unchecked => {
                 if row.existing_bookmarks.is_empty() {
-                    self.next_after_existing(cursor, has_distinct_generated, has_distinct_custom)
+                    self.next_after_existing(cursor)
                 } else {
                     RowState::UseExisting(0)
                 }
@@ -356,6 +381,11 @@ impl BookmarkAssignmentState {
                 }
             }
             RowState::UseGenerated => self.prev_before_generated(cursor),
+            RowState::UserInput(text) => {
+                // Cache typed text before leaving.
+                self.rows[cursor].user_input_name = Some(text.clone());
+                self.prev_before_user_input(cursor)
+            }
             RowState::UseTfidf(_) => {
                 if row.existing_bookmarks.is_empty() {
                     RowState::Unchecked
@@ -377,7 +407,8 @@ impl BookmarkAssignmentState {
     }
 
     /// Compute the previous state before `Unchecked`: try `UseCustom`, then
-    /// `UseGenerated`, then `UseTfidf`, then last `UseExisting`.
+    /// `UseGenerated`, then `UserInput`, then `UseTfidf`, then last
+    /// `UseExisting`.
     fn prev_before_unchecked(
         &mut self,
         cursor: usize,
@@ -393,9 +424,19 @@ impl BookmarkAssignmentState {
         self.prev_before_generated(cursor)
     }
 
-    /// Compute the previous state before `UseGenerated`: try `UseTfidf`, then
-    /// last `UseExisting`, then `Unchecked`.
+    /// Compute the previous state before `UseGenerated`: always `UserInput`.
     fn prev_before_generated(&mut self, cursor: usize) -> RowState {
+        RowState::UserInput(
+            self.rows[cursor]
+                .user_input_name
+                .clone()
+                .unwrap_or_default(),
+        )
+    }
+
+    /// Compute the previous state before `UserInput`: try `UseTfidf`, then
+    /// last `UseExisting`, then `Unchecked`.
+    fn prev_before_user_input(&mut self, cursor: usize) -> RowState {
         if let Some(tfidf_state) = self.try_make_tfidf(cursor, 0) {
             return RowState::UseTfidf(tfidf_state);
         }
@@ -410,22 +451,27 @@ impl BookmarkAssignmentState {
     /// Compute the next state after exhausting existing bookmarks (or from
     /// Unchecked with no existing bookmarks): try `UseTfidf`, then
     /// `UseGenerated`, then `UseCustom`, then `Unchecked`.
-    fn next_after_existing(
-        &mut self,
-        cursor: usize,
-        has_distinct_generated: bool,
-        has_distinct_custom: bool,
-    ) -> RowState {
+    fn next_after_existing(&mut self, cursor: usize) -> RowState {
         if let Some(tfidf_state) = self.try_make_tfidf(cursor, 0) {
             return RowState::UseTfidf(tfidf_state);
         }
-        self.next_after_tfidf(cursor, has_distinct_generated, has_distinct_custom)
+        self.next_after_tfidf(cursor)
     }
 
-    /// Compute the next state after `UseTfidf`: try `UseGenerated`, then
+    /// Compute the next state after `UseTfidf`: always `UserInput`.
+    fn next_after_tfidf(&mut self, cursor: usize) -> RowState {
+        RowState::UserInput(
+            self.rows[cursor]
+                .user_input_name
+                .clone()
+                .unwrap_or_default(),
+        )
+    }
+
+    /// Compute the next state after `UserInput`: try `UseGenerated`, then
     /// `UseCustom`, then `Unchecked`.
-    fn next_after_tfidf(
-        &mut self,
+    fn next_after_user_input(
+        &self,
         cursor: usize,
         has_distinct_generated: bool,
         has_distinct_custom: bool,
@@ -586,6 +632,57 @@ impl BookmarkAssignmentState {
         }
     }
 
+    /// Enter edit mode if the current row is `UserInput`. Returns `true` if
+    /// edit mode was entered.
+    pub fn enter_edit_mode(&mut self) -> bool {
+        let cursor = self.cursor;
+        if let Some(row) = self.rows.get(cursor)
+            && matches!(row.state, RowState::UserInput(_))
+        {
+            self.input_mode = InputMode::Editing;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Exit edit mode.
+    pub fn exit_edit_mode(&mut self) {
+        self.input_mode = InputMode::Normal;
+    }
+
+    /// Insert a character into the current `UserInput` buffer.
+    ///
+    /// Silently rejects disallowed characters, ASCII control characters, and
+    /// input that would exceed `MAX_BOOKMARK_LENGTH`.
+    pub fn insert_char(&mut self, ch: char) {
+        if ch.is_ascii_control() || bookmark_gen::DISALLOWED_CHARS.contains(ch) {
+            return;
+        }
+        let cursor = self.cursor;
+        if let Some(row) = self.rows.get_mut(cursor)
+            && let RowState::UserInput(ref mut buf) = row.state
+            && buf.len() < bookmark_gen::MAX_BOOKMARK_LENGTH
+        {
+            buf.push(ch);
+        }
+    }
+
+    /// Delete the last character from the current `UserInput` buffer.
+    pub fn delete_char(&mut self) {
+        let cursor = self.cursor;
+        if let Some(row) = self.rows.get_mut(cursor)
+            && let RowState::UserInput(ref mut buf) = row.state
+        {
+            buf.pop();
+        }
+    }
+
+    /// Whether the widget is currently in edit mode.
+    pub fn is_editing(&self) -> bool {
+        self.input_mode == InputMode::Editing
+    }
+
     /// Build the selection result from included rows.
     ///
     /// Returns `Err` with the duplicate bookmark name if any two included rows
@@ -619,6 +716,16 @@ impl BookmarkAssignmentState {
                     return Err(SelectionError::StillLoading);
                 }
                 RowState::UseCustom(CustomNameState::Ready(name)) => (name.clone(), true),
+                RowState::UserInput(s) if s.is_empty() => {
+                    return Err(SelectionError::InvalidName(
+                        "bookmark name is empty".to_string(),
+                    ));
+                }
+                RowState::UserInput(s) => {
+                    bookmark_gen::validate_bookmark_name(s)
+                        .map_err(|e| SelectionError::InvalidName(format!("{s}: {e}")))?;
+                    (s.clone(), true)
+                }
                 RowState::Unchecked => unreachable!("filtered above"),
             };
 
@@ -660,6 +767,8 @@ pub struct BookmarkWidget<'a> {
     state: &'a BookmarkAssignmentState,
     spinner_tick: usize,
     bookmark_command: Option<&'a str>,
+    /// Which row (if any) is currently being edited (user typing).
+    editing_row: Option<usize>,
 }
 
 const SPINNER_FRAMES: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
@@ -672,11 +781,13 @@ impl<'a> BookmarkWidget<'a> {
         state: &'a BookmarkAssignmentState,
         spinner_tick: usize,
         bookmark_command: Option<&'a str>,
+        editing_row: Option<usize>,
     ) -> Self {
         Self {
             state,
             spinner_tick,
             bookmark_command,
+            editing_row,
         }
     }
 
@@ -706,6 +817,7 @@ impl<'a> BookmarkWidget<'a> {
                 RowState::UseGenerated => ("[+]", Color::Yellow, true),
                 RowState::UseTfidf(_) => ("[~]", Color::Blue, true),
                 RowState::UseCustom(_) => ("[*]", Color::Cyan, true),
+                RowState::UserInput(_) => ("[>]", Color::LightYellow, true),
                 RowState::Unchecked => ("[ ]", Color::DarkGray, false),
             };
 
@@ -733,6 +845,16 @@ impl<'a> BookmarkWidget<'a> {
                 }
                 RowState::UseCustom(CustomNameState::Ready(name)) => {
                     format!("{name} (custom)")
+                }
+                RowState::UserInput(s) => {
+                    let is_editing = self.editing_row == Some(idx);
+                    if is_editing {
+                        format!("{s}\u{2502}") // │ cursor char
+                    } else if s.is_empty() {
+                        "(i to type)".to_string()
+                    } else {
+                        format!("{s} (user)")
+                    }
                 }
                 RowState::Unchecked => {
                     if let Some(first) = row.existing_bookmarks.first() {
@@ -773,7 +895,17 @@ impl<'a> BookmarkWidget<'a> {
             ];
 
             if !name_str.is_empty() {
-                spans.push(Span::styled(format!("{name_str}  "), state_style));
+                // Use red for user-input text that fails validation.
+                let name_style = if let RowState::UserInput(s) = &row.state
+                    && !s.is_empty()
+                    && self.editing_row == Some(idx)
+                    && bookmark_gen::validate_bookmark_name(s).is_err()
+                {
+                    Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)
+                } else {
+                    state_style
+                };
+                spans.push(Span::styled(format!("{name_str}  "), name_style));
             }
 
             let change_id_style = if is_selected {
@@ -813,20 +945,34 @@ impl Widget for BookmarkWidget<'_> {
 }
 
 /// Build a help line for the bottom of the bookmark view.
-pub fn bookmark_help_line(has_bookmark_command: bool) -> Line<'static> {
-    let cycle = if has_bookmark_command {
-        " [x]use \u{2192} [~]auto \u{2192} [+]new \u{2192} [*]custom \u{2192} [ ]skip  "
-    } else {
-        " [x]use \u{2192} [~]auto \u{2192} [+]new \u{2192} [ ]skip  "
-    };
+pub fn bookmark_help_line(has_bookmark_command: bool, editing: bool) -> Line<'static> {
     let key_style = Style::default()
         .fg(Color::Yellow)
         .add_modifier(Modifier::BOLD);
+
+    if editing {
+        return Line::from(vec![
+            Span::raw(" Type name  "),
+            Span::styled("Backspace", key_style),
+            Span::raw(" delete  "),
+            Span::styled("Esc/Enter", key_style),
+            Span::raw(" done"),
+        ]);
+    }
+
+    let cycle = if has_bookmark_command {
+        " [x]use \u{2192} [~]auto \u{2192} [>]type \u{2192} [+]new \u{2192} [*]custom \u{2192} [ \
+         ]skip  "
+    } else {
+        " [x]use \u{2192} [~]auto \u{2192} [>]type \u{2192} [+]new \u{2192} [ ]skip  "
+    };
     Line::from(vec![
         Span::styled(" \u{2191}\u{2193}/jk", key_style),
         Span::raw(" navigate  "),
         Span::styled("Space/b", key_style),
         Span::raw(cycle),
+        Span::styled("i", key_style),
+        Span::raw(" edit  "),
         Span::styled("r/R", key_style),
         Span::raw(" regenerate  "),
         Span::styled("Enter", key_style),
@@ -918,14 +1064,17 @@ mod tests {
         assert_eq!(state.cursor, 1);
         assert_eq!(state.rows[1].state, RowState::UseExisting(0));
 
-        // Cycle: UseExisting → UseTfidf → UseGenerated → Unchecked.
-        // "work" is NOT a stop word, so TF-IDF produces a name.
+        // Cycle: UseExisting → UseTfidf → UserInput → UseGenerated →
+        // Unchecked. "work" is NOT a stop word, so TF-IDF produces a name.
         state.toggle_current();
         assert!(
             matches!(&state.rows[1].state, RowState::UseTfidf(_)),
             "expected UseTfidf, got {:?}",
             state.rows[1].state
         );
+
+        state.toggle_current();
+        assert_eq!(state.rows[1].state, RowState::UserInput(String::new()));
 
         state.toggle_current();
         assert_eq!(state.rows[1].state, RowState::UseGenerated);
@@ -954,12 +1103,14 @@ mod tests {
         assert_eq!(state.rows[1].state, RowState::Unchecked);
 
         // Reverse: Unchecked → UseGenerated (no custom cmd).
-        // "work" produces a TF-IDF name, and generated is distinct, so:
-        // Unchecked → UseGenerated.
         state.toggle_current_reverse();
         assert_eq!(state.rows[1].state, RowState::UseGenerated);
 
-        // Reverse: UseGenerated → UseTfidf.
+        // Reverse: UseGenerated → UserInput.
+        state.toggle_current_reverse();
+        assert_eq!(state.rows[1].state, RowState::UserInput(String::new()));
+
+        // Reverse: UserInput → UseTfidf.
         state.toggle_current_reverse();
         assert!(
             matches!(&state.rows[1].state, RowState::UseTfidf(_)),
@@ -989,7 +1140,8 @@ mod tests {
 
         // Forward to Unchecked first.
         // UseExisting(0) → UseExisting(1) → UseExisting(2) → UseTfidf →
-        // UseGenerated → Unchecked.
+        // UserInput → UseGenerated → Unchecked.
+        state.toggle_current();
         state.toggle_current();
         state.toggle_current();
         state.toggle_current();
@@ -1000,6 +1152,10 @@ mod tests {
         // Reverse from Unchecked: → UseGenerated (no custom cmd).
         state.toggle_current_reverse();
         assert_eq!(state.rows[1].state, RowState::UseGenerated);
+
+        // → UserInput
+        state.toggle_current_reverse();
+        assert_eq!(state.rows[1].state, RowState::UserInput(String::new()));
 
         // → UseTfidf
         state.toggle_current_reverse();
@@ -1037,7 +1193,11 @@ mod tests {
         state.toggle_current_reverse();
         assert_eq!(state.rows[1].state, RowState::UseGenerated);
 
-        // Reverse: UseGenerated → UseTfidf.
+        // Reverse: UseGenerated → UserInput.
+        state.toggle_current_reverse();
+        assert_eq!(state.rows[1].state, RowState::UserInput(String::new()));
+
+        // Reverse: UserInput → UseTfidf.
         state.toggle_current_reverse();
         assert!(matches!(&state.rows[1].state, RowState::UseTfidf(_)));
 
@@ -1061,7 +1221,11 @@ mod tests {
         state.toggle_current_reverse();
         assert_eq!(state.rows[1].state, RowState::UseGenerated);
 
-        // Reverse: UseGenerated → Unchecked (TF-IDF skipped, no existing).
+        // Reverse: UseGenerated → UserInput.
+        state.toggle_current_reverse();
+        assert_eq!(state.rows[1].state, RowState::UserInput(String::new()));
+
+        // Reverse: UserInput → Unchecked (TF-IDF skipped, no existing).
         state.toggle_current_reverse();
         assert_eq!(state.rows[1].state, RowState::Unchecked);
     }
@@ -1106,8 +1270,8 @@ mod tests {
     #[test]
     fn toggle_two_state_when_names_match() {
         // change_id "abcdefghijkl" (12 chars) → generated "stakk-abcdefghijkl"
-        // existing bookmark matches generated → UseGenerated skipped, but
-        // TF-IDF still appears. "work" → UseTfidf → Unchecked.
+        // existing bookmark matches generated → UseGenerated skipped.
+        // "work" → UseTfidf → UserInput → Unchecked (generated skipped).
         let nodes = [
             make_node("", "trunk", &[], true, false),
             make_node("abcdefghijkl", "work", &["stakk-abcdefghijkl"], false, true),
@@ -1117,10 +1281,13 @@ mod tests {
 
         assert_eq!(state.rows[1].state, RowState::UseExisting(0));
 
-        // UseGenerated skipped (matches existing), so → UseTfidf.
         state.toggle_current();
         assert!(matches!(&state.rows[1].state, RowState::UseTfidf(_)));
 
+        state.toggle_current();
+        assert_eq!(state.rows[1].state, RowState::UserInput(String::new()));
+
+        // UseGenerated skipped (matches existing) → Unchecked.
         state.toggle_current();
         assert_eq!(state.rows[1].state, RowState::Unchecked);
 
@@ -1130,8 +1297,9 @@ mod tests {
 
     #[test]
     fn toggle_no_existing_includes_tfidf() {
-        // No existing bookmark → Unchecked → UseTfidf → UseGenerated →
-        // Unchecked. "feature" is NOT a stop word so TF-IDF produces it.
+        // No existing bookmark → Unchecked → UseTfidf → UserInput →
+        // UseGenerated → Unchecked. "feature" is NOT a stop word so TF-IDF
+        // produces it.
         let nodes = [
             make_node("", "trunk", &[], true, false),
             make_node("ch_x", "feature", &[], false, true),
@@ -1145,6 +1313,9 @@ mod tests {
         assert!(matches!(&state.rows[1].state, RowState::UseTfidf(_)));
 
         state.toggle_current();
+        assert_eq!(state.rows[1].state, RowState::UserInput(String::new()));
+
+        state.toggle_current();
         assert_eq!(state.rows[1].state, RowState::UseGenerated);
 
         state.toggle_current();
@@ -1154,7 +1325,7 @@ mod tests {
     #[test]
     fn toggle_tfidf_skipped_when_all_stop_words() {
         // Description is only stop words → TF-IDF produces None → skipped
-        // straight to UseGenerated.
+        // to UserInput, then UseGenerated.
         let nodes = [
             make_node("", "trunk", &[], true, false),
             make_node("ch_x", "add update remove", &[], false, true),
@@ -1164,7 +1335,10 @@ mod tests {
 
         assert_eq!(state.rows[1].state, RowState::Unchecked);
 
-        // TF-IDF skipped → lands on UseGenerated.
+        // TF-IDF skipped → lands on UserInput.
+        state.toggle_current();
+        assert_eq!(state.rows[1].state, RowState::UserInput(String::new()));
+
         state.toggle_current();
         assert_eq!(state.rows[1].state, RowState::UseGenerated);
 
@@ -1208,10 +1382,11 @@ mod tests {
         let refs: Vec<&LayoutNode> = nodes.iter().collect();
         let mut state = BookmarkAssignmentState::from_path(&refs, false, None);
 
-        // Toggle to Unchecked: UseExisting → UseTfidf → UseGenerated →
-        // Unchecked.
+        // Toggle to Unchecked: UseExisting → UseTfidf → UserInput →
+        // UseGenerated → Unchecked.
         state.cursor = 1;
         state.toggle_current(); // UseTfidf
+        state.toggle_current(); // UserInput
         state.toggle_current(); // UseGenerated
         state.toggle_current(); // Unchecked
 
@@ -1229,6 +1404,7 @@ mod tests {
             existing_bookmarks: vec!["feat".to_string()],
             state,
             generated_name: Some("stakk-aaaaaaaaaaaa".to_string()),
+            user_input_name: None,
             custom_name: None,
             tfidf_name: None,
             is_trunk: false,
@@ -1273,6 +1449,7 @@ mod tests {
             rows: vec![row],
             cursor: 0,
             auto_prefix: None,
+            input_mode: InputMode::Normal,
         };
         assert!(matches!(
             state.build_result(),
@@ -1288,7 +1465,7 @@ mod tests {
         ];
         let refs: Vec<&LayoutNode> = nodes.iter().collect();
         let state = BookmarkAssignmentState::from_path(&refs, false, None);
-        let widget = BookmarkWidget::new(&state, 0, None);
+        let widget = BookmarkWidget::new(&state, 0, None, None);
 
         let area = Rect::new(0, 0, 60, 10);
         let mut buf = Buffer::empty(area);
@@ -1330,9 +1507,13 @@ mod tests {
         state.toggle_current();
         assert_eq!(state.rows[1].state, RowState::UseExisting(2));
 
-        // "work" produces a TF-IDF name → UseTfidf before UseGenerated.
+        // "work" produces a TF-IDF name → UseTfidf before UserInput →
+        // UseGenerated.
         state.toggle_current();
         assert!(matches!(&state.rows[1].state, RowState::UseTfidf(_)));
+
+        state.toggle_current();
+        assert_eq!(state.rows[1].state, RowState::UserInput(String::new()));
 
         state.toggle_current();
         assert_eq!(state.rows[1].state, RowState::UseGenerated);
@@ -1367,11 +1548,15 @@ mod tests {
         state.toggle_current();
         assert_eq!(state.rows[1].state, RowState::UseExisting(1));
 
-        // Generated matches existing[1], so skip UseGenerated → UseTfidf.
-        // "work" produces a TF-IDF name.
+        // "work" produces a TF-IDF name → UseTfidf.
         state.toggle_current();
         assert!(matches!(&state.rows[1].state, RowState::UseTfidf(_)));
 
+        // → UserInput.
+        state.toggle_current();
+        assert_eq!(state.rows[1].state, RowState::UserInput(String::new()));
+
+        // Generated matches existing[1], so skip UseGenerated → Unchecked.
         state.toggle_current();
         assert_eq!(state.rows[1].state, RowState::Unchecked);
 
@@ -1569,5 +1754,145 @@ mod tests {
             }
             other => panic!("expected UseTfidf or Unchecked on leaf after refresh, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn user_input_edit_mode_insert_and_delete() {
+        let nodes = [
+            make_node("", "trunk", &[], true, false),
+            make_node("ch_a", "work", &[], false, true),
+        ];
+        let refs: Vec<&LayoutNode> = nodes.iter().collect();
+        let mut state = BookmarkAssignmentState::from_path(&refs, false, None);
+
+        // Toggle to UserInput.
+        state.toggle_current(); // UseTfidf or UserInput depending on tfidf availability.
+        while !matches!(state.rows[1].state, RowState::UserInput(_)) {
+            state.toggle_current();
+        }
+
+        // Enter edit mode.
+        assert!(state.enter_edit_mode());
+        assert!(state.is_editing());
+
+        // Type a name.
+        state.insert_char('m');
+        state.insert_char('y');
+        state.insert_char('-');
+        state.insert_char('b');
+        assert_eq!(state.rows[1].state, RowState::UserInput("my-b".to_string()));
+
+        // Backspace.
+        state.delete_char();
+        assert_eq!(state.rows[1].state, RowState::UserInput("my-".to_string()));
+
+        // Disallowed char silently rejected.
+        state.insert_char(' ');
+        assert_eq!(state.rows[1].state, RowState::UserInput("my-".to_string()));
+
+        // Exit edit mode.
+        state.exit_edit_mode();
+        assert!(!state.is_editing());
+    }
+
+    #[test]
+    fn user_input_text_preserved_across_cycles() {
+        let nodes = [
+            make_node("", "trunk", &[], true, false),
+            make_node("ch_a", "feature", &[], false, true),
+        ];
+        let refs: Vec<&LayoutNode> = nodes.iter().collect();
+        let mut state = BookmarkAssignmentState::from_path(&refs, false, None);
+
+        // Toggle to UserInput.
+        while !matches!(state.rows[1].state, RowState::UserInput(_)) {
+            state.toggle_current();
+        }
+
+        // Type a name.
+        state.enter_edit_mode();
+        state.insert_char('x');
+        state.insert_char('y');
+        state.exit_edit_mode();
+
+        // Cycle away.
+        state.toggle_current(); // UseGenerated
+        assert_eq!(state.rows[1].state, RowState::UseGenerated);
+
+        // Cycle back through to UserInput — text should be preserved.
+        state.toggle_current(); // Unchecked
+        state.toggle_current(); // UseTfidf
+        state.toggle_current(); // UserInput
+        assert_eq!(state.rows[1].state, RowState::UserInput("xy".to_string()));
+    }
+
+    #[test]
+    fn user_input_empty_is_error_on_confirm() {
+        let nodes = [
+            make_node("", "trunk", &[], true, false),
+            make_node("ch_a", "work", &[], false, true),
+        ];
+        let refs: Vec<&LayoutNode> = nodes.iter().collect();
+        let mut state = BookmarkAssignmentState::from_path(&refs, false, None);
+
+        // Toggle to UserInput (empty).
+        while !matches!(state.rows[1].state, RowState::UserInput(_)) {
+            state.toggle_current();
+        }
+
+        // Empty UserInput is an error on confirm.
+        assert!(matches!(
+            state.build_result(),
+            Err(SelectionError::InvalidName(_))
+        ));
+    }
+
+    #[test]
+    fn user_input_valid_name_in_build_result() {
+        let nodes = [
+            make_node("", "trunk", &[], true, false),
+            make_node("ch_a", "work", &[], false, true),
+        ];
+        let refs: Vec<&LayoutNode> = nodes.iter().collect();
+        let mut state = BookmarkAssignmentState::from_path(&refs, false, None);
+
+        // Toggle to UserInput.
+        while !matches!(state.rows[1].state, RowState::UserInput(_)) {
+            state.toggle_current();
+        }
+
+        state.enter_edit_mode();
+        for c in "my-branch".chars() {
+            state.insert_char(c);
+        }
+        state.exit_edit_mode();
+
+        let result = state.build_result().unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].bookmark_name, "my-branch");
+        assert!(result[0].is_new);
+    }
+
+    #[test]
+    fn effective_name_for_user_input() {
+        let row_empty = make_bare_row(RowState::UserInput(String::new()));
+        assert_eq!(row_empty.effective_name(), None);
+
+        let row_filled = make_bare_row(RowState::UserInput("my-branch".to_string()));
+        assert_eq!(row_filled.effective_name(), Some("my-branch"));
+    }
+
+    #[test]
+    fn enter_edit_mode_fails_on_non_user_input() {
+        let nodes = [
+            make_node("", "trunk", &[], true, false),
+            make_node("ch_a", "work", &["feat"], false, true),
+        ];
+        let refs: Vec<&LayoutNode> = nodes.iter().collect();
+        let mut state = BookmarkAssignmentState::from_path(&refs, false, None);
+
+        // On UseExisting — edit mode should not enter.
+        assert!(!state.enter_edit_mode());
+        assert!(!state.is_editing());
     }
 }

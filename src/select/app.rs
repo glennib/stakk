@@ -29,12 +29,15 @@ use super::bookmark_gen::CacheEntry;
 use super::bookmark_widget::BookmarkAssignmentState;
 use super::bookmark_widget::BookmarkWidget;
 use super::bookmark_widget::CustomNameState;
+use super::bookmark_widget::InputMode;
 use super::bookmark_widget::RegenerateResult;
 use super::bookmark_widget::RowState;
 use super::bookmark_widget::SelectionError;
 use super::bookmark_widget::bookmark_help_line;
 use super::event::Action;
+use super::event::EditAction;
 use super::event::map_event;
+use super::event::map_event_editing;
 use super::graph_layout::GraphLayout;
 use super::graph_layout::build_layout;
 use super::graph_layout::path_to_leaf;
@@ -221,126 +224,179 @@ fn run_event_loop(
         }
 
         let ev = event::read()?;
-        let action = map_event(&ev);
 
         match screen {
-            Screen::GraphView => match action {
-                Action::Left => {
-                    let leaves = layout.leaf_nodes();
-                    if graph_state.selected_leaf > 0 {
-                        graph_state.selected_leaf -= 1;
-                    } else {
-                        graph_state.selected_leaf = leaves.len().saturating_sub(1);
-                    }
-                }
-                Action::Right => {
-                    let leaves = layout.leaf_nodes();
-                    if graph_state.selected_leaf < leaves.len().saturating_sub(1) {
-                        graph_state.selected_leaf += 1;
-                    } else {
-                        graph_state.selected_leaf = 0;
-                    }
-                }
-                Action::Select => {
-                    let leaves = layout.leaf_nodes();
-                    if let Some(leaf) = leaves.get(graph_state.selected_leaf) {
-                        let path = path_to_leaf(layout, leaf.row, leaf.col);
-                        *bookmark_state = Some(BookmarkAssignmentState::from_path(
-                            &path,
-                            has_bookmark_command,
-                            auto_prefix,
-                        ));
-                        *screen = Screen::BookmarkAssignment;
-                    }
-                }
-                Action::Cancel => {
-                    return Ok(None);
-                }
-                Action::Quit => {
-                    return Err(Interrupted);
-                }
-                Action::Up
-                | Action::Down
-                | Action::Toggle
-                | Action::ReverseToggle
-                | Action::Regenerate
-                | Action::ReverseRegenerate
-                | Action::None => {}
-            },
-            Screen::BookmarkAssignment => match action {
-                Action::Up => {
-                    if let Some(state) = bookmark_state {
-                        state.cursor_up();
-                    }
-                }
-                Action::Down => {
-                    if let Some(state) = bookmark_state {
-                        state.cursor_down();
-                    }
-                }
-                Action::Toggle | Action::ReverseToggle => {
-                    error_message = None;
-                    if let Some(state) = bookmark_state {
-                        if action == Action::ReverseToggle {
-                            state.toggle_current_reverse();
+            Screen::GraphView => {
+                let action = map_event(&ev);
+                match action {
+                    Action::Left => {
+                        let leaves = layout.leaf_nodes();
+                        if graph_state.selected_leaf > 0 {
+                            graph_state.selected_leaf -= 1;
                         } else {
-                            state.toggle_current();
+                            graph_state.selected_leaf = leaves.len().saturating_sub(1);
                         }
+                    }
+                    Action::Right => {
+                        let leaves = layout.leaf_nodes();
+                        if graph_state.selected_leaf < leaves.len().saturating_sub(1) {
+                            graph_state.selected_leaf += 1;
+                        } else {
+                            graph_state.selected_leaf = 0;
+                        }
+                    }
+                    Action::Select => {
+                        let leaves = layout.leaf_nodes();
+                        if let Some(leaf) = leaves.get(graph_state.selected_leaf) {
+                            let path = path_to_leaf(layout, leaf.row, leaf.col);
+                            *bookmark_state = Some(BookmarkAssignmentState::from_path(
+                                &path,
+                                has_bookmark_command,
+                                auto_prefix,
+                            ));
+                            *screen = Screen::BookmarkAssignment;
+                        }
+                    }
+                    Action::Cancel => {
+                        return Ok(None);
+                    }
+                    Action::Quit => {
+                        return Err(Interrupted);
+                    }
+                    Action::Up
+                    | Action::Down
+                    | Action::Toggle
+                    | Action::ReverseToggle
+                    | Action::EnterEdit
+                    | Action::Regenerate
+                    | Action::ReverseRegenerate
+                    | Action::None => {}
+                }
+            }
+            Screen::BookmarkAssignment => {
+                // Edit-mode dispatch: consume the event and continue without
+                // falling through to normal action handling.
+                let is_editing = bookmark_state
+                    .as_ref()
+                    .is_some_and(|s| s.input_mode == InputMode::Editing);
 
-                        if let Some(cmd) = bookmark_command {
-                            fire_pending_commands(state, cmd, bookmark_cache, &mut pending);
-                        }
-                    }
-                }
-                Action::Select => {
-                    if let Some(state) = bookmark_state.as_ref() {
-                        match state.build_result() {
-                            Ok(assignments) if assignments.is_empty() => {}
-                            Ok(assignments) => {
-                                return Ok(Some(SelectionResult { assignments }));
-                            }
-                            Err(SelectionError::DuplicateName(name)) => {
-                                error_message = Some(format!("Duplicate bookmark name: {name}"));
-                            }
-                            Err(SelectionError::StillLoading) => {
-                                error_message =
-                                    Some("A bookmark name is still loading…".to_string());
-                            }
-                        }
-                    }
-                }
-                Action::Regenerate | Action::ReverseRegenerate => {
-                    error_message = None;
-                    if let Some(state) = bookmark_state {
-                        let result = if action == Action::ReverseRegenerate {
-                            state.regenerate_current_reverse()
-                        } else {
-                            state.regenerate_current()
-                        };
-                        match result {
-                            RegenerateResult::NeedsRefire => {
-                                if let Some(cmd) = bookmark_command {
-                                    fire_pending_commands(state, cmd, bookmark_cache, &mut pending);
+                if is_editing {
+                    if let Some(edit_action) = map_event_editing(&ev) {
+                        match edit_action {
+                            EditAction::InsertChar(c) => {
+                                if let Some(state) = bookmark_state.as_mut() {
+                                    state.insert_char(c);
                                 }
                             }
-                            RegenerateResult::TfidfNoVariation => {
-                                error_message =
-                                    Some("No other auto-name variations available".to_string());
+                            EditAction::Backspace => {
+                                if let Some(state) = bookmark_state.as_mut() {
+                                    state.delete_char();
+                                }
                             }
-                            RegenerateResult::TfidfCycled | RegenerateResult::Noop => {}
+                            EditAction::ExitEdit => {
+                                if let Some(state) = bookmark_state.as_mut() {
+                                    state.exit_edit_mode();
+                                }
+                            }
+                            EditAction::Quit => {
+                                return Err(Interrupted);
+                            }
                         }
                     }
+                    continue;
                 }
-                Action::Cancel => {
-                    pending.clear();
-                    *screen = Screen::GraphView;
-                    *bookmark_state = None;
+
+                // Normal-mode dispatch.
+                let action = map_event(&ev);
+                match action {
+                    Action::Up => {
+                        if let Some(state) = bookmark_state {
+                            state.cursor_up();
+                        }
+                    }
+                    Action::Down => {
+                        if let Some(state) = bookmark_state {
+                            state.cursor_down();
+                        }
+                    }
+                    Action::Toggle | Action::ReverseToggle => {
+                        error_message = None;
+                        if let Some(state) = bookmark_state {
+                            if action == Action::ReverseToggle {
+                                state.toggle_current_reverse();
+                            } else {
+                                state.toggle_current();
+                            }
+
+                            if let Some(cmd) = bookmark_command {
+                                fire_pending_commands(state, cmd, bookmark_cache, &mut pending);
+                            }
+                        }
+                    }
+                    Action::Select => {
+                        if let Some(state) = bookmark_state.as_ref() {
+                            match state.build_result() {
+                                Ok(assignments) if assignments.is_empty() => {}
+                                Ok(assignments) => {
+                                    return Ok(Some(SelectionResult { assignments }));
+                                }
+                                Err(SelectionError::DuplicateName(name)) => {
+                                    error_message =
+                                        Some(format!("Duplicate bookmark name: {name}"));
+                                }
+                                Err(SelectionError::StillLoading) => {
+                                    error_message =
+                                        Some("A bookmark name is still loading…".to_string());
+                                }
+                                Err(SelectionError::InvalidName(msg)) => {
+                                    error_message = Some(format!("Invalid bookmark name: {msg}"));
+                                }
+                            }
+                        }
+                    }
+                    Action::EnterEdit => {
+                        if let Some(state) = bookmark_state.as_mut() {
+                            state.enter_edit_mode();
+                        }
+                    }
+                    Action::Regenerate | Action::ReverseRegenerate => {
+                        error_message = None;
+                        if let Some(state) = bookmark_state {
+                            let result = if action == Action::ReverseRegenerate {
+                                state.regenerate_current_reverse()
+                            } else {
+                                state.regenerate_current()
+                            };
+                            match result {
+                                RegenerateResult::NeedsRefire => {
+                                    if let Some(cmd) = bookmark_command {
+                                        fire_pending_commands(
+                                            state,
+                                            cmd,
+                                            bookmark_cache,
+                                            &mut pending,
+                                        );
+                                    }
+                                }
+                                RegenerateResult::TfidfNoVariation => {
+                                    error_message =
+                                        Some("No other auto-name variations available".to_string());
+                                }
+                                RegenerateResult::TfidfCycled | RegenerateResult::Noop => {}
+                            }
+                        }
+                    }
+                    Action::Cancel => {
+                        pending.clear();
+                        *screen = Screen::GraphView;
+                        *bookmark_state = None;
+                    }
+                    Action::Quit => {
+                        return Err(Interrupted);
+                    }
+                    Action::Left | Action::Right | Action::None => {}
                 }
-                Action::Quit => {
-                    return Err(Interrupted);
-                }
-                Action::Left | Action::Right | Action::None => {}
-            },
+            }
         }
     }
 }
@@ -659,8 +715,13 @@ fn render_bookmark_screen(
     };
     frame.render_widget(subtitle, subtitle_area);
 
-    let widget = BookmarkWidget::new(state, spinner_tick, bookmark_command);
+    let editing = state.is_editing();
+    let editing_row = if editing { Some(state.cursor) } else { None };
+    let widget = BookmarkWidget::new(state, spinner_tick, bookmark_command, editing_row);
     widget.render(content_area, frame.buffer_mut());
 
-    frame.render_widget(bookmark_help_line(bookmark_command.is_some()), help_area);
+    frame.render_widget(
+        bookmark_help_line(bookmark_command.is_some(), editing),
+        help_area,
+    );
 }

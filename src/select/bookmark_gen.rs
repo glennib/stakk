@@ -484,6 +484,7 @@ mod tests {
             files: vec![],
             custom_name: None,
             tfidf_name: None,
+            user_input_name: None,
             has_bookmark_command: false,
         }
     }
