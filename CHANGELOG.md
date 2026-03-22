@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.8.0](https://github.com/glennib/stakk/compare/v1.7.0...v1.8.0) - 2026-03-22
+
+### Added
+
+- make bookmark help line context-aware
+- add UserInput bookmark name mode with vim-like modal editing
+- add reverse cycling (b) and reverse regenerate (R) in bookmark widget
+
+### Fixed
+
+- preserve tfidf variation index when cycling through bookmark states
+- order stacks by most-recent committer timestamp
+
+### Other
+
+- use debug build instead of release in CI task
+
 ## [1.7.0](https://github.com/glennib/stakk/compare/v1.6.1...v1.7.0) - 2026-03-22
 
 ### Added
