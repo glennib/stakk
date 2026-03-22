@@ -237,6 +237,10 @@ are in-flight to animate the spinner (10-frame animation).
 - ratatui inline viewport: `enable_raw_mode()` before, `disable_raw_mode()` after.
 - Graph layout deduplicates shared segments by `commit_id` (not `change_id`).
 - Auto-generated bookmark names: `stakk-<first 12 chars of change_id>`.
+- Stack reorder safety: bookmarks must be pushed one-at-a-time with immediate
+  base/PR updates. If all bookmarks are pushed before bases are updated, a PR
+  whose head moved down the stack will have an empty diff (head is ancestor of
+  stale base), triggering GitHub auto-close.
 
 ## Key Decisions
 
@@ -250,3 +254,6 @@ are in-flight to animate the spinner (10-frame animation).
 - **Three-phase submission** — analyze (pure) → plan (queries forge) → execute.
 - **ratatui over inquire** — visual graph rendering, bookmark assignment TUI.
 - **minijinja for stack comments** — customizable templates, metadata outside template.
+- **Interleaved push+update** — `execute_submission_plan` processes each bookmark
+  sequentially (push, update base, create PR) trunk-to-leaf to prevent GitHub
+  from auto-closing PRs during stack reorders. Pipelining is not safe.
