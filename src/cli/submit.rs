@@ -1,7 +1,31 @@
 use clap::Args;
+use clap::ValueEnum;
 
 use crate::cli::graph::GraphArgs;
 use crate::forge::comment::StackPlacement;
+
+/// Whether new pull requests are created as regular or draft PRs.
+///
+/// This only affects newly created PRs. Existing PRs keep their
+/// current draft/ready state.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Deserialize, clap::ValueEnum)]
+#[serde(rename_all = "kebab-case")]
+pub enum PrMode {
+    /// Create pull requests as regular (non-draft) PRs.
+    #[default]
+    Regular,
+    /// Create pull requests as drafts.
+    Draft,
+}
+
+impl std::fmt::Display for PrMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let pv = self
+            .to_possible_value()
+            .expect("all variants have possible values");
+        f.write_str(pv.get_name())
+    }
+}
 
 /// Arguments for the `submit` subcommand.
 #[derive(Debug, Args)]
@@ -17,9 +41,22 @@ pub struct SubmitArgs {
     #[command(flatten)]
     pub graph: GraphArgs,
 
-    /// Create pull requests as drafts.
+    /// Whether new pull requests are created as regular or draft PRs.
+    ///
+    /// This only affects newly created PRs. Existing PRs keep their
+    /// current draft/ready state. Overridden by --draft.
+    #[arg(
+        long = "pr-mode",
+        env = "STAKK_PR_MODE",
+        default_value = "regular",
+        value_enum,
+        verbatim_doc_comment
+    )]
+    pub pr_mode: PrMode,
+
+    /// Shortcut for --pr-mode=draft. Overrides --pr-mode if both are given.
     #[arg(long, env = "STAKK_DRAFT")]
-    pub draft: bool,
+    draft: bool,
 
     /// Git remote to push to.
     #[arg(long, default_value = "origin", env = "STAKK_REMOTE")]
@@ -175,4 +212,15 @@ pub struct SubmitArgs {
         verbatim_doc_comment
     )]
     pub bookmark_command: Option<String>,
+}
+
+impl SubmitArgs {
+    /// Effective PR mode. `--draft` forces `PrMode::Draft`.
+    pub fn pr_mode(&self) -> PrMode {
+        if self.draft {
+            PrMode::Draft
+        } else {
+            self.pr_mode
+        }
+    }
 }

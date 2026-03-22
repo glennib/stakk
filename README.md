@@ -146,19 +146,143 @@ PRs together:
 Re-running `stakk submit` is always safe — it updates existing PRs rather
 than creating duplicates.
 
+## Configuration
+
+stakk loads settings from TOML config files, environment variables, and CLI
+flags. The full precedence order (highest to lowest):
+
+1. **CLI flags** — `--remote`, `--draft`, `--pr-mode`, etc.
+2. **Environment variables** — `STAKK_REMOTE`, `STAKK_DRAFT`, etc.
+3. **Repository config** — `stakk.toml` found by walking up from the current
+   directory
+4. **User config** — `~/.config/stakk/config.toml` (Linux),
+   `~/Library/Application Support/stakk/config.toml` (macOS),
+   `%APPDATA%\stakk\config\config.toml` (Windows)
+5. **Built-in defaults**
+
+### Config files
+
+stakk discovers config files automatically — no flags needed.
+
+**Repository config** is found by walking from the current directory toward the
+jj workspace root (the directory containing `.jj/`), stopping at the first
+`stakk.toml` found. The search does not continue past the repo root. To share
+config across multiple repos, use `--config` or the `STAKK_CONFIG` environment
+variable.
+
+**User config** is loaded from your platform's standard config directory. On
+Linux this is typically `~/.config/stakk/config.toml`.
+
+Both files use the same format. When both exist, settings from the repo config
+take precedence — the user config fills in any fields the repo config leaves
+unset.
+
+### Config file format
+
+All fields are optional. Absent fields fall back to the next level in the
+precedence chain.
+
+```toml
+# stakk.toml — example with all available fields
+
+# Git remote to push to (default: "origin")
+remote = "origin"
+
+# PR creation mode: "regular" or "draft" (default: "regular")
+pr_mode = "draft"
+
+# Path to a custom minijinja template for stack comments
+template = "/path/to/my-template.md.jinja"
+
+# Where to place stack info: "comment" or "body" (default: "comment")
+stack_placement = "body"
+
+# Prefix for auto-generated bookmark names (default: none)
+auto_prefix = "gb-"
+
+# Revset for discovering bookmarks (default: "mine() ~ trunk() ~ immutable()")
+bookmarks_revset = "mine() ~ trunk() ~ immutable()"
+
+# Revset for discovering unbookmarked heads
+# (default: "heads((mine() ~ empty() ~ immutable()) & trunk()..)")
+heads_revset = "heads((mine() ~ empty() ~ immutable()) & trunk()..)"
+
+# [EXPERIMENTAL] Shell command for generating custom bookmark names
+bookmark_command = "my-bookmark-namer"
+
+# Whether to merge with the user config (default: true)
+# Set to false in a repo config to ignore the user config entirely.
+inherit = true
+```
+
+Unknown fields cause a parse error, so typos are caught early.
+
+### The `inherit` field
+
+By default, repo config and user config are merged: the repo config wins for
+any field it sets, and the user config fills in the rest. If a repo needs to
+ignore the user config entirely (e.g. to enforce team-wide settings), set
+`inherit = false` in the repo-level `stakk.toml`:
+
+```toml
+# stakk.toml — standalone, ignores user config
+inherit = false
+pr_mode = "regular"
+stack_placement = "comment"
+```
+
+`inherit` only has meaning in a repo config. It is not merged from the user
+config.
+
+### Examples
+
+**User config** — personal defaults across all repos:
+
+```toml
+# ~/.config/stakk/config.toml
+pr_mode = "draft"
+stack_placement = "body"
+```
+
+**Repo config** — override remote for this repo, inherit everything else:
+
+```toml
+# stakk.toml (in repo root)
+remote = "upstream"
+```
+
+With both files above, running `stakk submit my-feature` uses
+`remote = "upstream"` from the repo config and `pr_mode = "draft"`,
+`stack_placement = "body"` from the user config. Passing `--pr-mode regular` on
+the command line overrides all of them.
+
+**Team-enforced config** — no user config inheritance:
+
+```toml
+# stakk.toml (in repo root)
+inherit = false
+remote = "origin"
+pr_mode = "regular"
+stack_placement = "comment"
+```
+
 ## Environment variables
 
 | Variable | Description |
 |----------|-------------|
+| `STAKK_CONFIG` | Path to config file, overrides automatic discovery (overridden by `--config`) |
 | `STAKK_REMOTE` | Default git remote to push to (overridden by `--remote`) |
+| `STAKK_PR_MODE` | PR creation mode: `regular` or `draft` (overridden by `--pr-mode`) |
 | `STAKK_DRAFT` | Set to `true` to always create draft PRs (overridden by `--draft`) |
 | `STAKK_TEMPLATE` | Path to a custom minijinja template for stack comments (overridden by `--template`) |
 | `STAKK_STACK_PLACEMENT` | Where to place the stack info: `comment` (default) or `body` (overridden by `--stack-placement`) |
 | `STAKK_AUTO_PREFIX` | Prefix for auto-generated bookmark names (overridden by `--auto-prefix`) |
+| `STAKK_EXPERIMENTAL_BOOKMARK_COMMAND` | Shell command for generating custom bookmark names (overridden by `--experimental-bookmark-command`) |
 | `GITHUB_TOKEN` | GitHub personal access token (see `stakk auth setup`) |
 | `GH_TOKEN` | Alternative to `GITHUB_TOKEN` |
 
-CLI flags always take precedence over environment variables.
+CLI flags take precedence over environment variables, which take precedence over
+config files. See [Configuration](#configuration) for the full precedence order.
 
 ## Usage
 

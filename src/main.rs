@@ -1,5 +1,6 @@
 mod auth;
 mod cli;
+mod config;
 mod error;
 mod forge;
 mod graph;
@@ -10,7 +11,7 @@ mod submit;
 use std::collections::HashSet;
 
 use clap::CommandFactory;
-use clap::Parser;
+use clap::FromArgMatches;
 
 use crate::cli::Cli;
 use crate::cli::Commands;
@@ -36,7 +37,10 @@ async fn main() {
 }
 
 async fn run() -> Result<(), StakkError> {
-    let cli = Cli::parse();
+    let config_path = config::pre_parse_config_path();
+    let config = config::Config::load(config_path)?;
+    let cmd = cli::apply_config_defaults(config, Cli::command());
+    let cli = Cli::from_arg_matches(&cmd.get_matches())?;
 
     match cli.command {
         Some(Commands::Submit(args)) => {
@@ -200,7 +204,8 @@ async fn submit_bookmark(args: &SubmitArgs) -> Result<(), StakkError> {
 
     // Phase 2: Plan.
     pb.set_message("Checking for existing pull requests...");
-    let plan = submit::create_submission_plan(&analysis, &forge, &remote_name, args.draft).await?;
+    let plan =
+        submit::create_submission_plan(&analysis, &forge, &remote_name, args.pr_mode()).await?;
 
     pb.finish_and_clear();
 
