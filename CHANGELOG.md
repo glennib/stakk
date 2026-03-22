@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.10.2](https://github.com/glennib/stakk/compare/v1.10.1...v1.10.2) - 2026-03-22
+
+### Fixed
+
+- interleave push and base-update to prevent GitHub auto-close ([#35](https://github.com/glennib/stakk/pull/35))
+
 ## [1.10.1](https://github.com/glennib/stakk/compare/v1.10.0...v1.10.1) - 2026-03-22
 
 ### Fixed
