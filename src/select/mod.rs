@@ -9,6 +9,7 @@ mod bookmark_widget;
 mod event;
 mod graph_layout;
 mod graph_widget;
+mod tfidf;
 
 use std::io::IsTerminal;
 
@@ -43,6 +44,7 @@ pub struct SelectionResult {
 pub fn resolve_bookmark_interactively(
     graph: &ChangeGraph,
     bookmark_command: Option<&str>,
+    auto_prefix: Option<&str>,
 ) -> Result<Option<SelectionResult>, StakkError> {
     if graph.stacks.is_empty() {
         eprintln!("No bookmark stacks found.");
@@ -53,7 +55,7 @@ pub fn resolve_bookmark_interactively(
         return Err(StakkError::NotInteractive);
     }
 
-    app::run_tui(graph, bookmark_command)
+    app::run_tui(graph, bookmark_command, auto_prefix)
 }
 
 // ---------------------------------------------------------------------------
@@ -83,7 +85,7 @@ mod tests {
     #[test]
     fn resolve_no_stacks() {
         let graph = make_graph_empty();
-        let result = resolve_bookmark_interactively(&graph, None).unwrap();
+        let result = resolve_bookmark_interactively(&graph, None, None).unwrap();
         assert_eq!(result, None);
     }
 

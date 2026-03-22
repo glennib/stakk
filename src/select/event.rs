@@ -20,6 +20,8 @@ pub enum Action {
     Select,
     /// Toggle checkbox (bookmark assignment screen).
     Toggle,
+    /// Regenerate name (TF-IDF variation or re-fire custom command).
+    Regenerate,
     /// Cancel / go back.
     Cancel,
     /// Quit immediately (Ctrl-C).
@@ -51,6 +53,7 @@ fn map_key(code: KeyCode, modifiers: KeyModifiers) -> Action {
         KeyCode::Right | KeyCode::Char('l') => Action::Right,
         KeyCode::Enter => Action::Select,
         KeyCode::Char(' ') => Action::Toggle,
+        KeyCode::Char('r') => Action::Regenerate,
         KeyCode::Esc | KeyCode::Char('q') => Action::Cancel,
         _ => Action::None,
     }
@@ -108,6 +111,14 @@ mod tests {
         assert_eq!(map_event(&key_event(KeyCode::Esc)), Action::Cancel);
         assert_eq!(map_event(&key_event(KeyCode::Char('q'))), Action::Cancel);
         assert_eq!(map_event(&key_event_ctrl(KeyCode::Char('c'))), Action::Quit);
+    }
+
+    #[test]
+    fn regenerate_key() {
+        assert_eq!(
+            map_event(&key_event(KeyCode::Char('r'))),
+            Action::Regenerate
+        );
     }
 
     #[test]

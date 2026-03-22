@@ -80,13 +80,29 @@ pub struct SubmitArgs {
     )]
     pub stack_placement: StackPlacement,
 
+    /// Prefix for auto-generated bookmark names.
+    ///
+    /// When set, the prefix is prepended to names produced by the [~]auto
+    /// bookmark name generator (TF-IDF, term frequency-inverse document
+    /// frequency). For example, --auto-prefix gb- turns
+    /// "caching-database" into "gb-caching-database".
+    ///
+    /// Only applies to auto-generated names -- not to the default
+    /// stakk-<change_id> names or names from
+    /// --experimental-bookmark-command.
+    ///
+    /// The prefix is applied before length/character validation, so it
+    /// counts toward the 255-byte limit.
+    #[arg(long, env = "STAKK_AUTO_PREFIX", verbatim_doc_comment)]
+    pub auto_prefix: Option<String>,
+
     /// [EXPERIMENTAL] Shell command for generating custom bookmark names.
     ///
     /// This feature is experimental and may change or be removed in future
     /// releases.
     ///
-    /// The command is invoked via `sh -c <command>` (Unix) or `cmd /C
-    /// <command>` (Windows). It receives a JSON object on stdin describing
+    /// The command is invoked via sh -c <command> (Unix) or cmd /C
+    /// <command> (Windows). It receives a JSON object on stdin describing
     /// a single segment of commits and must print exactly one bookmark name
     /// to stdout (plain text, leading/trailing whitespace is trimmed).
     ///
@@ -95,25 +111,25 @@ pub struct SubmitArgs {
     ///
     /// JSON input schema:
     ///
-    ///   rules               — object with validation constraints
-    ///     .max_length       — integer, max name length in bytes (255)
-    ///     .disallowed_chars — string of forbidden characters
-    ///   commits             — array of commit objects, ordered
-    ///                         trunk-to-tip (oldest first); the last
-    ///                         element is the tip being bookmarked
+    ///   rules               -- object with validation constraints
+    ///     .max_length       -- integer, max name length in bytes (255)
+    ///     .disallowed_chars -- string of forbidden characters
+    ///   commits             -- array of commit objects, ordered
+    ///                          trunk-to-tip (oldest first); the last
+    ///                          element is the tip being bookmarked
     ///
     /// Each commit object:
     ///
-    ///   commit_id           — full hex commit hash (string)
-    ///   change_id           — full jj change ID (string)
-    ///   short_change_id     — shortest unique change ID prefix (string)
-    ///   description         — full commit message incl. body (string)
-    ///   author              — object with name, email, timestamp
-    ///     .name             — author name (string)
-    ///     .email            — author email (string)
-    ///     .timestamp        — commit timestamp (string, ISO 8601)
-    ///   files               — array of file paths changed by this commit
-    ///                         (array of strings, e.g. ["src/main.rs"])
+    ///   commit_id           -- full hex commit hash (string)
+    ///   change_id           -- full jj change ID (string)
+    ///   short_change_id     -- shortest unique change ID prefix (string)
+    ///   description         -- full commit message incl. body (string)
+    ///   author              -- object with name, email, timestamp
+    ///     .name             -- author name (string)
+    ///     .email            -- author email (string)
+    ///     .timestamp        -- commit timestamp (string, ISO 8601)
+    ///   files               -- array of file paths changed by this commit
+    ///                          (array of strings, e.g. ["src/main.rs"])
     ///
     /// Minimal example (two commits):
     ///

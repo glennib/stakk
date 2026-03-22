@@ -93,10 +93,10 @@ struct AuthorInput {
 }
 
 /// Maximum bookmark name length in bytes.
-const MAX_BOOKMARK_LENGTH: usize = 255;
+pub(super) const MAX_BOOKMARK_LENGTH: usize = 255;
 
 /// Characters disallowed in bookmark names.
-const DISALLOWED_CHARS: &str = " ~^:?*[\\";
+pub(super) const DISALLOWED_CHARS: &str = " ~^:?*[\\";
 
 /// Timeout for in-flight cache entries before they can be retried.
 pub const COMPUTING_TIMEOUT: Duration = Duration::from_secs(60);
@@ -483,6 +483,7 @@ mod tests {
             },
             files: vec![],
             custom_name: None,
+            tfidf_name: None,
             has_bookmark_command: false,
         }
     }

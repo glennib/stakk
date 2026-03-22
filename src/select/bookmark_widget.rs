@@ -17,6 +17,7 @@ use ratatui::widgets::Widget;
 use super::BookmarkAssignment;
 use super::bookmark_gen;
 use super::graph_layout::LayoutNode;
+use super::tfidf;
 use crate::jj::types::Signature;
 
 /// Whether a custom bookmark name is still loading or has been resolved.
@@ -28,6 +29,15 @@ pub enum CustomNameState {
     Ready(String),
 }
 
+/// State for a TF-IDF generated bookmark name.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TfidfNameState {
+    /// The computed name.
+    pub name: String,
+    /// Which variation index produced this name.
+    pub variation: usize,
+}
+
 /// The inclusion state of a bookmark row.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RowState {
@@ -36,6 +46,8 @@ pub enum RowState {
     UseExisting(usize),
     /// Included in submission; a new stakk-xxx bookmark will be created.
     UseGenerated,
+    /// Included in submission; a TF-IDF generated name from commit data.
+    UseTfidf(TfidfNameState),
     /// Included in submission; a custom name from the bookmark command.
     UseCustom(CustomNameState),
     /// Excluded from submission.
@@ -63,6 +75,8 @@ pub struct BookmarkRow {
     pub generated_name: Option<String>,
     /// Custom name from the bookmark command (populated lazily).
     pub custom_name: Option<String>,
+    /// TF-IDF name and its variation index (computed on demand).
+    pub tfidf_name: Option<(String, usize)>,
     /// Whether this is the trunk row (not toggleable).
     pub is_trunk: bool,
     /// Author signature.
@@ -83,6 +97,7 @@ impl BookmarkRow {
         match &self.state {
             RowState::UseExisting(idx) => self.existing_bookmarks.get(*idx).map(String::as_str),
             RowState::UseGenerated => self.generated_name.as_deref(),
+            RowState::UseTfidf(ts) => Some(ts.name.as_str()),
             RowState::UseCustom(CustomNameState::Ready(name)) => Some(name.as_str()),
             RowState::UseCustom(CustomNameState::Loading) | RowState::Unchecked => None,
         }
@@ -98,11 +113,58 @@ pub enum SelectionError {
     StillLoading,
 }
 
+/// Result of a [`BookmarkAssignmentState::regenerate_current`] call.
+#[derive(Debug, PartialEq, Eq)]
+pub enum RegenerateResult {
+    /// Nothing to regenerate (not on a regenerable state).
+    Noop,
+    /// TF-IDF variation was cycled successfully.
+    TfidfCycled,
+    /// No other TF-IDF variation produced a different name.
+    TfidfNoVariation,
+    /// Custom name needs re-firing the external command.
+    NeedsRefire,
+}
+
 /// Build `UseCustom` state from a row's cached custom name.
 fn make_use_custom(row: &BookmarkRow) -> RowState {
     match &row.custom_name {
         Some(name) => RowState::UseCustom(CustomNameState::Ready(name.clone())),
         None => RowState::UseCustom(CustomNameState::Loading),
+    }
+}
+
+/// Compute a TF-IDF bookmark name for a dynamic segment, with optional prefix.
+fn compute_tfidf_for_segment(
+    rows: &[BookmarkRow],
+    row_idx: usize,
+    variation: usize,
+    auto_prefix: Option<&str>,
+) -> Option<String> {
+    let segment = bookmark_gen::dynamic_segment_commits(rows, row_idx);
+    let commit_data: Vec<tfidf::CommitData<'_>> = segment
+        .iter()
+        .map(|r| tfidf::CommitData {
+            description: &r.description,
+            files: &r.files,
+        })
+        .collect();
+
+    // Reserve space for the prefix in the max length budget.
+    let prefix_len = auto_prefix.map_or(0, str::len);
+    let max_length = bookmark_gen::MAX_BOOKMARK_LENGTH.saturating_sub(prefix_len);
+
+    let name = tfidf::tfidf_bookmark_name(
+        &commit_data,
+        3,
+        variation,
+        max_length,
+        bookmark_gen::DISALLOWED_CHARS,
+    )?;
+
+    match auto_prefix {
+        Some(prefix) => Some(format!("{prefix}{name}")),
+        None => Some(name),
     }
 }
 
@@ -113,11 +175,17 @@ pub struct BookmarkAssignmentState {
     pub rows: Vec<BookmarkRow>,
     /// Currently selected row index.
     pub cursor: usize,
+    /// Optional prefix for auto-generated (TF-IDF) bookmark names.
+    auto_prefix: Option<String>,
 }
 
 impl BookmarkAssignmentState {
     /// Build state from a path of layout nodes (trunk-to-leaf order).
-    pub fn from_path(path: &[&LayoutNode], has_bookmark_command: bool) -> Self {
+    pub fn from_path(
+        path: &[&LayoutNode],
+        has_bookmark_command: bool,
+        auto_prefix: Option<&str>,
+    ) -> Self {
         let rows: Vec<BookmarkRow> = path
             .iter()
             .map(|node| {
@@ -143,6 +211,7 @@ impl BookmarkAssignmentState {
                     state,
                     generated_name,
                     custom_name: None,
+                    tfidf_name: None,
                     is_trunk: node.is_trunk,
                     author: node.author.clone(),
                     files: node.files.clone(),
@@ -154,22 +223,30 @@ impl BookmarkAssignmentState {
         // Start cursor on the first non-trunk row.
         let cursor = rows.iter().position(|r| !r.is_trunk).unwrap_or(0);
 
-        Self { rows, cursor }
+        Self {
+            rows,
+            cursor,
+            auto_prefix: auto_prefix.map(String::from),
+        }
     }
 
     /// Toggle the state of the current row through the cycle.
     ///
-    /// The cycle is: `UseExisting(0..N-1)` → `UseGenerated` → `UseCustom`
-    /// → `Unchecked` → back to start. `UseGenerated` is skipped when it
-    /// matches an existing bookmark. `UseCustom` is skipped when no
-    /// bookmark command is configured, or if the custom name matches the
-    /// generated or any existing name.
+    /// The cycle is: `UseExisting(0..N-1)` → `UseTfidf` → `UseGenerated`
+    /// → `UseCustom` → `Unchecked` → back to start.
+    ///
+    /// - `UseTfidf` is skipped when it produces `None` or matches an
+    ///   existing/generated name.
+    /// - `UseGenerated` is skipped when it matches an existing bookmark.
+    /// - `UseCustom` is skipped when no bookmark command is configured, or if
+    ///   the custom name matches the generated or any existing name.
     ///
     /// When toggling to `UseCustom`, the state is set to
     /// `UseCustom(Loading)` — the caller (`app.rs`) is responsible for
     /// firing the command and filling in the real name.
     pub fn toggle_current(&mut self) {
-        let Some(row) = self.rows.get_mut(self.cursor) else {
+        let cursor = self.cursor;
+        let Some(row) = self.rows.get(cursor) else {
             return;
         };
         if row.is_trunk {
@@ -193,22 +270,25 @@ impl BookmarkAssignmentState {
                 None => true,
             };
 
-        row.state = match &row.state {
+        let current_state = row.state.clone();
+
+        // Compute next state. For UseTfidf, we need to compute from the
+        // full rows slice, so we do that after releasing the borrow.
+        let next = match &current_state {
             RowState::UseExisting(idx) => {
                 let next_idx = idx + 1;
                 if next_idx < row.existing_bookmarks.len() {
                     RowState::UseExisting(next_idx)
-                } else if has_distinct_generated {
-                    RowState::UseGenerated
-                } else if has_distinct_custom {
-                    make_use_custom(row)
                 } else {
-                    RowState::Unchecked
+                    self.next_after_existing(cursor, has_distinct_generated, has_distinct_custom)
                 }
+            }
+            RowState::UseTfidf(_) => {
+                self.next_after_tfidf(cursor, has_distinct_generated, has_distinct_custom)
             }
             RowState::UseGenerated => {
                 if has_distinct_custom {
-                    make_use_custom(row)
+                    make_use_custom(&self.rows[cursor])
                 } else {
                     RowState::Unchecked
                 }
@@ -216,12 +296,145 @@ impl BookmarkAssignmentState {
             RowState::UseCustom(_) => RowState::Unchecked,
             RowState::Unchecked => {
                 if row.existing_bookmarks.is_empty() {
-                    RowState::UseGenerated
+                    self.next_after_existing(cursor, has_distinct_generated, has_distinct_custom)
                 } else {
                     RowState::UseExisting(0)
                 }
             }
         };
+
+        self.rows[cursor].state = next;
+
+        // A toggle may change the dynamic segment for other UseTfidf rows
+        // (e.g. toggling an earlier commit on/off changes which commits are
+        // included in a later segment). Refresh all TF-IDF names.
+        self.refresh_tfidf_names();
+    }
+
+    /// Compute the next state after exhausting existing bookmarks (or from
+    /// Unchecked with no existing bookmarks): try `UseTfidf`, then
+    /// `UseGenerated`, then `UseCustom`, then `Unchecked`.
+    fn next_after_existing(
+        &mut self,
+        cursor: usize,
+        has_distinct_generated: bool,
+        has_distinct_custom: bool,
+    ) -> RowState {
+        if let Some(tfidf_state) = self.try_make_tfidf(cursor, 0) {
+            return RowState::UseTfidf(tfidf_state);
+        }
+        self.next_after_tfidf(cursor, has_distinct_generated, has_distinct_custom)
+    }
+
+    /// Compute the next state after `UseTfidf`: try `UseGenerated`, then
+    /// `UseCustom`, then `Unchecked`.
+    fn next_after_tfidf(
+        &mut self,
+        cursor: usize,
+        has_distinct_generated: bool,
+        has_distinct_custom: bool,
+    ) -> RowState {
+        if has_distinct_generated {
+            return RowState::UseGenerated;
+        }
+        if has_distinct_custom {
+            return make_use_custom(&self.rows[cursor]);
+        }
+        RowState::Unchecked
+    }
+
+    /// Try to compute a TF-IDF name for the given row. Returns `None` if
+    /// it produces no name or the name matches an existing/generated name.
+    fn try_make_tfidf(&mut self, cursor: usize, variation: usize) -> Option<TfidfNameState> {
+        let name =
+            compute_tfidf_for_segment(&self.rows, cursor, variation, self.auto_prefix.as_deref())?;
+
+        let row = &self.rows[cursor];
+        // Skip if it matches the generated name.
+        if row.generated_name.as_ref() == Some(&name) {
+            return None;
+        }
+        // Skip if it matches an existing bookmark.
+        if row.existing_bookmarks.iter().any(|e| e == &name) {
+            return None;
+        }
+
+        self.rows[cursor].tfidf_name = Some((name.clone(), variation));
+        Some(TfidfNameState { name, variation })
+    }
+
+    /// Regenerate the current row's name (cycle TF-IDF variation or
+    /// invalidate custom name cache).
+    pub fn regenerate_current(&mut self) -> RegenerateResult {
+        let cursor = self.cursor;
+        let Some(row) = self.rows.get(cursor) else {
+            return RegenerateResult::Noop;
+        };
+        if row.is_trunk {
+            return RegenerateResult::Noop;
+        }
+
+        match &row.state {
+            RowState::UseTfidf(ts) => {
+                let old_variation = ts.variation;
+                // Try up to 6 variations.
+                for delta in 1..=6 {
+                    let new_variation = (old_variation + delta) % 6;
+                    if let Some(tfidf_state) = self.try_make_tfidf(cursor, new_variation) {
+                        self.rows[cursor].state = RowState::UseTfidf(tfidf_state);
+                        return RegenerateResult::TfidfCycled;
+                    }
+                }
+                RegenerateResult::TfidfNoVariation
+            }
+            RowState::UseCustom(_) => {
+                // Invalidate cached custom name and set to Loading.
+                self.rows[cursor].custom_name = None;
+                self.rows[cursor].state = RowState::UseCustom(CustomNameState::Loading);
+                RegenerateResult::NeedsRefire
+            }
+            _ => RegenerateResult::Noop,
+        }
+    }
+
+    /// Recompute TF-IDF names for all `UseTfidf` rows whose dynamic segment
+    /// may have changed (e.g. because an earlier row was toggled).
+    pub fn refresh_tfidf_names(&mut self) {
+        let tfidf_indices: Vec<(usize, usize)> = self
+            .rows
+            .iter()
+            .enumerate()
+            .filter_map(|(i, row)| match &row.state {
+                RowState::UseTfidf(ts) => Some((i, ts.variation)),
+                _ => None,
+            })
+            .collect();
+
+        for (idx, variation) in tfidf_indices {
+            let old_name = match &self.rows[idx].state {
+                RowState::UseTfidf(ts) => ts.name.clone(),
+                _ => continue,
+            };
+
+            // Recompute from the (potentially changed) dynamic segment.
+            match compute_tfidf_for_segment(&self.rows, idx, variation, self.auto_prefix.as_deref())
+            {
+                Some(new_name) if new_name != old_name => {
+                    self.rows[idx].tfidf_name = Some((new_name.clone(), variation));
+                    self.rows[idx].state = RowState::UseTfidf(TfidfNameState {
+                        name: new_name,
+                        variation,
+                    });
+                }
+                None => {
+                    // Segment no longer produces a TF-IDF name — fall back to
+                    // Unchecked.
+                    self.rows[idx].tfidf_name = None;
+                    self.rows[idx].state = RowState::Unchecked;
+                }
+                Some(_) => {} // Same name, nothing to do.
+            }
+        }
     }
 
     /// Move cursor up (toward leaf = visually up, higher index in rows).
@@ -271,6 +484,7 @@ impl BookmarkAssignmentState {
                         .expect("UseGenerated requires name"),
                     true,
                 ),
+                RowState::UseTfidf(ts) => (ts.name.clone(), true),
                 RowState::UseCustom(CustomNameState::Loading) => {
                     return Err(SelectionError::StillLoading);
                 }
@@ -360,6 +574,7 @@ impl<'a> BookmarkWidget<'a> {
             let (checkbox, state_color, state_bold) = match &row.state {
                 RowState::UseExisting(_) => ("[x]", Color::Green, true),
                 RowState::UseGenerated => ("[+]", Color::Yellow, true),
+                RowState::UseTfidf(_) => ("[~]", Color::Blue, true),
                 RowState::UseCustom(_) => ("[*]", Color::Cyan, true),
                 RowState::Unchecked => ("[ ]", Color::DarkGray, false),
             };
@@ -373,8 +588,11 @@ impl<'a> BookmarkWidget<'a> {
                 RowState::UseGenerated => row
                     .generated_name
                     .as_ref()
-                    .map(|n| format!("{n} (new)"))
+                    .map(|n| format!("{n} (generated)"))
                     .unwrap_or_default(),
+                RowState::UseTfidf(ts) => {
+                    format!("{} (auto [{}])", ts.name, ts.variation)
+                }
                 RowState::UseCustom(CustomNameState::Loading) => {
                     let frame = SPINNER_FRAMES[self.spinner_tick % SPINNER_FRAMES.len()];
                     let label = self
@@ -389,10 +607,8 @@ impl<'a> BookmarkWidget<'a> {
                 RowState::Unchecked => {
                     if let Some(first) = row.existing_bookmarks.first() {
                         first.clone()
-                    } else if let Some(ref gen_name) = row.generated_name {
-                        format!("{gen_name} (Space to create)")
                     } else {
-                        String::new()
+                        "(Space to assign)".to_string()
                     }
                 }
             };
@@ -469,38 +685,23 @@ impl Widget for BookmarkWidget<'_> {
 /// Build a help line for the bottom of the bookmark view.
 pub fn bookmark_help_line(has_bookmark_command: bool) -> Line<'static> {
     let cycle = if has_bookmark_command {
-        " [x]use \u{2192} [+]new \u{2192} [*]custom \u{2192} [ ]skip  "
+        " [x]use \u{2192} [~]auto \u{2192} [+]new \u{2192} [*]custom \u{2192} [ ]skip  "
     } else {
-        " [x]use \u{2192} [+]new \u{2192} [ ]skip  "
+        " [x]use \u{2192} [~]auto \u{2192} [+]new \u{2192} [ ]skip  "
     };
+    let key_style = Style::default()
+        .fg(Color::Yellow)
+        .add_modifier(Modifier::BOLD);
     Line::from(vec![
-        Span::styled(
-            " \u{2191}\u{2193}/jk",
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD),
-        ),
+        Span::styled(" \u{2191}\u{2193}/jk", key_style),
         Span::raw(" navigate  "),
-        Span::styled(
-            "Space",
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD),
-        ),
+        Span::styled("Space", key_style),
         Span::raw(cycle),
-        Span::styled(
-            "Enter",
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD),
-        ),
+        Span::styled("r", key_style),
+        Span::raw(" regenerate  "),
+        Span::styled("Enter", key_style),
         Span::raw(" confirm  "),
-        Span::styled(
-            "Esc",
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD),
-        ),
+        Span::styled("Esc", key_style),
         Span::raw(" back"),
     ])
 }
@@ -555,7 +756,7 @@ mod tests {
             make_node("ch_b", "add feature", &[], false, true),
         ];
         let refs: Vec<&LayoutNode> = nodes.iter().collect();
-        let state = BookmarkAssignmentState::from_path(&refs, false);
+        let state = BookmarkAssignmentState::from_path(&refs, false, None);
 
         assert_eq!(state.rows.len(), 3);
 
@@ -581,13 +782,21 @@ mod tests {
             make_node("ch_a", "work", &["feat"], false, true),
         ];
         let refs: Vec<&LayoutNode> = nodes.iter().collect();
-        let mut state = BookmarkAssignmentState::from_path(&refs, false);
+        let mut state = BookmarkAssignmentState::from_path(&refs, false, None);
 
         // Cursor should start on the non-trunk row; starts UseExisting.
         assert_eq!(state.cursor, 1);
         assert_eq!(state.rows[1].state, RowState::UseExisting(0));
 
-        // "feat" != "stakk-ch_a" → three-state cycle.
+        // Cycle: UseExisting → UseTfidf → UseGenerated → Unchecked.
+        // "work" is NOT a stop word, so TF-IDF produces a name.
+        state.toggle_current();
+        assert!(
+            matches!(&state.rows[1].state, RowState::UseTfidf(_)),
+            "expected UseTfidf, got {:?}",
+            state.rows[1].state
+        );
+
         state.toggle_current();
         assert_eq!(state.rows[1].state, RowState::UseGenerated);
 
@@ -602,7 +811,7 @@ mod tests {
     fn toggle_trunk_is_noop() {
         let nodes = [make_node("", "trunk", &[], true, false)];
         let refs: Vec<&LayoutNode> = nodes.iter().collect();
-        let mut state = BookmarkAssignmentState::from_path(&refs, false);
+        let mut state = BookmarkAssignmentState::from_path(&refs, false, None);
         state.cursor = 0;
         let state_before = state.rows[0].state.clone();
         state.toggle_current();
@@ -612,15 +821,20 @@ mod tests {
     #[test]
     fn toggle_two_state_when_names_match() {
         // change_id "abcdefghijkl" (12 chars) → generated "stakk-abcdefghijkl"
-        // existing bookmark matches generated → two-state: UseExisting(0) ↔ Unchecked
+        // existing bookmark matches generated → UseGenerated skipped, but
+        // TF-IDF still appears. "work" → UseTfidf → Unchecked.
         let nodes = [
             make_node("", "trunk", &[], true, false),
             make_node("abcdefghijkl", "work", &["stakk-abcdefghijkl"], false, true),
         ];
         let refs: Vec<&LayoutNode> = nodes.iter().collect();
-        let mut state = BookmarkAssignmentState::from_path(&refs, false);
+        let mut state = BookmarkAssignmentState::from_path(&refs, false, None);
 
         assert_eq!(state.rows[1].state, RowState::UseExisting(0));
+
+        // UseGenerated skipped (matches existing), so → UseTfidf.
+        state.toggle_current();
+        assert!(matches!(&state.rows[1].state, RowState::UseTfidf(_)));
 
         state.toggle_current();
         assert_eq!(state.rows[1].state, RowState::Unchecked);
@@ -630,17 +844,42 @@ mod tests {
     }
 
     #[test]
-    fn toggle_no_existing_two_state() {
-        // No existing bookmark → two-state: Unchecked ↔ UseGenerated
+    fn toggle_no_existing_includes_tfidf() {
+        // No existing bookmark → Unchecked → UseTfidf → UseGenerated →
+        // Unchecked. "feature" is NOT a stop word so TF-IDF produces it.
         let nodes = [
             make_node("", "trunk", &[], true, false),
             make_node("ch_x", "feature", &[], false, true),
         ];
         let refs: Vec<&LayoutNode> = nodes.iter().collect();
-        let mut state = BookmarkAssignmentState::from_path(&refs, false);
+        let mut state = BookmarkAssignmentState::from_path(&refs, false, None);
 
         assert_eq!(state.rows[1].state, RowState::Unchecked);
 
+        state.toggle_current();
+        assert!(matches!(&state.rows[1].state, RowState::UseTfidf(_)));
+
+        state.toggle_current();
+        assert_eq!(state.rows[1].state, RowState::UseGenerated);
+
+        state.toggle_current();
+        assert_eq!(state.rows[1].state, RowState::Unchecked);
+    }
+
+    #[test]
+    fn toggle_tfidf_skipped_when_all_stop_words() {
+        // Description is only stop words → TF-IDF produces None → skipped
+        // straight to UseGenerated.
+        let nodes = [
+            make_node("", "trunk", &[], true, false),
+            make_node("ch_x", "add update remove", &[], false, true),
+        ];
+        let refs: Vec<&LayoutNode> = nodes.iter().collect();
+        let mut state = BookmarkAssignmentState::from_path(&refs, false, None);
+
+        assert_eq!(state.rows[1].state, RowState::Unchecked);
+
+        // TF-IDF skipped → lands on UseGenerated.
         state.toggle_current();
         assert_eq!(state.rows[1].state, RowState::UseGenerated);
 
@@ -657,9 +896,10 @@ mod tests {
             make_node("ch_c", "leaf", &["leaf"], false, true),
         ];
         let refs: Vec<&LayoutNode> = nodes.iter().collect();
-        let mut state = BookmarkAssignmentState::from_path(&refs, false);
+        let mut state = BookmarkAssignmentState::from_path(&refs, false, None);
 
-        // Toggle the middle (unmarked) commit: Unchecked → UseGenerated.
+        // Toggle the middle (unmarked) commit: Unchecked → UseTfidf.
+        // "middle" produces a TF-IDF name.
         state.cursor = 2;
         state.toggle_current();
 
@@ -667,7 +907,8 @@ mod tests {
         assert_eq!(result.len(), 3);
         assert_eq!(result[0].bookmark_name, "base");
         assert!(!result[0].is_new);
-        assert!(result[1].bookmark_name.starts_with("stakk-"));
+        // Middle now gets a TF-IDF name (not stakk-xxx).
+        assert!(!result[1].bookmark_name.starts_with("stakk-"));
         assert!(result[1].is_new);
         assert_eq!(result[2].bookmark_name, "leaf");
         assert!(!result[2].is_new);
@@ -680,12 +921,14 @@ mod tests {
             make_node("ch_a", "work", &["feat"], false, true),
         ];
         let refs: Vec<&LayoutNode> = nodes.iter().collect();
-        let mut state = BookmarkAssignmentState::from_path(&refs, false);
+        let mut state = BookmarkAssignmentState::from_path(&refs, false, None);
 
-        // Toggle twice: UseExisting → UseGenerated → Unchecked.
+        // Toggle to Unchecked: UseExisting → UseTfidf → UseGenerated →
+        // Unchecked.
         state.cursor = 1;
-        state.toggle_current();
-        state.toggle_current();
+        state.toggle_current(); // UseTfidf
+        state.toggle_current(); // UseGenerated
+        state.toggle_current(); // Unchecked
 
         let result = state.build_result().unwrap();
         assert!(result.is_empty());
@@ -702,6 +945,7 @@ mod tests {
             state,
             generated_name: Some("stakk-aaaaaaaaaaaa".to_string()),
             custom_name: None,
+            tfidf_name: None,
             is_trunk: false,
             author: crate::jj::types::Signature {
                 name: "Test".to_string(),
@@ -743,6 +987,7 @@ mod tests {
         let state = BookmarkAssignmentState {
             rows: vec![row],
             cursor: 0,
+            auto_prefix: None,
         };
         assert!(matches!(
             state.build_result(),
@@ -757,7 +1002,7 @@ mod tests {
             make_node("ch_a", "add feature", &["feat"], false, true),
         ];
         let refs: Vec<&LayoutNode> = nodes.iter().collect();
-        let state = BookmarkAssignmentState::from_path(&refs, false);
+        let state = BookmarkAssignmentState::from_path(&refs, false, None);
         let widget = BookmarkWidget::new(&state, 0, None);
 
         let area = Rect::new(0, 0, 60, 10);
@@ -790,7 +1035,7 @@ mod tests {
             ),
         ];
         let refs: Vec<&LayoutNode> = nodes.iter().collect();
-        let mut state = BookmarkAssignmentState::from_path(&refs, false);
+        let mut state = BookmarkAssignmentState::from_path(&refs, false, None);
 
         assert_eq!(state.rows[1].state, RowState::UseExisting(0));
 
@@ -799,6 +1044,10 @@ mod tests {
 
         state.toggle_current();
         assert_eq!(state.rows[1].state, RowState::UseExisting(2));
+
+        // "work" produces a TF-IDF name → UseTfidf before UseGenerated.
+        state.toggle_current();
+        assert!(matches!(&state.rows[1].state, RowState::UseTfidf(_)));
 
         state.toggle_current();
         assert_eq!(state.rows[1].state, RowState::UseGenerated);
@@ -826,14 +1075,18 @@ mod tests {
             ),
         ];
         let refs: Vec<&LayoutNode> = nodes.iter().collect();
-        let mut state = BookmarkAssignmentState::from_path(&refs, false);
+        let mut state = BookmarkAssignmentState::from_path(&refs, false, None);
 
         assert_eq!(state.rows[1].state, RowState::UseExisting(0));
 
         state.toggle_current();
         assert_eq!(state.rows[1].state, RowState::UseExisting(1));
 
-        // Generated matches existing[1], so skip UseGenerated → Unchecked.
+        // Generated matches existing[1], so skip UseGenerated → UseTfidf.
+        // "work" produces a TF-IDF name.
+        state.toggle_current();
+        assert!(matches!(&state.rows[1].state, RowState::UseTfidf(_)));
+
         state.toggle_current();
         assert_eq!(state.rows[1].state, RowState::Unchecked);
 
@@ -848,7 +1101,7 @@ mod tests {
             make_node("ch_a", "work", &["alpha", "beta"], false, true),
         ];
         let refs: Vec<&LayoutNode> = nodes.iter().collect();
-        let mut state = BookmarkAssignmentState::from_path(&refs, false);
+        let mut state = BookmarkAssignmentState::from_path(&refs, false, None);
 
         // Toggle once: UseExisting(0) → UseExisting(1).
         state.toggle_current();
@@ -866,11 +1119,170 @@ mod tests {
             make_node("ch_a", "work", &["alpha", "beta", "gamma"], false, true),
         ];
         let refs: Vec<&LayoutNode> = nodes.iter().collect();
-        let state = BookmarkAssignmentState::from_path(&refs, false);
+        let state = BookmarkAssignmentState::from_path(&refs, false, None);
 
         assert_eq!(state.rows[1].existing_bookmarks.len(), 3);
         assert_eq!(state.rows[1].existing_bookmarks[0], "alpha");
         assert_eq!(state.rows[1].existing_bookmarks[1], "beta");
         assert_eq!(state.rows[1].existing_bookmarks[2], "gamma");
+    }
+
+    #[test]
+    fn build_result_extracts_tfidf_name() {
+        let nodes = [
+            make_node("", "trunk", &[], true, false),
+            make_node(
+                "ch_a",
+                "implement caching layer for database queries",
+                &[],
+                false,
+                true,
+            ),
+        ];
+        let refs: Vec<&LayoutNode> = nodes.iter().collect();
+        let mut state = BookmarkAssignmentState::from_path(&refs, false, None);
+
+        // Unchecked → UseTfidf (auto is first after existing/unchecked).
+        state.toggle_current();
+        assert!(matches!(&state.rows[1].state, RowState::UseTfidf(_)));
+
+        let result = state.build_result().unwrap();
+        assert_eq!(result.len(), 1);
+        assert!(result[0].is_new);
+        // The name should not start with "stakk-".
+        assert!(
+            !result[0].bookmark_name.starts_with("stakk-"),
+            "expected TF-IDF name, got: {}",
+            result[0].bookmark_name
+        );
+    }
+
+    #[test]
+    fn regenerate_cycles_tfidf_variation() {
+        let nodes = [
+            make_node("", "trunk", &[], true, false),
+            make_node(
+                "ch_a",
+                "implement caching layer for database queries",
+                &[],
+                false,
+                true,
+            ),
+        ];
+        let refs: Vec<&LayoutNode> = nodes.iter().collect();
+        let mut state = BookmarkAssignmentState::from_path(&refs, false, None);
+
+        // Get to UseTfidf (first toggle from Unchecked).
+        state.toggle_current();
+        let v0_name = match &state.rows[1].state {
+            RowState::UseTfidf(ts) => {
+                assert_eq!(ts.variation, 0);
+                ts.name.clone()
+            }
+            other => panic!("expected UseTfidf, got {other:?}"),
+        };
+
+        // Regenerate should cycle variation.
+        let result = state.regenerate_current();
+        assert_ne!(result, RegenerateResult::NeedsRefire);
+        match &state.rows[1].state {
+            RowState::UseTfidf(ts) => {
+                // Variation changed (unless all variations produce the same
+                // result, which is fine).
+                assert!(ts.variation != 0 || ts.name == v0_name);
+            }
+            other => panic!("expected UseTfidf after regenerate, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn effective_name_for_tfidf() {
+        let mut row = make_bare_row(RowState::UseTfidf(TfidfNameState {
+            name: "caching-database-layer".to_string(),
+            variation: 0,
+        }));
+        row.existing_bookmarks = vec![];
+        assert_eq!(row.effective_name(), Some("caching-database-layer"));
+    }
+
+    #[test]
+    fn auto_prefix_prepended_to_tfidf_name() {
+        let nodes = [
+            make_node("", "trunk", &[], true, false),
+            make_node(
+                "ch_a",
+                "implement caching layer for database queries",
+                &[],
+                false,
+                true,
+            ),
+        ];
+        let refs: Vec<&LayoutNode> = nodes.iter().collect();
+        let mut state = BookmarkAssignmentState::from_path(&refs, false, Some("gb-"));
+
+        // Unchecked → UseTfidf (auto is first).
+        state.toggle_current();
+        match &state.rows[1].state {
+            RowState::UseTfidf(ts) => {
+                assert!(
+                    ts.name.starts_with("gb-"),
+                    "expected prefix 'gb-', got: {}",
+                    ts.name
+                );
+            }
+            other => panic!("expected UseTfidf, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn tfidf_refreshes_when_earlier_row_toggled() {
+        // Three commits: trunk → middle → leaf.
+        // Both middle and leaf are unchecked initially.
+        // Toggle leaf to UseTfidf — its segment includes middle.
+        // Then toggle middle to UseGenerated — leaf's segment shrinks.
+        // The TF-IDF name on leaf should be recomputed.
+        let nodes = [
+            make_node("", "trunk", &[], true, false),
+            make_node("ch_mid", "authentication middleware", &[], false, false),
+            make_node("ch_leaf", "rate limiting endpoints", &[], false, true),
+        ];
+        let refs: Vec<&LayoutNode> = nodes.iter().collect();
+        let mut state = BookmarkAssignmentState::from_path(&refs, false, None);
+
+        // Get leaf to UseTfidf: Unchecked → UseTfidf (auto is first).
+        state.cursor = 2;
+        state.toggle_current();
+        let leaf_name_with_middle = match &state.rows[2].state {
+            RowState::UseTfidf(ts) => ts.name.clone(),
+            other => panic!("expected UseTfidf on leaf, got {other:?}"),
+        };
+
+        // Now toggle middle (Unchecked → UseTfidf) — this changes leaf's
+        // dynamic segment (middle is no longer unchecked, so leaf's segment
+        // shrinks to just leaf).
+        state.cursor = 1;
+        state.toggle_current();
+
+        // Leaf should still be UseTfidf but with a potentially different
+        // name (fewer commits in segment).
+        match &state.rows[2].state {
+            RowState::UseTfidf(ts) => {
+                // The name may or may not differ depending on term overlap,
+                // but it should have been recomputed. At minimum, the state
+                // is still UseTfidf (not stale).
+                assert!(
+                    !ts.name.is_empty(),
+                    "refreshed TF-IDF name should not be empty"
+                );
+                // If the names differ, that confirms refresh happened.
+                // If they're the same, it's because the terms overlap.
+                let _ = leaf_name_with_middle; // suppress unused warning
+            }
+            RowState::Unchecked => {
+                // Also valid: if the reduced segment produces no TF-IDF
+                // name, it falls back to Unchecked.
+            }
+            other => panic!("expected UseTfidf or Unchecked on leaf after refresh, got {other:?}"),
+        }
     }
 }

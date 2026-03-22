@@ -29,6 +29,7 @@ use super::bookmark_gen::CacheEntry;
 use super::bookmark_widget::BookmarkAssignmentState;
 use super::bookmark_widget::BookmarkWidget;
 use super::bookmark_widget::CustomNameState;
+use super::bookmark_widget::RegenerateResult;
 use super::bookmark_widget::RowState;
 use super::bookmark_widget::SelectionError;
 use super::bookmark_widget::bookmark_help_line;
@@ -66,6 +67,7 @@ struct PendingCommand {
 pub fn run_tui(
     graph: &ChangeGraph,
     bookmark_command: Option<&str>,
+    auto_prefix: Option<&str>,
 ) -> Result<Option<SelectionResult>, StakkError> {
     let layout = build_layout(graph);
     let has_bookmark_command = bookmark_command.is_some();
@@ -103,6 +105,7 @@ pub fn run_tui(
         &mut screen,
         has_bookmark_command,
         bookmark_command,
+        auto_prefix,
         &bookmark_cache,
     );
 
@@ -132,6 +135,7 @@ fn run_event_loop(
     screen: &mut Screen,
     has_bookmark_command: bool,
     bookmark_command: Option<&str>,
+    auto_prefix: Option<&str>,
     bookmark_cache: &Arc<Mutex<BookmarkNameCache>>,
 ) -> Result<Option<SelectionResult>, StakkError> {
     let mut pending: Vec<PendingCommand> = Vec::new();
@@ -244,6 +248,7 @@ fn run_event_loop(
                         *bookmark_state = Some(BookmarkAssignmentState::from_path(
                             &path,
                             has_bookmark_command,
+                            auto_prefix,
                         ));
                         *screen = Screen::BookmarkAssignment;
                     }
@@ -254,7 +259,7 @@ fn run_event_loop(
                 Action::Quit => {
                     return Err(Interrupted);
                 }
-                Action::Up | Action::Down | Action::Toggle | Action::None => {}
+                Action::Up | Action::Down | Action::Toggle | Action::Regenerate | Action::None => {}
             },
             Screen::BookmarkAssignment => match action {
                 Action::Up => {
@@ -291,6 +296,23 @@ fn run_event_loop(
                                 error_message =
                                     Some("A bookmark name is still loading…".to_string());
                             }
+                        }
+                    }
+                }
+                Action::Regenerate => {
+                    error_message = None;
+                    if let Some(state) = bookmark_state {
+                        match state.regenerate_current() {
+                            RegenerateResult::NeedsRefire => {
+                                if let Some(cmd) = bookmark_command {
+                                    fire_pending_commands(state, cmd, bookmark_cache, &mut pending);
+                                }
+                            }
+                            RegenerateResult::TfidfNoVariation => {
+                                error_message =
+                                    Some("No other auto-name variations available".to_string());
+                            }
+                            RegenerateResult::TfidfCycled | RegenerateResult::Noop => {}
                         }
                     }
                 }
@@ -616,7 +638,7 @@ fn render_bookmark_screen(
         )])
     } else {
         Line::from(vec![Span::styled(
-            " Checked commits ([x]/[+]/[*]) will be pushed and have PRs created or updated.",
+            " Checked commits ([x]/[+]/[~]/[*]) will be pushed and have PRs created or updated.",
             Style::default().fg(Color::Gray).add_modifier(Modifier::DIM),
         )])
     };

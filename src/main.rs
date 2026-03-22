@@ -131,6 +131,7 @@ async fn submit_bookmark(args: &SubmitArgs) -> Result<(), StakkError> {
         None => match select::resolve_bookmark_interactively(
             &change_graph,
             args.bookmark_command.as_deref(),
+            args.auto_prefix.as_deref(),
         )? {
             Some(result) => {
                 // Create any new bookmarks that were assigned.

@@ -17,6 +17,11 @@ idempotent updates.
 - **No bookmarks required** — stakk discovers unbookmarked heads and lets you
   create bookmarks on-the-fly via the interactive TUI. Auto-generated
   `stakk-<change_id>` names keep things simple.
+- **Auto bookmark naming** — the `[~]auto` toggle in the TUI generates
+  descriptive bookmark names from commit descriptions and file paths using
+  TF-IDF (term frequency–inverse document frequency) scoring. Press `r` to
+  cycle through alternative names. An optional `--auto-prefix` lets you brand
+  the names (e.g. `gb-caching-database`).
 - **Stacked PR submission** — creates or updates GitHub PRs with correct base
   branches so each PR shows only its own diff.
 - **Stack-awareness comments** — adds a comment to every PR listing the full
@@ -31,7 +36,9 @@ idempotent updates.
   touching GitHub.
 - **Interactive TUI** — running `stakk` without arguments launches a ratatui
   TUI: a graph view shows all branch stacks, then a bookmark assignment screen
-  lets you toggle bookmarks on unmarked commits before submitting.
+  lets you toggle bookmarks on unmarked commits before submitting. Each commit
+  cycles through: `[x]` existing → `[~]` auto → `[+]` generated `stakk-xxxx`
+  → `[*]` custom command → `[ ]` skip.
 - **Draft PRs** — `--draft` creates new PRs as drafts.
 - **PR body from descriptions** — PR titles and bodies are populated from jj
   change descriptions. Manually edited PR bodies are never overwritten.
@@ -147,6 +154,7 @@ than creating duplicates.
 | `STAKK_DRAFT` | Set to `true` to always create draft PRs (overridden by `--draft`) |
 | `STAKK_TEMPLATE` | Path to a custom minijinja template for stack comments (overridden by `--template`) |
 | `STAKK_STACK_PLACEMENT` | Where to place the stack info: `comment` (default) or `body` (overridden by `--stack-placement`) |
+| `STAKK_AUTO_PREFIX` | Prefix for auto-generated bookmark names (overridden by `--auto-prefix`) |
 | `GITHUB_TOKEN` | GitHub personal access token (see `stakk auth setup`) |
 | `GH_TOKEN` | Alternative to `GITHUB_TOKEN` |
 
@@ -175,6 +183,7 @@ graph view, then assign bookmarks to any unmarked commits before submitting.
 | `--remote <name>` | `STAKK_REMOTE` | Push to a specific remote (default: `origin`) |
 | `--template <path>` | `STAKK_TEMPLATE` | Use a custom minijinja template for stack comments |
 | `--stack-placement <mode>` | `STAKK_STACK_PLACEMENT` | Place stack info as a PR `comment` (default) or in the PR `body` |
+| `--auto-prefix <prefix>` | `STAKK_AUTO_PREFIX` | Prefix for `[~]auto` bookmark names (e.g. `gb-`) |
 
 PR titles come from the first line of the jj change description. PR bodies
 are populated from the full description (everything after the title line).
