@@ -71,8 +71,10 @@ src/
 │   ├── mod.rs       # Public API: resolve_bookmark_interactively(), SelectionResult
 │   ├── app.rs       # App state machine, event loop, terminal init
 │   ├── graph_layout.rs  # Convert ChangeGraph → 2D positioned nodes + edges
-│   ├── graph_widget.rs  # Screen 1: tree graph widget
+│   ├── graph_widget.rs  # Screen 1: tree graph widget (leaf selection)
 │   ├── bookmark_widget.rs # Screen 2: bookmark toggle/assignment widget
+│   ├── bookmark_gen.rs # Bookmark validation and external command execution
+│   ├── tfidf.rs     # TF-IDF algorithm for auto-generated bookmark names
 │   └── event.rs     # crossterm key event mapping to app actions
 ├── submit/          # Three-phase submission (analyze → plan → execute)
 └── error.rs         # Error types (thiserror)
@@ -125,6 +127,81 @@ There is intentionally no `git/` module.
 - Use `--template` for structured/JSON output where available.
 - Define serde structs for every piece of jj output we consume.
 - Paginate large output (100 items at a time) to avoid memory issues.
+
+## Selection TUI (select/)
+
+Two-screen inline viewport TUI for choosing a branch path and assigning
+bookmarks to commits.
+
+### Screens
+
+1. **GraphView** — Select a leaf node (branch tip) from the change graph.
+   Navigate leaves with `←`/`→` (`h`/`l`), confirm with Enter.
+   Help line: `◄►/hl navigate  Enter select  q/Esc quit`
+
+2. **BookmarkAssignment** — Assign bookmark names to each commit in the
+   selected path. Navigate rows with `↑`/`↓` (`j`/`k`). Rows are displayed
+   in reverse order (leaf at top, trunk at bottom). Confirm with Enter,
+   cancel back to GraphView with Esc/`q`.
+
+### Bookmark Row State Cycle
+
+Each non-trunk row cycles through states via Space (forward) / `b` (reverse):
+
+```
+[x]use → [~]auto → [>]type → [+]new → [*]custom → [ ]skip
+```
+
+(`[*]custom` only present when `--bookmark-command` is configured.)
+
+| Checkbox | State             | Color        | Description                                       |
+|----------|-------------------|--------------|---------------------------------------------------|
+| `[x]`   | UseExisting(idx)  | green, bold  | Cycle through existing bookmarks on the commit     |
+| `[~]`   | UseTfidf          | blue, bold   | TF-IDF name from commit description + files        |
+| `[>]`   | UserInput         | lt-yellow    | Manual entry — press `i` to edit, validates live   |
+| `[+]`   | UseGenerated      | yellow, bold | Auto `stakk-<change_id[:12]>`                      |
+| `[*]`   | UseCustom         | cyan, bold   | External `--bookmark-command` with async spinner   |
+| `[ ]`   | Unchecked         | dark gray    | Excluded from submission                           |
+
+States are **skipped** when they would produce no name or a duplicate of
+another state's name (e.g., UseTfidf skipped if it matches an existing
+bookmark; UseGenerated skipped if it matches an existing one).
+
+### Regeneration
+
+`r`/`R` on UseTfidf cycles through up to 6 variations. On UseCustom it
+clears the cache and re-fires the external command.
+
+### Dynamic TF-IDF Recomputation
+
+The "dynamic segment" for a row = all included (toggled-on) commits from
+trunk up to that row. Toggling a row recomputes UseTfidf names for all
+subsequent rows in the stack.
+
+### Edit Mode
+
+Pressing `i` on a UserInput row enters edit mode (insert chars, Backspace
+to delete, Esc/Enter to finish). Invalid names render in red. The help line
+changes to: `Type name  Backspace delete  Esc/Enter done`.
+
+### Context-Aware Help Line
+
+The bookmark screen help line updates based on the currently selected row's
+state, adding relevant keys (e.g., `i edit` on UserInput rows, `r/R vary`
+on UseTfidf rows, `r/R regenerate` on UseCustom rows).
+
+### Validation on Confirm
+
+Enter in BookmarkAssignment runs `build_result()` which validates git ref
+rules, checks for duplicate names across included rows, and ensures no
+bookmark is still loading. Errors display in the subtitle bar (red, bold).
+
+### Async Bookmark Commands
+
+UseCustom spawns a background task per row. Uses `BookmarkNameCache`
+(keyed by commit IDs) with `Computing`/`Computed` entries. Computing
+entries time out after 60s. The event loop polls at 80ms while commands
+are in-flight to animate the spinner (10-frame animation).
 
 ## Patterns & Gotchas
 
