@@ -1,9 +1,9 @@
 [tools]
 cargo-binstall = "latest"
-"cargo:cargo-dist" = "latest"
 "cargo:cargo-edit" = "latest"
 "cargo:cargo-nextest" = "latest"
 "cargo:release-plz" = "latest"
+"cargo:cargo-dist" = "0.31.0"
 
 [tasks.fmt]
 description = "Format code"
