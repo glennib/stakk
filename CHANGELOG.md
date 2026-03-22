@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.10.0](https://github.com/glennib/stakk/compare/v1.9.0...v1.10.0) - 2026-03-22
+
+### Added
+
+- *(config)* add TOML config file support with layered precedence
+- *(submit)* add --pr-mode flag with regular/draft variants
+
+### Other
+
+- Merge pull request #52 from glennib/gb-config-clap-addition
+
 ## [1.9.0](https://github.com/glennib/stakk/compare/v1.8.0...v1.9.0) - 2026-03-22
 
 ### Added
