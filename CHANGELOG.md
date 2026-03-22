@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.10.1](https://github.com/glennib/stakk/compare/v1.10.0...v1.10.1) - 2026-03-22
+
+### Fixed
+
+- *(select)* bust BookmarkNameCache on r/R for UseCustom rows
+
+### Other
+
+- update gif
+- update gif
+
 ## [1.10.0](https://github.com/glennib/stakk/compare/v1.9.0...v1.10.0) - 2026-03-22
 
 ### Added
