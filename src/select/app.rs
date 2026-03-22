@@ -369,6 +369,18 @@ fn run_event_loop(
                             };
                             match result {
                                 VaryResult::NeedsRefire => {
+                                    // Bust the cache so the command actually re-runs
+                                    // instead of returning the previous result.
+                                    let segment = bookmark_gen::dynamic_segment_commits(
+                                        &state.rows,
+                                        state.cursor,
+                                    );
+                                    let key = bookmark_gen::cache_key(&segment);
+                                    bookmark_cache
+                                        .lock()
+                                        .expect("cache mutex poisoned")
+                                        .remove(&key);
+
                                     if let Some(cmd) = bookmark_command {
                                         fire_pending_commands(
                                             state,
