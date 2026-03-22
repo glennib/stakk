@@ -485,6 +485,7 @@ mod tests {
             custom_name: None,
             tfidf_name: None,
             user_input_name: None,
+            existing_bookmark_idx: 0,
             has_bookmark_command: false,
         }
     }

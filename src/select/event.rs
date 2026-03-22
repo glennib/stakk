@@ -22,10 +22,11 @@ pub enum Action {
     Toggle,
     /// Toggle checkbox backward (bookmark assignment screen).
     ReverseToggle,
-    /// Regenerate name forward (TF-IDF variation or re-fire custom command).
-    Regenerate,
-    /// Regenerate name backward (TF-IDF variation in reverse).
-    ReverseRegenerate,
+    /// Vary within current state forward (cycle existing bookmarks, TF-IDF
+    /// variations, or re-fire custom command).
+    Vary,
+    /// Vary within current state backward (reverse cycle).
+    ReverseVary,
     /// Cancel / go back.
     Cancel,
     /// Quit immediately (Ctrl-C).
@@ -74,8 +75,8 @@ fn map_key(code: KeyCode, modifiers: KeyModifiers) -> Action {
         KeyCode::Char(' ') => Action::Toggle,
         KeyCode::Char('b') => Action::ReverseToggle,
         KeyCode::Char('i') => Action::EnterEdit,
-        KeyCode::Char('r') => Action::Regenerate,
-        KeyCode::Char('R') => Action::ReverseRegenerate,
+        KeyCode::Char('r') => Action::Vary,
+        KeyCode::Char('R') => Action::ReverseVary,
         KeyCode::Esc | KeyCode::Char('q') => Action::Cancel,
         _ => Action::None,
     }
@@ -159,18 +160,15 @@ mod tests {
     }
 
     #[test]
-    fn regenerate_key() {
-        assert_eq!(
-            map_event(&key_event(KeyCode::Char('r'))),
-            Action::Regenerate
-        );
+    fn vary_key() {
+        assert_eq!(map_event(&key_event(KeyCode::Char('r'))), Action::Vary);
     }
 
     #[test]
-    fn uppercase_r_is_reverse_regenerate() {
+    fn uppercase_r_is_reverse_vary() {
         assert_eq!(
             map_event(&key_event(KeyCode::Char('R'))),
-            Action::ReverseRegenerate
+            Action::ReverseVary
         );
     }
 

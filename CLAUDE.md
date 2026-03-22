@@ -146,7 +146,8 @@ bookmarks to commits.
 
 ### Bookmark Row State Cycle
 
-Each non-trunk row cycles through states via Space (forward) / `b` (reverse):
+Each non-trunk row cycles through state *types* via Space (forward) / `b`
+(reverse). Each type is a single stop — Space never cycles within a type:
 
 ```
 [x]use → [~]auto → [>]type → [+]new → [*]custom → [ ]skip
@@ -156,7 +157,7 @@ Each non-trunk row cycles through states via Space (forward) / `b` (reverse):
 
 | Checkbox | State             | Color        | Description                                       |
 |----------|-------------------|--------------|---------------------------------------------------|
-| `[x]`   | UseExisting(idx)  | green, bold  | Cycle through existing bookmarks on the commit     |
+| `[x]`   | UseExisting(idx)  | green, bold  | Use an existing bookmark; `r`/`R` cycles when >1  |
 | `[~]`   | UseTfidf          | blue, bold   | TF-IDF name from commit description + files        |
 | `[>]`   | UserInput         | lt-yellow    | Manual entry — press `i` to edit, validates live   |
 | `[+]`   | UseGenerated      | yellow, bold | Auto `stakk-<change_id[:12]>`                      |
@@ -167,10 +168,12 @@ States are **skipped** when they would produce no name or a duplicate of
 another state's name (e.g., UseTfidf skipped if it matches an existing
 bookmark; UseGenerated skipped if it matches an existing one).
 
-### Regeneration
+### Variation (`r`/`R`)
 
-`r`/`R` on UseTfidf cycles through up to 6 variations. On UseCustom it
-clears the cache and re-fires the external command.
+`r`/`R` cycles *within* the current state type:
+- **UseExisting**: cycles through existing bookmarks (only when >1 exist).
+- **UseTfidf**: cycles through up to 6 name variations.
+- **UseCustom**: clears the cache and re-fires the external command.
 
 ### Dynamic TF-IDF Recomputation
 
@@ -187,8 +190,9 @@ changes to: `Type name  Backspace delete  Esc/Enter done`.
 ### Context-Aware Help Line
 
 The bookmark screen help line updates based on the currently selected row's
-state, adding relevant keys (e.g., `i edit` on UserInput rows, `r/R vary`
-on UseTfidf rows, `r/R regenerate` on UseCustom rows).
+state, adding relevant keys (e.g., `r/R cycle` on UseExisting rows with >1
+bookmark, `i edit` on UserInput rows, `r/R vary` on UseTfidf rows,
+`r/R regenerate` on UseCustom rows).
 
 ### Validation on Confirm
 

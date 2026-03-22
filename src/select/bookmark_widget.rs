@@ -2,8 +2,8 @@
 //!
 //! Shows commits on the selected trunk→leaf path. Users can toggle existing
 //! bookmarks on/off and generate new `stakk-<change_id>` bookmarks for
-//! unmarked commits. Each non-trunk row cycles through states:
-//! `UseExisting(0)` → … → `UseExisting(N-1)` → `UseGenerated` → `Unchecked`.
+//! unmarked commits. Space/b cycles through state *types* (one stop per type);
+//! r/R cycles *within* a state (existing bookmarks, TF-IDF variations).
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
@@ -90,6 +90,8 @@ pub struct BookmarkRow {
     pub tfidf_name: Option<(String, usize)>,
     /// Cached user-typed bookmark name (preserved across state cycles).
     pub user_input_name: Option<String>,
+    /// Cached index into `existing_bookmarks` (preserved across state cycles).
+    pub existing_bookmark_idx: usize,
     /// Whether this is the trunk row (not toggleable).
     pub is_trunk: bool,
     /// Author signature.
@@ -131,11 +133,13 @@ pub enum SelectionError {
     InvalidName(String),
 }
 
-/// Result of a [`BookmarkAssignmentState::regenerate_current`] call.
+/// Result of a [`BookmarkAssignmentState::vary_current`] call.
 #[derive(Debug, PartialEq, Eq)]
-pub enum RegenerateResult {
-    /// Nothing to regenerate (not on a regenerable state).
+pub enum VaryResult {
+    /// Nothing to vary (not on a variable state, or only one option).
     Noop,
+    /// Cycled to a different existing bookmark.
+    ExistingCycled,
     /// TF-IDF variation was cycled successfully.
     TfidfCycled,
     /// No other TF-IDF variation produced a different name.
@@ -237,6 +241,7 @@ impl BookmarkAssignmentState {
                     author: node.author.clone(),
                     files: node.files.clone(),
                     has_bookmark_command,
+                    existing_bookmark_idx: 0,
                 }
             })
             .collect();
@@ -298,12 +303,8 @@ impl BookmarkAssignmentState {
         // full rows slice, so we do that after releasing the borrow.
         let next = match &current_state {
             RowState::UseExisting(idx) => {
-                let next_idx = idx + 1;
-                if next_idx < row.existing_bookmarks.len() {
-                    RowState::UseExisting(next_idx)
-                } else {
-                    self.next_after_existing(cursor)
-                }
+                self.rows[cursor].existing_bookmark_idx = *idx;
+                self.next_after_existing(cursor)
             }
             RowState::UseTfidf(_) => self.next_after_tfidf(cursor),
             RowState::UserInput(text) => {
@@ -323,7 +324,7 @@ impl BookmarkAssignmentState {
                 if row.existing_bookmarks.is_empty() {
                     self.next_after_existing(cursor)
                 } else {
-                    RowState::UseExisting(0)
+                    RowState::UseExisting(row.existing_bookmark_idx)
                 }
             }
         };
@@ -390,15 +391,12 @@ impl BookmarkAssignmentState {
                 if row.existing_bookmarks.is_empty() {
                     RowState::Unchecked
                 } else {
-                    RowState::UseExisting(row.existing_bookmarks.len() - 1)
+                    RowState::UseExisting(row.existing_bookmark_idx)
                 }
             }
             RowState::UseExisting(idx) => {
-                if *idx > 0 {
-                    RowState::UseExisting(idx - 1)
-                } else {
-                    RowState::Unchecked
-                }
+                self.rows[cursor].existing_bookmark_idx = *idx;
+                RowState::Unchecked
             }
         };
 
@@ -445,7 +443,7 @@ impl BookmarkAssignmentState {
         if row.existing_bookmarks.is_empty() {
             RowState::Unchecked
         } else {
-            RowState::UseExisting(row.existing_bookmarks.len() - 1)
+            RowState::UseExisting(row.existing_bookmark_idx)
         }
     }
 
@@ -507,18 +505,28 @@ impl BookmarkAssignmentState {
         Some(TfidfNameState { name, variation })
     }
 
-    /// Regenerate the current row's name (cycle TF-IDF variation or
-    /// invalidate custom name cache).
-    pub fn regenerate_current(&mut self) -> RegenerateResult {
+    /// Vary the current row's name within its current state type (cycle
+    /// existing bookmarks, TF-IDF variations, or re-fire custom command).
+    pub fn vary_current(&mut self) -> VaryResult {
         let cursor = self.cursor;
         let Some(row) = self.rows.get(cursor) else {
-            return RegenerateResult::Noop;
+            return VaryResult::Noop;
         };
         if row.is_trunk {
-            return RegenerateResult::Noop;
+            return VaryResult::Noop;
         }
 
         match &row.state {
+            RowState::UseExisting(idx) => {
+                let count = self.rows[cursor].existing_bookmarks.len();
+                if count <= 1 {
+                    return VaryResult::Noop;
+                }
+                let new_idx = (idx + 1) % count;
+                self.rows[cursor].state = RowState::UseExisting(new_idx);
+                self.rows[cursor].existing_bookmark_idx = new_idx;
+                VaryResult::ExistingCycled
+            }
             RowState::UseTfidf(ts) => {
                 let old_variation = ts.variation;
                 // Try up to 6 variations.
@@ -526,33 +534,43 @@ impl BookmarkAssignmentState {
                     let new_variation = (old_variation + delta) % 6;
                     if let Some(tfidf_state) = self.try_make_tfidf(cursor, new_variation) {
                         self.rows[cursor].state = RowState::UseTfidf(tfidf_state);
-                        return RegenerateResult::TfidfCycled;
+                        return VaryResult::TfidfCycled;
                     }
                 }
-                RegenerateResult::TfidfNoVariation
+                VaryResult::TfidfNoVariation
             }
             RowState::UseCustom(_) => {
                 // Invalidate cached custom name and set to Loading.
                 self.rows[cursor].custom_name = None;
                 self.rows[cursor].state = RowState::UseCustom(CustomNameState::Loading);
-                RegenerateResult::NeedsRefire
+                VaryResult::NeedsRefire
             }
-            _ => RegenerateResult::Noop,
+            _ => VaryResult::Noop,
         }
     }
 
-    /// Regenerate the current row's name backward (cycle TF-IDF variation in
-    /// reverse or invalidate custom name cache).
-    pub fn regenerate_current_reverse(&mut self) -> RegenerateResult {
+    /// Vary the current row's name backward (cycle existing bookmarks or
+    /// TF-IDF variations in reverse, or re-fire custom command).
+    pub fn vary_current_reverse(&mut self) -> VaryResult {
         let cursor = self.cursor;
         let Some(row) = self.rows.get(cursor) else {
-            return RegenerateResult::Noop;
+            return VaryResult::Noop;
         };
         if row.is_trunk {
-            return RegenerateResult::Noop;
+            return VaryResult::Noop;
         }
 
         match &row.state {
+            RowState::UseExisting(idx) => {
+                let count = self.rows[cursor].existing_bookmarks.len();
+                if count <= 1 {
+                    return VaryResult::Noop;
+                }
+                let new_idx = (idx + count - 1) % count;
+                self.rows[cursor].state = RowState::UseExisting(new_idx);
+                self.rows[cursor].existing_bookmark_idx = new_idx;
+                VaryResult::ExistingCycled
+            }
             RowState::UseTfidf(ts) => {
                 let old_variation = ts.variation;
                 // Try up to 6 variations in reverse.
@@ -560,18 +578,18 @@ impl BookmarkAssignmentState {
                     let new_variation = (old_variation + 6 - delta) % 6;
                     if let Some(tfidf_state) = self.try_make_tfidf(cursor, new_variation) {
                         self.rows[cursor].state = RowState::UseTfidf(tfidf_state);
-                        return RegenerateResult::TfidfCycled;
+                        return VaryResult::TfidfCycled;
                     }
                 }
-                RegenerateResult::TfidfNoVariation
+                VaryResult::TfidfNoVariation
             }
             RowState::UseCustom(_) => {
                 // Same as forward — invalidate and re-fire.
                 self.rows[cursor].custom_name = None;
                 self.rows[cursor].state = RowState::UseCustom(CustomNameState::Loading);
-                RegenerateResult::NeedsRefire
+                VaryResult::NeedsRefire
             }
-            _ => RegenerateResult::Noop,
+            _ => VaryResult::Noop,
         }
     }
 
@@ -951,6 +969,7 @@ pub fn bookmark_help_line(
     has_bookmark_command: bool,
     editing: bool,
     current_row_state: Option<&RowState>,
+    existing_count: usize,
 ) -> Line<'static> {
     let key_style = Style::default()
         .fg(Color::Yellow)
@@ -983,6 +1002,10 @@ pub fn bookmark_help_line(
         spans.push(Span::raw(" edit  "));
     }
     match current_row_state {
+        Some(RowState::UseExisting(_)) if existing_count > 1 => {
+            spans.push(Span::styled("r/R", key_style));
+            spans.push(Span::raw(" cycle  "));
+        }
         Some(RowState::UseTfidf(_)) => {
             spans.push(Span::styled("r/R", key_style));
             spans.push(Span::raw(" vary  "));
@@ -1157,10 +1180,8 @@ mod tests {
         let mut state = BookmarkAssignmentState::from_path(&refs, false, None);
 
         // Forward to Unchecked first.
-        // UseExisting(0) → UseExisting(1) → UseExisting(2) → UseTfidf →
-        // UserInput → UseGenerated → Unchecked.
-        state.toggle_current();
-        state.toggle_current();
+        // Space skips past all existing as one stop:
+        // UseExisting(0) → UseTfidf → UserInput → UseGenerated → Unchecked.
         state.toggle_current();
         state.toggle_current();
         state.toggle_current();
@@ -1179,19 +1200,11 @@ mod tests {
         state.toggle_current_reverse();
         assert!(matches!(&state.rows[1].state, RowState::UseTfidf(_)));
 
-        // → UseExisting(2) (last existing)
-        state.toggle_current_reverse();
-        assert_eq!(state.rows[1].state, RowState::UseExisting(2));
-
-        // → UseExisting(1)
-        state.toggle_current_reverse();
-        assert_eq!(state.rows[1].state, RowState::UseExisting(1));
-
-        // → UseExisting(0)
+        // → UseExisting(0) (cached index, single stop)
         state.toggle_current_reverse();
         assert_eq!(state.rows[1].state, RowState::UseExisting(0));
 
-        // → Unchecked
+        // → Unchecked (single stop, no cycling through indices)
         state.toggle_current_reverse();
         assert_eq!(state.rows[1].state, RowState::Unchecked);
     }
@@ -1423,6 +1436,7 @@ mod tests {
             state,
             generated_name: Some("stakk-aaaaaaaaaaaa".to_string()),
             user_input_name: None,
+            existing_bookmark_idx: 0,
             custom_name: None,
             tfidf_name: None,
             is_trunk: false,
@@ -1519,14 +1533,8 @@ mod tests {
 
         assert_eq!(state.rows[1].state, RowState::UseExisting(0));
 
-        state.toggle_current();
-        assert_eq!(state.rows[1].state, RowState::UseExisting(1));
-
-        state.toggle_current();
-        assert_eq!(state.rows[1].state, RowState::UseExisting(2));
-
-        // "work" produces a TF-IDF name → UseTfidf before UserInput →
-        // UseGenerated.
+        // Space skips past all existing as one stop → UseTfidf.
+        // "work" produces a TF-IDF name.
         state.toggle_current();
         assert!(matches!(&state.rows[1].state, RowState::UseTfidf(_)));
 
@@ -1540,6 +1548,19 @@ mod tests {
         assert_eq!(state.rows[1].state, RowState::Unchecked);
 
         state.toggle_current();
+        assert_eq!(state.rows[1].state, RowState::UseExisting(0));
+
+        // r/R cycles within existing bookmarks.
+        let r = state.vary_current();
+        assert_eq!(r, VaryResult::ExistingCycled);
+        assert_eq!(state.rows[1].state, RowState::UseExisting(1));
+
+        let r = state.vary_current();
+        assert_eq!(r, VaryResult::ExistingCycled);
+        assert_eq!(state.rows[1].state, RowState::UseExisting(2));
+
+        let r = state.vary_current();
+        assert_eq!(r, VaryResult::ExistingCycled);
         assert_eq!(state.rows[1].state, RowState::UseExisting(0));
     }
 
@@ -1563,10 +1584,8 @@ mod tests {
 
         assert_eq!(state.rows[1].state, RowState::UseExisting(0));
 
-        state.toggle_current();
-        assert_eq!(state.rows[1].state, RowState::UseExisting(1));
-
-        // "work" produces a TF-IDF name → UseTfidf.
+        // Space skips past all existing → UseTfidf.
+        // "work" produces a TF-IDF name.
         state.toggle_current();
         assert!(matches!(&state.rows[1].state, RowState::UseTfidf(_)));
 
@@ -1591,8 +1610,9 @@ mod tests {
         let refs: Vec<&LayoutNode> = nodes.iter().collect();
         let mut state = BookmarkAssignmentState::from_path(&refs, false, None);
 
-        // Toggle once: UseExisting(0) → UseExisting(1).
-        state.toggle_current();
+        // Use r/R (vary) to cycle from UseExisting(0) → UseExisting(1).
+        let vary = state.vary_current();
+        assert_eq!(vary, VaryResult::ExistingCycled);
 
         let result = state.build_result().unwrap();
         assert_eq!(result.len(), 1);
@@ -1646,7 +1666,7 @@ mod tests {
     }
 
     #[test]
-    fn regenerate_cycles_tfidf_variation() {
+    fn vary_cycles_tfidf_variation() {
         let nodes = [
             make_node("", "trunk", &[], true, false),
             make_node(
@@ -1670,16 +1690,16 @@ mod tests {
             other => panic!("expected UseTfidf, got {other:?}"),
         };
 
-        // Regenerate should cycle variation.
-        let result = state.regenerate_current();
-        assert_ne!(result, RegenerateResult::NeedsRefire);
+        // Vary should cycle variation.
+        let result = state.vary_current();
+        assert_ne!(result, VaryResult::NeedsRefire);
         match &state.rows[1].state {
             RowState::UseTfidf(ts) => {
                 // Variation changed (unless all variations produce the same
                 // result, which is fine).
                 assert!(ts.variation != 0 || ts.name == v0_name);
             }
-            other => panic!("expected UseTfidf after regenerate, got {other:?}"),
+            other => panic!("expected UseTfidf after vary, got {other:?}"),
         }
     }
 

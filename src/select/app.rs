@@ -30,9 +30,9 @@ use super::bookmark_widget::BookmarkAssignmentState;
 use super::bookmark_widget::BookmarkWidget;
 use super::bookmark_widget::CustomNameState;
 use super::bookmark_widget::InputMode;
-use super::bookmark_widget::RegenerateResult;
 use super::bookmark_widget::RowState;
 use super::bookmark_widget::SelectionError;
+use super::bookmark_widget::VaryResult;
 use super::bookmark_widget::bookmark_help_line;
 use super::event::Action;
 use super::event::EditAction;
@@ -268,8 +268,8 @@ fn run_event_loop(
                     | Action::Toggle
                     | Action::ReverseToggle
                     | Action::EnterEdit
-                    | Action::Regenerate
-                    | Action::ReverseRegenerate
+                    | Action::Vary
+                    | Action::ReverseVary
                     | Action::None => {}
                 }
             }
@@ -359,16 +359,16 @@ fn run_event_loop(
                             state.enter_edit_mode();
                         }
                     }
-                    Action::Regenerate | Action::ReverseRegenerate => {
+                    Action::Vary | Action::ReverseVary => {
                         error_message = None;
                         if let Some(state) = bookmark_state {
-                            let result = if action == Action::ReverseRegenerate {
-                                state.regenerate_current_reverse()
+                            let result = if action == Action::ReverseVary {
+                                state.vary_current_reverse()
                             } else {
-                                state.regenerate_current()
+                                state.vary_current()
                             };
                             match result {
-                                RegenerateResult::NeedsRefire => {
+                                VaryResult::NeedsRefire => {
                                     if let Some(cmd) = bookmark_command {
                                         fire_pending_commands(
                                             state,
@@ -378,11 +378,13 @@ fn run_event_loop(
                                         );
                                     }
                                 }
-                                RegenerateResult::TfidfNoVariation => {
+                                VaryResult::TfidfNoVariation => {
                                     error_message =
                                         Some("No other auto-name variations available".to_string());
                                 }
-                                RegenerateResult::TfidfCycled | RegenerateResult::Noop => {}
+                                VaryResult::ExistingCycled
+                                | VaryResult::TfidfCycled
+                                | VaryResult::Noop => {}
                             }
                         }
                     }
@@ -725,6 +727,10 @@ fn render_bookmark_screen(
             bookmark_command.is_some(),
             editing,
             state.rows.get(state.cursor).map(|r| &r.state),
+            state
+                .rows
+                .get(state.cursor)
+                .map_or(0, |r| r.existing_bookmarks.len()),
         ),
         help_area,
     );
