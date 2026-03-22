@@ -398,6 +398,11 @@ mod tests {
                         email: "test@test.com".to_string(),
                         timestamp: "T".to_string(),
                     },
+                    committer: crate::jj::types::Signature {
+                        name: "Test".to_string(),
+                        email: "test@test.com".to_string(),
+                        timestamp: "T".to_string(),
+                    },
                     files: vec![],
                     short_change_id: change_id[..4.min(change_id.len())].to_string(),
                 })

@@ -285,6 +285,7 @@ async fn traverse_and_discover_segments<R: JjRunner>(
                     change_id: change.change_id.clone(),
                     description: change.description.clone(),
                     author: change.author.clone(),
+                    committer: change.committer.clone(),
                     short_change_id: change.short_change_id.clone(),
                     files: vec![],
                 });
@@ -350,11 +351,7 @@ fn group_segments_into_stacks(
 ) -> Vec<BranchStack> {
     let mut stacks = Vec::new();
 
-    // Sort leaves for deterministic output.
-    let mut leaves: Vec<&String> = stack_leaves.iter().collect();
-    leaves.sort();
-
-    for leaf_id in leaves {
+    for leaf_id in stack_leaves {
         let mut path = vec![leaf_id.clone()];
         let mut current = leaf_id.clone();
 
@@ -376,7 +373,31 @@ fn group_segments_into_stacks(
         });
     }
 
+    // Sort stacks by committer timestamps: collect each stack's commit
+    // timestamps in descending order, then sort stacks so the one with the
+    // most recent timestamp comes first (leftmost column). Ties are broken
+    // by the next-most-recent timestamp, etc. Final tiebreaker is the leaf
+    // change_id for full determinism.
+    stacks.sort_by(|a, b| {
+        let ts_a = collect_timestamps_desc(a);
+        let ts_b = collect_timestamps_desc(b);
+        // Reverse comparison: largest (newest) timestamps first.
+        ts_b.cmp(&ts_a)
+    });
+
     stacks
+}
+
+/// Collect all committer timestamps from a stack's commits, sorted descending.
+fn collect_timestamps_desc(stack: &BranchStack) -> Vec<&str> {
+    let mut timestamps: Vec<&str> = stack
+        .segments
+        .iter()
+        .flat_map(|seg| seg.commits.iter())
+        .map(|c| c.committer.timestamp.as_str())
+        .collect();
+    timestamps.sort_unstable_by(|a, b| b.cmp(a));
+    timestamps
 }
 
 /// Topological sort using Kahn's algorithm.
@@ -1164,22 +1185,43 @@ mod tests {
         assert_eq!(seg.commits[0].author.name, "T");
     }
 
-    /// `group_segments_into_stacks` is deterministic (sorted by leaf
-    /// `change_id`).
+    /// `group_segments_into_stacks` orders by most-recent committer timestamp
+    /// first (leftmost).
     #[test]
-    fn stacks_are_deterministically_ordered() {
+    fn stacks_are_ordered_by_timestamp() {
+        use crate::jj::types::Signature;
+
         let mut segments = HashMap::new();
         let adjacency_list = HashMap::new();
         let mut stack_leaves = HashSet::new();
 
-        // Three independent leaves (no shared root).
-        for id in ["z_leaf", "a_leaf", "m_leaf"] {
+        let test_sig = |ts: &str| Signature {
+            name: "T".to_string(),
+            email: "t@t.t".to_string(),
+            timestamp: ts.to_string(),
+        };
+
+        // Three independent leaves with different timestamps.
+        // z_leaf has the newest timestamp, a_leaf the oldest.
+        for (id, ts) in [
+            ("z_leaf", "2026-03-01T00:00:00Z"),
+            ("a_leaf", "2026-03-03T00:00:00Z"),
+            ("m_leaf", "2026-03-02T00:00:00Z"),
+        ] {
             segments.insert(
                 id.to_string(),
                 BookmarkSegment {
                     bookmark_names: vec![id.to_string()],
                     change_id: id.to_string(),
-                    commits: vec![],
+                    commits: vec![SegmentCommit {
+                        commit_id: format!("c_{id}"),
+                        change_id: id.to_string(),
+                        description: String::new(),
+                        author: test_sig(ts),
+                        committer: test_sig(ts),
+                        short_change_id: id[..4].to_string(),
+                        files: vec![],
+                    }],
                 },
             );
             stack_leaves.insert(id.to_string());
@@ -1188,10 +1230,10 @@ mod tests {
         let stacks = group_segments_into_stacks(&stack_leaves, &adjacency_list, &segments);
 
         assert_eq!(stacks.len(), 3);
-        // Sorted alphabetically by leaf change_id.
-        assert_eq!(stacks[0].segments[0].change_id, "a_leaf");
-        assert_eq!(stacks[1].segments[0].change_id, "m_leaf");
-        assert_eq!(stacks[2].segments[0].change_id, "z_leaf");
+        // Sorted by newest committer timestamp first.
+        assert_eq!(stacks[0].segments[0].change_id, "a_leaf"); // 2026-03-03
+        assert_eq!(stacks[1].segments[0].change_id, "m_leaf"); // 2026-03-02
+        assert_eq!(stacks[2].segments[0].change_id, "z_leaf"); // 2026-03-01
     }
 
     /// Non-user bookmarks on a commit are filtered out; segment uses only

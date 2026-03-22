@@ -13,6 +13,7 @@ pub struct SegmentCommit {
     pub change_id: String,
     pub description: String,
     pub author: Signature,
+    pub committer: Signature,
     /// Shortest unique change ID prefix (from jj).
     pub short_change_id: String,
     /// Files changed by this commit.

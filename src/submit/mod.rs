@@ -726,6 +726,11 @@ mod tests {
                     email: "test@test.com".to_string(),
                     timestamp: "T".to_string(),
                 },
+                committer: crate::jj::types::Signature {
+                    name: "Test".to_string(),
+                    email: "test@test.com".to_string(),
+                    timestamp: "T".to_string(),
+                },
                 files: vec![],
                 short_change_id: change_id[..4.min(change_id.len())].to_string(),
             }],
@@ -1559,6 +1564,11 @@ mod tests {
                 email: "test@test.com".to_string(),
                 timestamp: "T".to_string(),
             },
+            committer: crate::jj::types::Signature {
+                name: "Test".to_string(),
+                email: "test@test.com".to_string(),
+                timestamp: "T".to_string(),
+            },
             files: vec![],
             short_change_id: "ch1".to_string(),
         }];
@@ -1577,6 +1587,11 @@ mod tests {
             change_id: "ch1".to_string(),
             description: "Add feature X".to_string(),
             author: crate::jj::types::Signature {
+                name: "Test".to_string(),
+                email: "test@test.com".to_string(),
+                timestamp: "T".to_string(),
+            },
+            committer: crate::jj::types::Signature {
                 name: "Test".to_string(),
                 email: "test@test.com".to_string(),
                 timestamp: "T".to_string(),
@@ -1601,6 +1616,11 @@ mod tests {
                     email: "test@test.com".to_string(),
                     timestamp: "T".to_string(),
                 },
+                committer: crate::jj::types::Signature {
+                    name: "Test".to_string(),
+                    email: "test@test.com".to_string(),
+                    timestamp: "T".to_string(),
+                },
                 files: vec![],
                 short_change_id: "ch1".to_string(),
             },
@@ -1609,6 +1629,11 @@ mod tests {
                 change_id: "ch2".to_string(),
                 description: "Second commit".to_string(),
                 author: crate::jj::types::Signature {
+                    name: "Test".to_string(),
+                    email: "test@test.com".to_string(),
+                    timestamp: "T".to_string(),
+                },
+                committer: crate::jj::types::Signature {
                     name: "Test".to_string(),
                     email: "test@test.com".to_string(),
                     timestamp: "T".to_string(),

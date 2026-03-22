@@ -280,6 +280,7 @@ fn parse_log_entries(output: &str) -> Result<Vec<LogEntry>, JjError> {
             description: raw.commit.description,
             parents: raw.commit.parents,
             author: raw.commit.author,
+            committer: raw.commit.committer,
             local_bookmark_names: raw.local_bookmarks.iter().map(|b| b.name.clone()).collect(),
             remote_bookmark_names: raw
                 .remote_bookmarks

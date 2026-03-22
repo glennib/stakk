@@ -10,7 +10,6 @@ pub struct CommitData {
     pub change_id: String,
     pub description: String,
     pub author: Signature,
-    #[expect(dead_code, reason = "deserialized for completeness, used later")]
     pub committer: Signature,
 }
 
@@ -96,6 +95,7 @@ pub struct LogEntry {
     pub description: String,
     pub parents: Vec<String>,
     pub author: Signature,
+    pub committer: Signature,
     pub local_bookmark_names: Vec<String>,
     pub remote_bookmark_names: Vec<String>,
     /// Shortest unique change ID prefix (from jj).
