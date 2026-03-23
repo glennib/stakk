@@ -207,7 +207,7 @@ bookmarks_revset = "mine() ~ trunk() ~ immutable()"
 # (default: "heads((mine() ~ empty() ~ immutable()) & trunk()..)")
 heads_revset = "heads((mine() ~ empty() ~ immutable()) & trunk()..)"
 
-# [EXPERIMENTAL] Shell command for generating custom bookmark names
+# Shell command for generating custom bookmark names
 bookmark_command = "my-bookmark-namer"
 
 # Whether to merge with the user config (default: true)
@@ -277,7 +277,7 @@ stack_placement = "comment"
 | `STAKK_TEMPLATE` | Path to a custom minijinja template for stack comments (overridden by `--template`) |
 | `STAKK_STACK_PLACEMENT` | Where to place the stack info: `comment` (default) or `body` (overridden by `--stack-placement`) |
 | `STAKK_AUTO_PREFIX` | Prefix for auto-generated bookmark names (overridden by `--auto-prefix`) |
-| `STAKK_EXPERIMENTAL_BOOKMARK_COMMAND` | Shell command for generating custom bookmark names (overridden by `--experimental-bookmark-command`) |
+| `STAKK_BOOKMARK_COMMAND` | Shell command for generating custom bookmark names (overridden by `--bookmark-command`) |
 | `GITHUB_TOKEN` | GitHub personal access token (see `stakk auth setup`) |
 | `GH_TOKEN` | Alternative to `GITHUB_TOKEN` |
 

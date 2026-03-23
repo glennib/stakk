@@ -126,17 +126,14 @@ pub struct SubmitArgs {
     ///
     /// Only applies to auto-generated names -- not to the default
     /// stakk-<change_id> names or names from
-    /// --experimental-bookmark-command.
+    /// --bookmark-command.
     ///
     /// The prefix is applied before length/character validation, so it
     /// counts toward the 255-byte limit.
     #[arg(long, env = "STAKK_AUTO_PREFIX", verbatim_doc_comment)]
     pub auto_prefix: Option<String>,
 
-    /// [EXPERIMENTAL] Shell command for generating custom bookmark names.
-    ///
-    /// This feature is experimental and may change or be removed in future
-    /// releases.
+    /// Shell command for generating custom bookmark names.
     ///
     /// The command is invoked via sh -c <command> (Unix) or cmd /C
     /// <command> (Windows). It receives a JSON object on stdin describing
@@ -217,11 +214,7 @@ pub struct SubmitArgs {
     ///     | tr '[:upper:]' '[:lower:]' \
     ///     | sed 's/[^a-z0-9]\{1,\}/-/g; s/^-//; s/-$//' \
     ///     | head -c 50
-    #[arg(
-        long = "experimental-bookmark-command",
-        env = "STAKK_EXPERIMENTAL_BOOKMARK_COMMAND",
-        verbatim_doc_comment
-    )]
+    #[arg(long, env = "STAKK_BOOKMARK_COMMAND", verbatim_doc_comment)]
     pub bookmark_command: Option<String>,
 }
 
