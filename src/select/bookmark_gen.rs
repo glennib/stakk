@@ -53,6 +53,22 @@ pub enum BookmarkGenError {
     )]
     InvalidName { name: String, reason: String },
 
+    /// The command timed out.
+    #[error("bookmark command timed out after {timeout_secs}s: {command}")]
+    #[diagnostic(
+        code(stakk::bookmark_command::timeout),
+        help("the command did not finish within the time limit")
+    )]
+    Timeout { command: String, timeout_secs: u64 },
+
+    /// The command produced multiple lines of output.
+    #[error("bookmark command produced multiple lines of output: {command}")]
+    #[diagnostic(
+        code(stakk::bookmark_command::multiline_output),
+        help("the command must print exactly one line to stdout")
+    )]
+    MultilineOutput { command: String },
+
     /// An I/O error.
     #[error("bookmark command I/O error: {0}")]
     #[diagnostic(code(stakk::bookmark_command::io))]
@@ -221,7 +237,7 @@ pub async fn generate_custom_name(
     let input = build_segment_input(rows);
     let json = serde_json::to_string(&input).expect("SegmentInput is always serializable");
 
-    let name = run_command(command, &json).await?;
+    let name = run_command(command, &json, COMPUTING_TIMEOUT).await?;
     validate_bookmark_name(&name)?;
 
     cache.insert(key, CacheEntry::Computed(name.clone()));
@@ -259,6 +275,7 @@ pub(super) fn build_segment_input(rows: &[&BookmarkRow]) -> SegmentInput {
 pub(super) async fn run_command(
     command: &str,
     stdin_data: &str,
+    timeout: Duration,
 ) -> Result<String, BookmarkGenError> {
     use tokio::io::AsyncWriteExt;
     use tokio::process::Command;
@@ -294,7 +311,13 @@ pub(super) async fn run_command(
         // Drop to close stdin so the child can finish.
     }
 
-    let output = child.wait_with_output().await?;
+    let output = tokio::time::timeout(timeout, child.wait_with_output())
+        .await
+        .map_err(|_| BookmarkGenError::Timeout {
+            command: command.to_string(),
+            timeout_secs: timeout.as_secs(),
+        })?
+        .map_err(BookmarkGenError::from)?;
 
     if !output.status.success() {
         return Err(BookmarkGenError::CommandFailed {
@@ -304,6 +327,11 @@ pub(super) async fn run_command(
     }
 
     let name = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if name.contains('\n') {
+        return Err(BookmarkGenError::MultilineOutput {
+            command: command.to_string(),
+        });
+    }
     if name.is_empty() {
         return Err(BookmarkGenError::EmptyOutput {
             command: command.to_string(),
@@ -650,5 +678,23 @@ mod tests {
         // Clean up.
         let _ = std::fs::remove_file(&script_path);
         let _ = std::fs::remove_file(&capture_path);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn command_timeout_returns_error() {
+        let err = run_command("sleep 120", "{}", Duration::from_millis(100))
+            .await
+            .unwrap_err();
+        assert!(matches!(err, BookmarkGenError::Timeout { .. }));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn multiline_output_returns_error() {
+        let err = run_command("printf 'foo\\nbar'", "{}", Duration::from_secs(5))
+            .await
+            .unwrap_err();
+        assert!(matches!(err, BookmarkGenError::MultilineOutput { .. }));
     }
 }

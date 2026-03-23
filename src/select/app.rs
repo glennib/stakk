@@ -517,7 +517,8 @@ fn fire_pending_commands(
         let (tx, rx) = tokio::sync::oneshot::channel();
 
         handle.spawn(async move {
-            let result = bookmark_gen::run_command(&cmd, &json).await;
+            let result =
+                bookmark_gen::run_command(&cmd, &json, bookmark_gen::COMPUTING_TIMEOUT).await;
 
             if let Ok(mut guard) = task_cache.lock() {
                 match &result {
