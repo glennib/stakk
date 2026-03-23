@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.11.0](https://github.com/glennib/stakk/compare/v1.10.4...v1.11.0) - 2026-03-23
+
+### Added
+
+- *(cli)* rename --experimental-bookmark-command to --bookmark-command
+- *(select)* add schema_version to bookmark command JSON protocol
+
+### Fixed
+
+- *(select)* add command-level timeout, timeout error, and multiline detection for bookmark commands
+
+### Other
+
+- polish help text and docs
+- *(cli)* add example command to bookmark command help text
+- *(select)* add toggle cycle and skip-logic tests for custom bookmark command
+
 ## [1.10.4](https://github.com/glennib/stakk/compare/v1.10.3...v1.10.4) - 2026-03-22
 
 ### Other
