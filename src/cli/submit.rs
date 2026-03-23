@@ -209,6 +209,14 @@ pub struct SubmitArgs {
     /// Expected stdout (one line, trimmed):
     ///
     ///   login-page
+    ///
+    /// Example (lowercase the tip commit description, replace
+    /// non-alphanumeric runs with hyphens, trim to 50 chars):
+    ///
+    ///   jq -r '.commits[-1].description' \
+    ///     | tr '[:upper:]' '[:lower:]' \
+    ///     | sed 's/[^a-z0-9]\{1,\}/-/g; s/^-//; s/-$//' \
+    ///     | head -c 50
     #[arg(
         long = "experimental-bookmark-command",
         env = "STAKK_EXPERIMENTAL_BOOKMARK_COMMAND",
