@@ -22,15 +22,14 @@ use crate::config::Config;
 pub struct Cli {
     /// Path to a config file (overrides automatic discovery).
     ///
-    /// Can also be set via the STAKK_CONFIG environment variable.
-    /// The file is loaded in place of the repo-level `stakk.toml`;
-    /// user-level config is still merged unless `inherit = false`.
-    // Implementation note: this arg exists for `--help` discoverability only.
+    /// The file is loaded in place of the repo-level stakk.toml;
+    /// user-level config is still merged unless inherit = false.
+    // Implementation note: this arg exists for --help discoverability only.
     // Config is loaded *before* clap parsing (so config values can be injected
     // as clap defaults), which means clap's parsed value arrives too late.
     // The actual path is resolved by `config::pre_parse_config_path()` from
     // raw `std::env::args()` / `STAKK_CONFIG`.
-    #[arg(long, global = true, env = "STAKK_CONFIG")]
+    #[arg(long, global = true, env = "STAKK_CONFIG", verbatim_doc_comment)]
     pub config: Option<PathBuf>,
 
     #[command(subcommand)]
@@ -56,7 +55,7 @@ pub enum Commands {
     },
 }
 
-/// Arguments for the `show` subcommand.
+/// Arguments for the show subcommand.
 #[derive(Debug, Args)]
 pub struct ShowArgs {
     #[command(flatten)]
