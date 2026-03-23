@@ -1933,4 +1933,134 @@ mod tests {
         assert!(!state.enter_edit_mode());
         assert!(!state.is_editing());
     }
+
+    #[test]
+    fn toggle_with_custom_command() {
+        let nodes = [
+            make_node("", "trunk", &[], true, false),
+            make_node("ch_a", "work", &["feat"], false, true),
+        ];
+        let refs: Vec<&LayoutNode> = nodes.iter().collect();
+        let mut state = BookmarkAssignmentState::from_path(&refs, true, None);
+
+        assert_eq!(state.cursor, 1);
+        assert_eq!(state.rows[1].state, RowState::UseExisting(0));
+
+        // Cycle: UseExisting → UseTfidf → UserInput → UseGenerated →
+        // UseCustom(Loading) → Unchecked → UseExisting.
+        state.toggle_current();
+        assert!(
+            matches!(&state.rows[1].state, RowState::UseTfidf(_)),
+            "expected UseTfidf, got {:?}",
+            state.rows[1].state
+        );
+
+        state.toggle_current();
+        assert_eq!(state.rows[1].state, RowState::UserInput(String::new()));
+
+        state.toggle_current();
+        assert_eq!(state.rows[1].state, RowState::UseGenerated);
+
+        state.toggle_current();
+        assert!(
+            matches!(
+                &state.rows[1].state,
+                RowState::UseCustom(CustomNameState::Loading)
+            ),
+            "expected UseCustom(Loading), got {:?}",
+            state.rows[1].state
+        );
+
+        state.toggle_current();
+        assert_eq!(state.rows[1].state, RowState::Unchecked);
+
+        state.toggle_current();
+        assert_eq!(state.rows[1].state, RowState::UseExisting(0));
+    }
+
+    #[test]
+    fn reverse_toggle_with_custom_command() {
+        let nodes = [
+            make_node("", "trunk", &[], true, false),
+            make_node("ch_a", "work", &["feat"], false, true),
+        ];
+        let refs: Vec<&LayoutNode> = nodes.iter().collect();
+        let mut state = BookmarkAssignmentState::from_path(&refs, true, None);
+
+        assert_eq!(state.rows[1].state, RowState::UseExisting(0));
+
+        // Reverse: UseExisting(0) → Unchecked.
+        state.toggle_current_reverse();
+        assert_eq!(state.rows[1].state, RowState::Unchecked);
+
+        // Reverse: Unchecked → UseCustom(Loading).
+        state.toggle_current_reverse();
+        assert!(
+            matches!(
+                &state.rows[1].state,
+                RowState::UseCustom(CustomNameState::Loading)
+            ),
+            "expected UseCustom(Loading), got {:?}",
+            state.rows[1].state
+        );
+
+        // Reverse: UseCustom → UseGenerated.
+        state.toggle_current_reverse();
+        assert_eq!(state.rows[1].state, RowState::UseGenerated);
+
+        // Reverse: UseGenerated → UserInput.
+        state.toggle_current_reverse();
+        assert_eq!(state.rows[1].state, RowState::UserInput(String::new()));
+
+        // Reverse: UserInput → UseTfidf.
+        state.toggle_current_reverse();
+        assert!(matches!(&state.rows[1].state, RowState::UseTfidf(_)));
+
+        // Reverse: UseTfidf → UseExisting(0).
+        state.toggle_current_reverse();
+        assert_eq!(state.rows[1].state, RowState::UseExisting(0));
+    }
+
+    #[test]
+    fn toggle_custom_skipped_when_matches_existing() {
+        let nodes = [
+            make_node("", "trunk", &[], true, false),
+            make_node("ch_a", "work", &["feat"], false, true),
+        ];
+        let refs: Vec<&LayoutNode> = nodes.iter().collect();
+        let mut state = BookmarkAssignmentState::from_path(&refs, true, None);
+
+        // Pre-populate custom_name matching an existing bookmark.
+        state.rows[1].custom_name = Some("feat".to_string());
+
+        // Cycle to UseGenerated, then toggle should skip UseCustom →
+        // Unchecked.
+        state.toggle_current(); // UseTfidf
+        state.toggle_current(); // UserInput
+        state.toggle_current(); // UseGenerated
+        state.toggle_current(); // Should skip UseCustom → Unchecked
+        assert_eq!(state.rows[1].state, RowState::Unchecked);
+    }
+
+    #[test]
+    fn toggle_custom_skipped_when_matches_generated() {
+        let nodes = [
+            make_node("", "trunk", &[], true, false),
+            make_node("ch_a", "work", &["feat"], false, true),
+        ];
+        let refs: Vec<&LayoutNode> = nodes.iter().collect();
+        let mut state = BookmarkAssignmentState::from_path(&refs, true, None);
+
+        // Pre-populate custom_name matching the generated name.
+        let gen_name = state.rows[1].generated_name.clone().unwrap();
+        state.rows[1].custom_name = Some(gen_name);
+
+        // Cycle to UseGenerated, then toggle should skip UseCustom →
+        // Unchecked.
+        state.toggle_current(); // UseTfidf
+        state.toggle_current(); // UserInput
+        state.toggle_current(); // UseGenerated
+        state.toggle_current(); // Should skip UseCustom → Unchecked
+        assert_eq!(state.rows[1].state, RowState::Unchecked);
+    }
 }
