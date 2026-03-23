@@ -78,6 +78,7 @@ pub enum BookmarkGenError {
 /// JSON protocol: top-level object sent to the command on stdin.
 #[derive(Debug, Serialize)]
 pub(super) struct SegmentInput {
+    schema_version: u32,
     rules: RulesInput,
     commits: Vec<CommitInput>,
 }
@@ -248,6 +249,7 @@ pub async fn generate_custom_name(
 /// serialize before spawning a background task.
 pub(super) fn build_segment_input(rows: &[&BookmarkRow]) -> SegmentInput {
     SegmentInput {
+        schema_version: 1,
         rules: RulesInput {
             max_length: MAX_BOOKMARK_LENGTH,
             disallowed_chars: DISALLOWED_CHARS.to_string(),
@@ -665,6 +667,7 @@ mod tests {
         let capture_path = tmpdir.join("stakk_test_stdin_capture.json");
         let captured = std::fs::read_to_string(&capture_path).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&captured).unwrap();
+        assert_eq!(parsed["schema_version"], 1);
         assert_eq!(parsed["rules"]["max_length"], 255);
         assert!(
             parsed["rules"]["disallowed_chars"]

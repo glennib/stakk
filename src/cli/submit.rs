@@ -148,6 +148,8 @@ pub struct SubmitArgs {
     ///
     /// JSON input schema:
     ///
+    ///   schema_version      -- integer, currently 1; bumped on
+    ///                          breaking schema changes
     ///   rules               -- object with validation constraints
     ///     .max_length       -- integer, max name length in bytes (255)
     ///     .disallowed_chars -- string of forbidden characters
@@ -171,6 +173,7 @@ pub struct SubmitArgs {
     /// Minimal example (two commits):
     ///
     ///   {
+    ///     "schema_version": 1,
     ///     "rules": {
     ///       "max_length": 255,
     ///       "disallowed_chars": " ~^:?*[\\"
