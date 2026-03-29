@@ -146,6 +146,10 @@ pub struct SubmissionAnalysis {
 
 /// One bookmark's planned actions.
 #[derive(Debug, Clone)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "these are independent action flags, not a state machine"
+)]
 pub struct BookmarkPlan {
     /// The bookmark name (first from `segment.bookmark_names`).
     pub bookmark_name: String,
