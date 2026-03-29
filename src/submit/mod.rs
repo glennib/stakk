@@ -1718,6 +1718,166 @@ mod tests {
         assert!(created[0].draft, "expected PR to be created as draft");
     }
 
+    #[tokio::test]
+    async fn execute_syncs_title_and_body_for_existing_pr() {
+        let plan = SubmissionPlan {
+            bookmark_plans: vec![BookmarkPlan {
+                bookmark_name: "feat-a".to_string(),
+                base: "main".to_string(),
+                title: "updated title".to_string(),
+                body: Some("updated body".to_string()),
+                existing_pr: Some(make_pr(42, "feat-a", "main")),
+                needs_push: true,
+                needs_create: false,
+                needs_base_update: false,
+                needs_content_sync: true,
+            }],
+            remote: "origin".to_string(),
+            pr_mode: PrMode::Regular,
+            default_branch: "main".to_string(),
+        };
+
+        let (runner, _push_calls) = MockJjRunner::new();
+        let jj = Jj::new(runner);
+        let forge = MockForge::new();
+        let env = test_comment_env();
+
+        execute_submission_plan(&plan, &jj, &forge, &env, StackPlacement::Comment)
+            .await
+            .unwrap();
+
+        let updated_titles = forge.updated_titles.lock().unwrap();
+        assert_eq!(updated_titles.len(), 1);
+        assert_eq!(updated_titles[0], (42, "updated title".to_string()));
+
+        let updated_bodies = forge.updated_bodies.lock().unwrap();
+        assert_eq!(updated_bodies.len(), 1);
+        assert_eq!(updated_bodies[0], (42, "updated body".to_string()));
+    }
+
+    #[tokio::test]
+    async fn execute_syncs_clears_body_when_no_commit_body() {
+        let plan = SubmissionPlan {
+            bookmark_plans: vec![BookmarkPlan {
+                bookmark_name: "feat-a".to_string(),
+                base: "main".to_string(),
+                title: "title only".to_string(),
+                body: None,
+                existing_pr: Some(make_pr(42, "feat-a", "main")),
+                needs_push: true,
+                needs_create: false,
+                needs_base_update: false,
+                needs_content_sync: true,
+            }],
+            remote: "origin".to_string(),
+            pr_mode: PrMode::Regular,
+            default_branch: "main".to_string(),
+        };
+
+        let (runner, _push_calls) = MockJjRunner::new();
+        let jj = Jj::new(runner);
+        let forge = MockForge::new();
+        let env = test_comment_env();
+
+        execute_submission_plan(&plan, &jj, &forge, &env, StackPlacement::Comment)
+            .await
+            .unwrap();
+
+        let updated_titles = forge.updated_titles.lock().unwrap();
+        assert_eq!(updated_titles[0], (42, "title only".to_string()));
+
+        let updated_bodies = forge.updated_bodies.lock().unwrap();
+        assert_eq!(updated_bodies[0], (42, String::new()));
+    }
+
+    #[tokio::test]
+    async fn execute_no_sync_when_flag_off() {
+        let plan = SubmissionPlan {
+            bookmark_plans: vec![BookmarkPlan {
+                bookmark_name: "feat-a".to_string(),
+                base: "main".to_string(),
+                title: "feature a".to_string(),
+                body: Some("body".to_string()),
+                existing_pr: Some(make_pr(42, "feat-a", "main")),
+                needs_push: true,
+                needs_create: false,
+                needs_base_update: false,
+                needs_content_sync: false,
+            }],
+            remote: "origin".to_string(),
+            pr_mode: PrMode::Regular,
+            default_branch: "main".to_string(),
+        };
+
+        let (runner, _push_calls) = MockJjRunner::new();
+        let jj = Jj::new(runner);
+        let forge = MockForge::new();
+        let env = test_comment_env();
+
+        execute_submission_plan(&plan, &jj, &forge, &env, StackPlacement::Comment)
+            .await
+            .unwrap();
+
+        let updated_titles = forge.updated_titles.lock().unwrap();
+        assert!(updated_titles.is_empty());
+    }
+
+    #[tokio::test]
+    async fn execute_body_mode_sync_uses_commit_body_for_fence() {
+        let plan = SubmissionPlan {
+            bookmark_plans: vec![
+                BookmarkPlan {
+                    bookmark_name: "feat-a".to_string(),
+                    base: "main".to_string(),
+                    title: "feature a".to_string(),
+                    body: Some("new commit body".to_string()),
+                    existing_pr: Some(make_pr(10, "feat-a", "main")),
+                    needs_push: true,
+                    needs_create: false,
+                    needs_base_update: false,
+                    needs_content_sync: true,
+                },
+                BookmarkPlan {
+                    bookmark_name: "feat-b".to_string(),
+                    base: "feat-a".to_string(),
+                    title: "feature b".to_string(),
+                    body: Some("commit body b".to_string()),
+                    existing_pr: Some(make_pr(11, "feat-b", "feat-a")),
+                    needs_push: true,
+                    needs_create: false,
+                    needs_base_update: false,
+                    needs_content_sync: true,
+                },
+            ],
+            remote: "origin".to_string(),
+            pr_mode: PrMode::Regular,
+            default_branch: "main".to_string(),
+        };
+
+        let (runner, _push_calls) = MockJjRunner::new();
+        let jj = Jj::new(runner);
+        let forge = MockForge::new();
+        let env = test_comment_env();
+
+        execute_submission_plan(&plan, &jj, &forge, &env, StackPlacement::Body)
+            .await
+            .unwrap();
+
+        // The body-mode fence-spliced bodies should contain the commit text
+        // and the STAKK_BODY_START fence.
+        let updated_bodies = forge.updated_bodies.lock().unwrap();
+        // First two updates are from content sync (one per PR).
+        // Next two are from body-mode fence splicing.
+        assert!(updated_bodies.len() >= 4);
+        // The fence-spliced bodies (last two) should contain the commit text.
+        let final_a = &updated_bodies[2].1;
+        let final_b = &updated_bodies[3].1;
+        assert!(final_a.contains("new commit body"));
+        assert!(final_a.contains("STAKK_BODY_START"));
+        assert!(final_b.contains("commit body b"));
+        assert!(final_b.contains("STAKK_BODY_START"));
+    }
+
     // -----------------------------------------------------------------------
     // build_pr_body tests
     // -----------------------------------------------------------------------
