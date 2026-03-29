@@ -148,6 +148,8 @@ pub struct BookmarkPlan {
     pub needs_create: bool,
     /// Whether the existing PR's base needs updating.
     pub needs_base_update: bool,
+    /// Whether the existing PR's title and body should be synced from commits.
+    pub needs_content_sync: bool,
 }
 
 /// Phase 2 output: the full submission plan.
@@ -279,6 +281,7 @@ pub async fn create_submission_plan<F: Forge>(
     forge: &F,
     remote: &str,
     pr_mode: PrMode,
+    sync_pr_content: bool,
 ) -> Result<SubmissionPlan, SubmitError> {
     // Collect bookmark names for concurrent PR lookup.
     let bookmark_names: Vec<String> = analysis
@@ -341,6 +344,7 @@ pub async fn create_submission_plan<F: Forge>(
             needs_push: true,
             needs_create,
             needs_base_update,
+            needs_content_sync: sync_pr_content && !needs_create,
         });
     }
 
@@ -387,8 +391,14 @@ impl fmt::Display for SubmissionPlan {
                     pr.number, pr.base_ref, bp.base,
                 )?;
             }
+            if bp.needs_content_sync
+                && let Some(pr) = &bp.existing_pr
+            {
+                writeln!(f, "    - sync PR #{} title/body from commits", pr.number,)?;
+            }
             if !bp.needs_create
                 && !bp.needs_base_update
+                && !bp.needs_content_sync
                 && let Some(pr) = &bp.existing_pr
             {
                 writeln!(f, "    - PR #{} up to date", pr.number)?;
@@ -1152,7 +1162,7 @@ mod tests {
         };
 
         let forge = MockForge::new();
-        let plan = create_submission_plan(&analysis, &forge, "origin", PrMode::Regular)
+        let plan = create_submission_plan(&analysis, &forge, "origin", PrMode::Regular, false)
             .await
             .unwrap();
 
@@ -1177,7 +1187,7 @@ mod tests {
 
         let forge = MockForge::new().with_existing_pr("feat-a", make_pr(42, "feat-a", "main"));
 
-        let plan = create_submission_plan(&analysis, &forge, "origin", PrMode::Regular)
+        let plan = create_submission_plan(&analysis, &forge, "origin", PrMode::Regular, false)
             .await
             .unwrap();
 
@@ -1204,7 +1214,7 @@ mod tests {
             .with_existing_pr("feat-a", make_pr(10, "feat-a", "main"))
             .with_existing_pr("feat-b", make_pr(11, "feat-b", "main"));
 
-        let plan = create_submission_plan(&analysis, &forge, "origin", PrMode::Regular)
+        let plan = create_submission_plan(&analysis, &forge, "origin", PrMode::Regular, false)
             .await
             .unwrap();
 
@@ -1230,12 +1240,60 @@ mod tests {
 
         let forge = MockForge::new().with_existing_pr("feat-a", make_pr(10, "feat-a", "main"));
 
-        let plan = create_submission_plan(&analysis, &forge, "origin", PrMode::Regular)
+        let plan = create_submission_plan(&analysis, &forge, "origin", PrMode::Regular, false)
             .await
             .unwrap();
 
         assert!(!plan.bookmark_plans[0].needs_create);
         assert!(plan.bookmark_plans[1].needs_create);
+    }
+
+    #[tokio::test]
+    async fn plan_sync_pr_content_sets_needs_content_sync() {
+        let analysis = SubmissionAnalysis {
+            segments: vec![make_segment(&["feat-a"], "ch_a", "feature a")],
+            default_branch: "main".to_string(),
+        };
+
+        let forge = MockForge::new().with_existing_pr("feat-a", make_pr(42, "feat-a", "main"));
+
+        let plan = create_submission_plan(&analysis, &forge, "origin", PrMode::Regular, true)
+            .await
+            .unwrap();
+
+        assert!(plan.bookmark_plans[0].needs_content_sync);
+    }
+
+    #[tokio::test]
+    async fn plan_sync_pr_content_false_for_new_prs() {
+        let analysis = SubmissionAnalysis {
+            segments: vec![make_segment(&["feat-a"], "ch_a", "feature a")],
+            default_branch: "main".to_string(),
+        };
+
+        let forge = MockForge::new();
+
+        let plan = create_submission_plan(&analysis, &forge, "origin", PrMode::Regular, true)
+            .await
+            .unwrap();
+
+        assert!(!plan.bookmark_plans[0].needs_content_sync);
+    }
+
+    #[tokio::test]
+    async fn plan_sync_pr_content_disabled_does_not_set_flag() {
+        let analysis = SubmissionAnalysis {
+            segments: vec![make_segment(&["feat-a"], "ch_a", "feature a")],
+            default_branch: "main".to_string(),
+        };
+
+        let forge = MockForge::new().with_existing_pr("feat-a", make_pr(42, "feat-a", "main"));
+
+        let plan = create_submission_plan(&analysis, &forge, "origin", PrMode::Regular, false)
+            .await
+            .unwrap();
+
+        assert!(!plan.bookmark_plans[0].needs_content_sync);
     }
 
     #[test]
@@ -1251,6 +1309,7 @@ mod tests {
                     needs_push: true,
                     needs_create: true,
                     needs_base_update: false,
+                    needs_content_sync: false,
                 },
                 BookmarkPlan {
                     bookmark_name: "feat-b".to_string(),
@@ -1261,6 +1320,7 @@ mod tests {
                     needs_push: true,
                     needs_create: false,
                     needs_base_update: true,
+                    needs_content_sync: false,
                 },
             ],
             remote: "origin".to_string(),
@@ -1293,6 +1353,7 @@ mod tests {
                     needs_push: true,
                     needs_create: true,
                     needs_base_update: false,
+                    needs_content_sync: false,
                 },
                 BookmarkPlan {
                     bookmark_name: "feat-b".to_string(),
@@ -1303,6 +1364,7 @@ mod tests {
                     needs_push: true,
                     needs_create: true,
                     needs_base_update: false,
+                    needs_content_sync: false,
                 },
             ],
             remote: "origin".to_string(),
@@ -1341,6 +1403,7 @@ mod tests {
                 needs_push: true,
                 needs_create: false,
                 needs_base_update: true,
+                needs_content_sync: false,
             }],
             remote: "origin".to_string(),
             pr_mode: PrMode::Regular,
@@ -1374,6 +1437,7 @@ mod tests {
                     needs_push: true,
                     needs_create: true,
                     needs_base_update: false,
+                    needs_content_sync: false,
                 },
                 BookmarkPlan {
                     bookmark_name: "feat-b".to_string(),
@@ -1384,6 +1448,7 @@ mod tests {
                     needs_push: true,
                     needs_create: true,
                     needs_base_update: false,
+                    needs_content_sync: false,
                 },
             ],
             remote: "origin".to_string(),
@@ -1452,6 +1517,7 @@ mod tests {
                     needs_push: true,
                     needs_create: false,
                     needs_base_update: false,
+                    needs_content_sync: false,
                 },
                 BookmarkPlan {
                     bookmark_name: "feat-b".to_string(),
@@ -1462,6 +1528,7 @@ mod tests {
                     needs_push: true,
                     needs_create: true,
                     needs_base_update: false,
+                    needs_content_sync: false,
                 },
             ],
             remote: "origin".to_string(),
@@ -1506,6 +1573,7 @@ mod tests {
                     needs_push: true,
                     needs_create: true,
                     needs_base_update: false,
+                    needs_content_sync: false,
                 },
                 BookmarkPlan {
                     bookmark_name: "feat-b".to_string(),
@@ -1516,6 +1584,7 @@ mod tests {
                     needs_push: true,
                     needs_create: true,
                     needs_base_update: false,
+                    needs_content_sync: false,
                 },
             ],
             remote: "my-remote".to_string(),
@@ -1550,6 +1619,7 @@ mod tests {
                 needs_push: true,
                 needs_create: true,
                 needs_base_update: false,
+                needs_content_sync: false,
             }],
             remote: "origin".to_string(),
             pr_mode: PrMode::Draft,
@@ -1575,6 +1645,7 @@ mod tests {
                 needs_push: true,
                 needs_create: true,
                 needs_base_update: false,
+                needs_content_sync: false,
             }],
             remote: "origin".to_string(),
             pr_mode: PrMode::Draft,
@@ -1719,6 +1790,7 @@ mod tests {
                     needs_push: true,
                     needs_create: true,
                     needs_base_update: false,
+                    needs_content_sync: false,
                 },
                 BookmarkPlan {
                     bookmark_name: "feat-b".to_string(),
@@ -1729,6 +1801,7 @@ mod tests {
                     needs_push: true,
                     needs_create: true,
                     needs_base_update: false,
+                    needs_content_sync: false,
                 },
             ],
             remote: "origin".to_string(),
@@ -1779,6 +1852,7 @@ mod tests {
                     needs_push: true,
                     needs_create: false,
                     needs_base_update: false,
+                    needs_content_sync: false,
                 },
                 BookmarkPlan {
                     bookmark_name: "feat-b".to_string(),
@@ -1789,6 +1863,7 @@ mod tests {
                     needs_push: true,
                     needs_create: true,
                     needs_base_update: false,
+                    needs_content_sync: false,
                 },
             ],
             remote: "origin".to_string(),
@@ -1867,6 +1942,7 @@ mod tests {
                     needs_push: true,
                     needs_create: false,
                     needs_base_update: false,
+                    needs_content_sync: false,
                 },
                 BookmarkPlan {
                     bookmark_name: "feat-b".to_string(),
@@ -1877,6 +1953,7 @@ mod tests {
                     needs_push: true,
                     needs_create: true,
                     needs_base_update: false,
+                    needs_content_sync: false,
                 },
             ],
             remote: "origin".to_string(),
@@ -1926,6 +2003,7 @@ mod tests {
                     needs_push: true,
                     needs_create: false,
                     needs_base_update: false,
+                    needs_content_sync: false,
                 },
                 BookmarkPlan {
                     bookmark_name: "feat-b".to_string(),
@@ -1936,6 +2014,7 @@ mod tests {
                     needs_push: true,
                     needs_create: true,
                     needs_base_update: false,
+                    needs_content_sync: false,
                 },
             ],
             remote: "origin".to_string(),
@@ -1986,6 +2065,7 @@ mod tests {
                 needs_push: true,
                 needs_create: true,
                 needs_base_update: false,
+                needs_content_sync: false,
             }],
             remote: "origin".to_string(),
             pr_mode: PrMode::Regular,
@@ -2059,6 +2139,7 @@ mod tests {
                 needs_push: true,
                 needs_create: false,
                 needs_base_update: false,
+                needs_content_sync: false,
             }],
             remote: "origin".to_string(),
             pr_mode: PrMode::Regular,
@@ -2104,6 +2185,7 @@ mod tests {
                 needs_push: true,
                 needs_create: false,
                 needs_base_update: false,
+                needs_content_sync: false,
             }],
             remote: "origin".to_string(),
             pr_mode: PrMode::Regular,
@@ -2154,6 +2236,7 @@ mod tests {
                     needs_push: true,
                     needs_create: false,
                     needs_base_update: true,
+                    needs_content_sync: false,
                 },
                 BookmarkPlan {
                     bookmark_name: "feat-b".to_string(),
@@ -2164,6 +2247,7 @@ mod tests {
                     needs_push: true,
                     needs_create: false,
                     needs_base_update: true,
+                    needs_content_sync: false,
                 },
             ],
             remote: "origin".to_string(),
@@ -2213,6 +2297,7 @@ mod tests {
                     needs_push: true,
                     needs_create: false,
                     needs_base_update: true,
+                    needs_content_sync: false,
                 },
                 BookmarkPlan {
                     bookmark_name: "feat-b".to_string(),
@@ -2223,6 +2308,7 @@ mod tests {
                     needs_push: true,
                     needs_create: false,
                     needs_base_update: true,
+                    needs_content_sync: false,
                 },
                 BookmarkPlan {
                     bookmark_name: "feat-c".to_string(),
@@ -2233,6 +2319,7 @@ mod tests {
                     needs_push: true,
                     needs_create: false,
                     needs_base_update: true,
+                    needs_content_sync: false,
                 },
             ],
             remote: "origin".to_string(),
@@ -2284,6 +2371,7 @@ mod tests {
                     needs_push: true,
                     needs_create: false,
                     needs_base_update: true,
+                    needs_content_sync: false,
                 },
                 BookmarkPlan {
                     bookmark_name: "feat-b".to_string(),
@@ -2294,6 +2382,7 @@ mod tests {
                     needs_push: true,
                     needs_create: true,
                     needs_base_update: false,
+                    needs_content_sync: false,
                 },
             ],
             remote: "origin".to_string(),
