@@ -115,6 +115,13 @@ pub trait Forge: Send + Sync {
         new_base: &str,
     ) -> impl std::future::Future<Output = Result<(), ForgeError>> + Send;
 
+    /// Update the title of an existing PR.
+    fn update_pr_title(
+        &self,
+        pr_number: u64,
+        title: &str,
+    ) -> impl std::future::Future<Output = Result<(), ForgeError>> + Send;
+
     /// List all comments on a PR.
     fn list_comments(
         &self,

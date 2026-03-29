@@ -110,6 +110,17 @@ impl Forge for GitHubForge {
         Ok(())
     }
 
+    async fn update_pr_title(&self, pr_number: u64, title: &str) -> Result<(), ForgeError> {
+        self.client
+            .pulls(&self.owner, &self.repo)
+            .update(pr_number)
+            .title(title)
+            .send()
+            .await
+            .map_err(map_octocrab_error)?;
+        Ok(())
+    }
+
     async fn list_comments(&self, pr_number: u64) -> Result<Vec<Comment>, ForgeError> {
         let comments = self
             .client

@@ -784,6 +784,7 @@ mod tests {
         created_comments: Mutex<Vec<(u64, String)>>,
         updated_comments: Mutex<Vec<(u64, String)>>,
         updated_bases: Mutex<Vec<(u64, String)>>,
+        updated_titles: Mutex<Vec<(u64, String)>>,
         updated_bodies: Mutex<Vec<(u64, String)>>,
         deleted_comments: Mutex<Vec<u64>>,
         existing_comments: HashMap<u64, Vec<Comment>>,
@@ -799,6 +800,7 @@ mod tests {
                 created_comments: Mutex::new(Vec::new()),
                 updated_comments: Mutex::new(Vec::new()),
                 updated_bases: Mutex::new(Vec::new()),
+                updated_titles: Mutex::new(Vec::new()),
                 updated_bodies: Mutex::new(Vec::new()),
                 deleted_comments: Mutex::new(Vec::new()),
                 existing_comments: HashMap::new(),
@@ -872,6 +874,18 @@ mod tests {
                 .lock()
                 .unwrap()
                 .push((pr_number, new_base.to_string()));
+            async { Ok(()) }
+        }
+
+        fn update_pr_title(
+            &self,
+            pr_number: u64,
+            title: &str,
+        ) -> impl std::future::Future<Output = Result<(), ForgeError>> + Send {
+            self.updated_titles
+                .lock()
+                .unwrap()
+                .push((pr_number, title.to_string()));
             async { Ok(()) }
         }
 
