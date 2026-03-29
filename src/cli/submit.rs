@@ -117,6 +117,22 @@ pub struct SubmitArgs {
     )]
     pub stack_placement: StackPlacement,
 
+    /// Sync PR title and body from jj commit descriptions on every
+    /// submit, even for existing PRs.
+    ///
+    /// By default, stakk only sets the title and body when creating a
+    /// new PR.  With this flag, existing PRs are updated to match the
+    /// current commit descriptions on every run.  Manual edits to the
+    /// PR title or body on GitHub will be overwritten.
+    #[arg(
+        long,
+        env = "STAKK_SYNC_PR_CONTENT",
+        default_value_t = false,
+        action = clap::ArgAction::Set,
+        verbatim_doc_comment
+    )]
+    pub sync_pr_content: bool,
+
     /// Prefix for auto-generated bookmark names.
     ///
     /// When set, the prefix is prepended to names produced by the [~]auto

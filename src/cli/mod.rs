@@ -102,6 +102,9 @@ fn apply_submit_defaults(config: &Config, mut cmd: Command) -> Command {
     if let Some(sp) = config.stack_placement {
         cmd = set_default(cmd, "stack_placement", &sp.to_string());
     }
+    if let Some(spc) = config.sync_pr_content {
+        cmd = set_default(cmd, "sync_pr_content", &spc.to_string());
+    }
     if let Some(ref ap) = config.auto_prefix {
         cmd = set_default(cmd, "auto_prefix", ap);
     }
@@ -292,6 +295,37 @@ mod tests {
         assert_eq!(submit_args(&cli).stack_placement, StackPlacement::Comment);
     }
 
+    // -- sync_pr_content tests --
+
+    #[test]
+    fn sync_pr_content_default_false() {
+        let cli = parse_with_config(Config::default(), &["stakk", "submit", "bm"]);
+        assert!(!submit_args(&cli).sync_pr_content);
+    }
+
+    #[test]
+    fn sync_pr_content_config_true() {
+        let config = Config {
+            sync_pr_content: Some(true),
+            ..Default::default()
+        };
+        let cli = parse_with_config(config, &["stakk", "submit", "bm"]);
+        assert!(submit_args(&cli).sync_pr_content);
+    }
+
+    #[test]
+    fn sync_pr_content_cli_overrides_config() {
+        let config = Config {
+            sync_pr_content: Some(true),
+            ..Default::default()
+        };
+        let cli = parse_with_config(
+            config,
+            &["stakk", "submit", "--sync-pr-content=false", "bm"],
+        );
+        assert!(!submit_args(&cli).sync_pr_content);
+    }
+
     // -- auto_prefix tests --
 
     #[test]
@@ -394,6 +428,7 @@ remote = "upstream"
 pr_mode = "draft"
 template = "/path/to/template.jinja"
 stack_placement = "body"
+sync_pr_content = true
 auto_prefix = "gb-"
 bookmark_command = "my-command"
 bookmarks_revset = "all()"
@@ -404,6 +439,7 @@ heads_revset = "heads(all())"
         assert_eq!(config.pr_mode, Some(PrMode::Draft));
         assert_eq!(config.template.as_deref(), Some("/path/to/template.jinja"));
         assert_eq!(config.stack_placement, Some(StackPlacement::Body));
+        assert_eq!(config.sync_pr_content, Some(true));
         assert_eq!(config.auto_prefix.as_deref(), Some("gb-"));
         assert_eq!(config.bookmark_command.as_deref(), Some("my-command"));
         assert_eq!(config.bookmarks_revset.as_deref(), Some("all()"));
