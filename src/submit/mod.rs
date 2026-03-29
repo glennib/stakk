@@ -113,6 +113,21 @@ pub enum SubmitError {
         #[source]
         source: ForgeError,
     },
+
+    /// Failed to sync title/body of an existing PR.
+    #[error("failed to sync content of PR #{pr_number} for '{bookmark}'")]
+    #[diagnostic(
+        code(stakk::submit::content_sync_failed),
+        help(
+            "the PR exists but its title/body could not be updated — check your token permissions"
+        )
+    )]
+    ContentSyncFailed {
+        pr_number: u64,
+        bookmark: String,
+        #[source]
+        source: ForgeError,
+    },
 }
 
 // ---------------------------------------------------------------------------
@@ -454,6 +469,39 @@ pub async fn execute_submission_plan<R: JjRunner, F: Forge>(
                 })?;
         }
 
+        if bp.needs_content_sync
+            && let Some(pr) = &bp.existing_pr
+        {
+            pb.set_message(format!("Syncing PR #{} content...", pr.number));
+            forge
+                .update_pr_title(pr.number, &bp.title)
+                .await
+                .map_err(|source| SubmitError::ContentSyncFailed {
+                    pr_number: pr.number,
+                    bookmark: bp.bookmark_name.clone(),
+                    source,
+                })?;
+            if let Some(body) = &bp.body {
+                forge
+                    .update_pr_body(pr.number, body)
+                    .await
+                    .map_err(|source| SubmitError::ContentSyncFailed {
+                        pr_number: pr.number,
+                        bookmark: bp.bookmark_name.clone(),
+                        source,
+                    })?;
+            } else {
+                forge
+                    .update_pr_body(pr.number, "")
+                    .await
+                    .map_err(|source| SubmitError::ContentSyncFailed {
+                        pr_number: pr.number,
+                        bookmark: bp.bookmark_name.clone(),
+                        source,
+                    })?;
+            }
+        }
+
         let pr = if let Some(existing) = &bp.existing_pr {
             pb.println(format!(
                 "  Existing PR #{}: {}",
@@ -607,6 +655,10 @@ pub async fn execute_submission_plan<R: JjRunner, F: Forge>(
                             let existing_body = if bp.needs_create {
                                 // For newly created PRs, use the body we just
                                 // submitted.
+                                bp.body.clone().unwrap_or_default()
+                            } else if bp.needs_content_sync {
+                                // Content was just synced — use the commit-derived
+                                // body so the stack fence is spliced onto it.
                                 bp.body.clone().unwrap_or_default()
                             } else {
                                 bp.existing_pr
