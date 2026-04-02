@@ -246,9 +246,11 @@ are in-flight to animate the spinner (10-frame animation).
 
 - **No jj-stack compatibility** — own `STAKK_STACK` prefix, snake_case serde.
 - **No anyhow** — concrete error types with `Diagnostic` all the way up.
-- **PR body on creation; body-mode updates fenced section only** — commit-derived
-  body is set on PR creation and never overwritten. In `--stack-placement body`
-  mode, only the fenced `STAKK_BODY_START`/`STAKK_BODY_END` section is updated.
+- **PR title/body on creation by default; opt-in sync** — commit-derived title
+  and body are set on PR creation. `--sync-pr-content` (`none`/`title`/`body`/`all`)
+  enables updating existing PRs. Change detection avoids redundant API calls.
+  In `--stack-placement body` mode, body sync skips the per-bookmark API call
+  and lets the fence-splicing phase handle it in one update.
 - **`--dry-run` not in env vars** — one-off decision, surprising as a default.
 - **Generic `Jj<R: JjRunner>`** — zero-cost dispatch, edition 2024 async traits.
 - **Three-phase submission** — analyze (pure) → plan (queries forge) → execute.

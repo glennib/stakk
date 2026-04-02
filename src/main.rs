@@ -204,8 +204,14 @@ async fn submit_bookmark(args: &SubmitArgs) -> Result<(), StakkError> {
 
     // Phase 2: Plan.
     pb.set_message("Checking for existing pull requests...");
-    let plan =
-        submit::create_submission_plan(&analysis, &forge, &remote_name, args.pr_mode()).await?;
+    let plan = submit::create_submission_plan(
+        &analysis,
+        &forge,
+        &remote_name,
+        args.pr_mode(),
+        args.sync_pr_content,
+    )
+    .await?;
 
     pb.finish_and_clear();
 

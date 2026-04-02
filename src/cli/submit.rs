@@ -27,6 +27,31 @@ impl std::fmt::Display for PrMode {
     }
 }
 
+/// Controls whether existing PR titles and/or bodies are updated from
+/// commit descriptions on every submit.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Deserialize, clap::ValueEnum)]
+#[serde(rename_all = "kebab-case")]
+pub enum SyncPrContent {
+    /// Do not sync (default). Title and body are only set on PR creation.
+    #[default]
+    None,
+    /// Sync only the PR title from the first line of the commit description.
+    Title,
+    /// Sync only the PR body from the commit description.
+    Body,
+    /// Sync both the PR title and body.
+    All,
+}
+
+impl std::fmt::Display for SyncPrContent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let pv = self
+            .to_possible_value()
+            .expect("all variants have possible values");
+        f.write_str(pv.get_name())
+    }
+}
+
 /// Arguments for the submit subcommand.
 #[derive(Debug, Args)]
 pub struct SubmitArgs {
@@ -46,7 +71,7 @@ pub struct SubmitArgs {
     /// This only affects newly created PRs. Existing PRs keep their
     /// current draft/ready state. Overridden by --draft.
     #[arg(
-        long = "pr-mode",
+        long,
         env = "STAKK_PR_MODE",
         default_value = "regular",
         value_enum,
@@ -109,13 +134,33 @@ pub struct SubmitArgs {
     /// deletes the old stack comment, and moving to comment mode strips
     /// the fenced section from the PR body.
     #[arg(
-        long = "stack-placement",
+        long,
         env = "STAKK_STACK_PLACEMENT",
         default_value = "comment",
         value_enum,
         verbatim_doc_comment
     )]
     pub stack_placement: StackPlacement,
+
+    /// Controls whether existing PR titles and/or bodies are updated
+    /// from jj commit descriptions on every submit.
+    ///
+    /// By default (none), stakk only sets the title and body when
+    /// creating a new PR. Other modes:
+    ///   title — sync only the PR title
+    ///   body  — sync only the PR body (description)
+    ///   all   — sync both title and body
+    ///
+    /// When syncing is enabled, manual edits to the synced fields on
+    /// GitHub will be overwritten.
+    #[arg(
+        long,
+        env = "STAKK_SYNC_PR_CONTENT",
+        default_value = "none",
+        value_enum,
+        verbatim_doc_comment
+    )]
+    pub sync_pr_content: SyncPrContent,
 
     /// Prefix for auto-generated bookmark names.
     ///

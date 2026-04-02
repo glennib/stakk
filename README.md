@@ -207,6 +207,10 @@ bookmarks_revset = "mine() ~ trunk() ~ immutable()"
 # (default: "heads((mine() ~ empty() ~ immutable()) & trunk()..)")
 heads_revset = "heads((mine() ~ empty() ~ immutable()) & trunk()..)"
 
+# Sync PR title/body from commits on every submit (default: "none")
+# Options: "none", "title", "body", "all"
+sync_pr_content = "all"
+
 # Shell command for generating custom bookmark names
 bookmark_command = "my-bookmark-namer"
 
@@ -277,6 +281,7 @@ stack_placement = "comment"
 | `STAKK_TEMPLATE` | Path to a custom minijinja template for stack comments (overridden by `--template`) |
 | `STAKK_STACK_PLACEMENT` | Where to place the stack info: `comment` (default) or `body` (overridden by `--stack-placement`) |
 | `STAKK_AUTO_PREFIX` | Prefix for auto-generated bookmark names (overridden by `--auto-prefix`) |
+| `STAKK_SYNC_PR_CONTENT` | Sync PR title/body from commits: `none` (default), `title`, `body`, or `all` (overridden by `--sync-pr-content`) |
 | `STAKK_BOOKMARK_COMMAND` | Shell command for generating custom bookmark names (overridden by `--bookmark-command`) |
 | `GITHUB_TOKEN` | GitHub personal access token (see `stakk auth setup`) |
 | `GH_TOKEN` | Alternative to `GITHUB_TOKEN` |
@@ -308,12 +313,16 @@ graph view, then assign bookmarks to any unmarked commits before submitting.
 | `--template <path>` | `STAKK_TEMPLATE` | Use a custom minijinja template for stack comments |
 | `--stack-placement <mode>` | `STAKK_STACK_PLACEMENT` | Place stack info as a PR `comment` (default) or in the PR `body` |
 | `--auto-prefix <prefix>` | `STAKK_AUTO_PREFIX` | Prefix for `[~]auto` bookmark names (e.g. `gb-`) |
+| `--sync-pr-content <mode>` | `STAKK_SYNC_PR_CONTENT` | Sync PR title/body from commits: `none` (default), `title`, `body`, `all` |
 
 PR titles come from the first line of the jj change description. PR bodies
 are populated from the full description (everything after the title line).
 For segments with multiple commits, descriptions are joined with `---`
-separators. Bodies are only set on PR creation — manually edited PR bodies
-are never overwritten.
+separators. By default, titles and bodies are only set on PR creation —
+manually edited PR descriptions are never overwritten. Use
+`--sync-pr-content` to update existing PRs: `title` syncs only the title,
+`body` only the body, or `all` for both. Only fields that actually changed
+are updated.
 
 ### `stakk show`
 
