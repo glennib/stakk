@@ -55,7 +55,10 @@ pub enum SubmitError {
 
     /// Failed to look up an existing PR for a bookmark.
     #[error("failed to check for existing PR for '{bookmark}'")]
-    #[diagnostic(code(stakk::submit::pr_lookup_failed))]
+    #[diagnostic(
+        code(stakk::submit::pr_lookup_failed),
+        help("check your network connection and GitHub token permissions")
+    )]
     PrLookupFailed {
         bookmark: String,
         #[source]
@@ -64,7 +67,10 @@ pub enum SubmitError {
 
     /// Failed to push a bookmark to the remote.
     #[error("failed to push bookmark '{bookmark}'")]
-    #[diagnostic(code(stakk::submit::push_failed))]
+    #[diagnostic(
+        code(stakk::submit::push_failed),
+        help("ensure the bookmark exists and the remote is reachable")
+    )]
     PushFailed {
         bookmark: String,
         #[source]
@@ -73,7 +79,12 @@ pub enum SubmitError {
 
     /// Failed to update the base branch of an existing PR.
     #[error("failed to update PR base for '{bookmark}'")]
-    #[diagnostic(code(stakk::submit::base_update_failed))]
+    #[diagnostic(
+        code(stakk::submit::base_update_failed),
+        help(
+            "the PR exists but its base branch could not be changed — check your token permissions"
+        )
+    )]
     BaseUpdateFailed {
         bookmark: String,
         #[source]
@@ -82,7 +93,10 @@ pub enum SubmitError {
 
     /// Failed to create a new PR.
     #[error("failed to create PR for '{bookmark}'")]
-    #[diagnostic(code(stakk::submit::pr_create_failed))]
+    #[diagnostic(
+        code(stakk::submit::pr_create_failed),
+        help("check your token permissions and that the head branch exists on the remote")
+    )]
     PrCreateFailed {
         bookmark: String,
         #[source]
@@ -91,7 +105,10 @@ pub enum SubmitError {
 
     /// Failed to create or update a stack comment on a PR.
     #[error("failed to manage stack comment on PR #{pr_number}")]
-    #[diagnostic(code(stakk::submit::comment_failed))]
+    #[diagnostic(
+        code(stakk::submit::comment_failed),
+        help("check your token permissions for commenting on PRs")
+    )]
     CommentFailed {
         pr_number: u64,
         #[source]
@@ -108,7 +125,10 @@ pub enum SubmitError {
 
     /// Failed to update a PR body.
     #[error("failed to update body of PR #{pr_number}")]
-    #[diagnostic(code(stakk::submit::body_update_failed))]
+    #[diagnostic(
+        code(stakk::submit::body_update_failed),
+        help("check your token permissions for updating PR descriptions")
+    )]
     BodyUpdateFailed {
         pr_number: u64,
         #[source]
@@ -1605,6 +1625,32 @@ mod tests {
         assert!(output.contains("create PR: \"feature a\""));
         assert!(output.contains("push bookmark to origin"));
         assert!(output.contains("update PR #42 base: main -> feat-a"));
+    }
+
+    #[test]
+    fn plan_display_shows_sync_lines() {
+        let plan = SubmissionPlan {
+            bookmark_plans: vec![BookmarkPlan {
+                bookmark_name: "feat-a".to_string(),
+                base: "main".to_string(),
+                title: "feature a".to_string(),
+                body: Some("body text".to_string()),
+                existing_pr: Some(make_pr(42, "feat-a", "main")),
+                needs_push: true,
+                needs_create: false,
+                needs_base_update: false,
+                needs_title_sync: true,
+                needs_body_sync: true,
+            }],
+            remote: "origin".to_string(),
+            pr_mode: PrMode::Regular,
+            default_branch: "main".to_string(),
+        };
+
+        let output = plan.to_string();
+        assert!(output.contains("sync PR #42 title from commits"));
+        assert!(output.contains("sync PR #42 body from commits"));
+        assert!(!output.contains("up to date"));
     }
 
     // -----------------------------------------------------------------------

@@ -71,7 +71,7 @@ pub struct SubmitArgs {
     /// This only affects newly created PRs. Existing PRs keep their
     /// current draft/ready state. Overridden by --draft.
     #[arg(
-        long = "pr-mode",
+        long,
         env = "STAKK_PR_MODE",
         default_value = "regular",
         value_enum,
@@ -134,7 +134,7 @@ pub struct SubmitArgs {
     /// deletes the old stack comment, and moving to comment mode strips
     /// the fenced section from the PR body.
     #[arg(
-        long = "stack-placement",
+        long,
         env = "STAKK_STACK_PLACEMENT",
         default_value = "comment",
         value_enum,
@@ -154,7 +154,7 @@ pub struct SubmitArgs {
     /// When syncing is enabled, manual edits to the synced fields on
     /// GitHub will be overwritten.
     #[arg(
-        long = "sync-pr-content",
+        long,
         env = "STAKK_SYNC_PR_CONTENT",
         default_value = "none",
         value_enum,
