@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.12.0](https://github.com/glennib/stakk/compare/v1.11.0...v1.12.0) - 2026-04-02
+
+### Added
+
+- add --sync-pr-content CLI flag, env var, and config field
+- add update_pr_title to Forge trait and implementations
+
+### Other
+
+- add missing diagnostic help messages and sync display test
+
 ## [1.11.0](https://github.com/glennib/stakk/compare/v1.10.4...v1.11.0) - 2026-03-23
 
 ### Added
