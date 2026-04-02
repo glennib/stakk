@@ -12,6 +12,7 @@ use miette::Diagnostic;
 use thiserror::Error;
 
 use crate::cli::submit::PrMode;
+use crate::cli::submit::SyncPrContent;
 use crate::forge::CreatePrParams;
 use crate::forge::Forge;
 use crate::forge::ForgeError;
@@ -114,15 +115,26 @@ pub enum SubmitError {
         source: ForgeError,
     },
 
-    /// Failed to sync title/body of an existing PR.
-    #[error("failed to sync content of PR #{pr_number} for '{bookmark}'")]
+    /// Failed to sync the title of an existing PR.
+    #[error("failed to sync title of PR #{pr_number} for '{bookmark}'")]
     #[diagnostic(
-        code(stakk::submit::content_sync_failed),
-        help(
-            "the PR exists but its title/body could not be updated — check your token permissions"
-        )
+        code(stakk::submit::title_sync_failed),
+        help("the PR exists but its title could not be updated — check your token permissions")
     )]
-    ContentSyncFailed {
+    TitleSyncFailed {
+        pr_number: u64,
+        bookmark: String,
+        #[source]
+        source: ForgeError,
+    },
+
+    /// Failed to sync the body of an existing PR.
+    #[error("failed to sync body of PR #{pr_number} for '{bookmark}'")]
+    #[diagnostic(
+        code(stakk::submit::body_sync_failed),
+        help("the PR exists but its body could not be updated — check your token permissions")
+    )]
+    BodySyncFailed {
         pr_number: u64,
         bookmark: String,
         #[source]
@@ -167,8 +179,10 @@ pub struct BookmarkPlan {
     pub needs_create: bool,
     /// Whether the existing PR's base needs updating.
     pub needs_base_update: bool,
-    /// Whether the existing PR's title and body should be synced from commits.
-    pub needs_content_sync: bool,
+    /// Whether the existing PR's title should be synced from commits.
+    pub needs_title_sync: bool,
+    /// Whether the existing PR's body should be synced from commits.
+    pub needs_body_sync: bool,
 }
 
 /// Phase 2 output: the full submission plan.
@@ -300,7 +314,7 @@ pub async fn create_submission_plan<F: Forge>(
     forge: &F,
     remote: &str,
     pr_mode: PrMode,
-    sync_pr_content: bool,
+    sync: SyncPrContent,
 ) -> Result<SubmissionPlan, SubmitError> {
     // Collect bookmark names for concurrent PR lookup.
     let bookmark_names: Vec<String> = analysis
@@ -354,6 +368,28 @@ pub async fn create_submission_plan<F: Forge>(
 
         let body = build_pr_body(&segment.commits);
 
+        let wants_title = matches!(sync, SyncPrContent::Title | SyncPrContent::All);
+        let wants_body = matches!(sync, SyncPrContent::Body | SyncPrContent::All);
+
+        let needs_title_sync =
+            wants_title && existing_pr.as_ref().is_some_and(|pr| pr.title != title);
+
+        let needs_body_sync = wants_body
+            && !needs_create
+            && existing_pr.as_ref().is_some_and(|pr| {
+                let existing_user_body = pr
+                    .body
+                    .as_deref()
+                    .map(strip_stack_from_body)
+                    .unwrap_or_default();
+                let normalized_existing = unwrap_markdown(existing_user_body.trim());
+                let normalized_new = body
+                    .as_deref()
+                    .map(|b| b.trim().to_string())
+                    .unwrap_or_default();
+                normalized_new != normalized_existing
+            });
+
         bookmark_plans.push(BookmarkPlan {
             bookmark_name,
             base,
@@ -363,7 +399,8 @@ pub async fn create_submission_plan<F: Forge>(
             needs_push: true,
             needs_create,
             needs_base_update,
-            needs_content_sync: sync_pr_content && !needs_create,
+            needs_title_sync,
+            needs_body_sync,
         });
     }
 
@@ -410,14 +447,20 @@ impl fmt::Display for SubmissionPlan {
                     pr.number, pr.base_ref, bp.base,
                 )?;
             }
-            if bp.needs_content_sync
+            if bp.needs_title_sync
                 && let Some(pr) = &bp.existing_pr
             {
-                writeln!(f, "    - sync PR #{} title/body from commits", pr.number,)?;
+                writeln!(f, "    - sync PR #{} title from commits", pr.number)?;
+            }
+            if bp.needs_body_sync
+                && let Some(pr) = &bp.existing_pr
+            {
+                writeln!(f, "    - sync PR #{} body from commits", pr.number)?;
             }
             if !bp.needs_create
                 && !bp.needs_base_update
-                && !bp.needs_content_sync
+                && !bp.needs_title_sync
+                && !bp.needs_body_sync
                 && let Some(pr) = &bp.existing_pr
             {
                 writeln!(f, "    - PR #{} up to date", pr.number)?;
@@ -446,6 +489,17 @@ pub async fn execute_submission_plan<R: JjRunner, F: Forge>(
 
     let mut stack_entries = Vec::new();
 
+    // Returns the body that is currently live on GitHub for this bookmark:
+    // the commit-derived body if we just synced or created it, otherwise the
+    // body fetched during planning.
+    let effective_body = |bp: &BookmarkPlan| -> Option<String> {
+        if bp.needs_create || bp.needs_body_sync {
+            bp.body.clone()
+        } else {
+            bp.existing_pr.as_ref().and_then(|pr| pr.body.clone())
+        }
+    };
+
     // Process each bookmark trunk-to-leaf: push, update base, create PR.
     // Each bookmark must be fully processed before the next is pushed to
     // prevent transient empty diffs that trigger GitHub auto-close (#35).
@@ -473,37 +527,37 @@ pub async fn execute_submission_plan<R: JjRunner, F: Forge>(
                 })?;
         }
 
-        if bp.needs_content_sync
+        if bp.needs_title_sync
             && let Some(pr) = &bp.existing_pr
         {
-            pb.set_message(format!("Syncing PR #{} content...", pr.number));
+            pb.set_message(format!("Syncing PR #{} title...", pr.number));
             forge
                 .update_pr_title(pr.number, &bp.title)
                 .await
-                .map_err(|source| SubmitError::ContentSyncFailed {
+                .map_err(|source| SubmitError::TitleSyncFailed {
                     pr_number: pr.number,
                     bookmark: bp.bookmark_name.clone(),
                     source,
                 })?;
-            if let Some(body) = &bp.body {
-                forge
-                    .update_pr_body(pr.number, body)
-                    .await
-                    .map_err(|source| SubmitError::ContentSyncFailed {
-                        pr_number: pr.number,
-                        bookmark: bp.bookmark_name.clone(),
-                        source,
-                    })?;
-            } else {
-                forge
-                    .update_pr_body(pr.number, "")
-                    .await
-                    .map_err(|source| SubmitError::ContentSyncFailed {
-                        pr_number: pr.number,
-                        bookmark: bp.bookmark_name.clone(),
-                        source,
-                    })?;
-            }
+        }
+
+        // Body sync: skip when body-mode stacking is active — the
+        // body-mode stack phase will splice the fence onto bp.body,
+        // combining both updates into a single API call.
+        if bp.needs_body_sync
+            && placement != StackPlacement::Body
+            && let Some(pr) = &bp.existing_pr
+        {
+            let new_body = bp.body.as_deref().unwrap_or("");
+            pb.set_message(format!("Syncing PR #{} body...", pr.number));
+            forge
+                .update_pr_body(pr.number, new_body)
+                .await
+                .map_err(|source| SubmitError::BodySyncFailed {
+                    pr_number: pr.number,
+                    bookmark: bp.bookmark_name.clone(),
+                    source,
+                })?;
         }
 
         let pr = if let Some(existing) = &bp.existing_pr {
@@ -592,10 +646,7 @@ pub async fn execute_submission_plan<R: JjRunner, F: Forge>(
                         let rendered = format_stack_comment(&comment_data, &ctx, &template)
                             .map(|s| with_comment_preamble(&s));
                         let pr_number = entry.pr_number;
-                        let existing_body = plan.bookmark_plans[i]
-                            .existing_pr
-                            .as_ref()
-                            .and_then(|pr| pr.body.clone());
+                        let existing_body = effective_body(&plan.bookmark_plans[i]);
                         let pb = &pb;
                         async move {
                             let rendered = rendered?;
@@ -656,20 +707,7 @@ pub async fn execute_submission_plan<R: JjRunner, F: Forge>(
                             let rendered = format_stack_comment(&comment_data, &ctx, &template);
                             let pr_number = entry.pr_number;
                             let bp = &plan.bookmark_plans[i];
-                            let existing_body = if bp.needs_create {
-                                // For newly created PRs, use the body we just
-                                // submitted.
-                                bp.body.clone().unwrap_or_default()
-                            } else if bp.needs_content_sync {
-                                // Content was just synced — use the commit-derived
-                                // body so the stack fence is spliced onto it.
-                                bp.body.clone().unwrap_or_default()
-                            } else {
-                                bp.existing_pr
-                                    .as_ref()
-                                    .and_then(|pr| pr.body.clone())
-                                    .unwrap_or_default()
-                            };
+                            let existing_body = effective_body(bp).unwrap_or_default();
                             let had_fence = find_stack_in_body(&existing_body).is_some();
                             let pb = &pb;
                             async move {
@@ -710,10 +748,7 @@ pub async fn execute_submission_plan<R: JjRunner, F: Forge>(
         // from when this PR was part of a larger stack.
         let entry = &stack_entries[0];
         let pr_number = entry.pr_number;
-        let existing_body = plan.bookmark_plans[0]
-            .existing_pr
-            .as_ref()
-            .and_then(|pr| pr.body.clone());
+        let existing_body = effective_body(&plan.bookmark_plans[0]);
 
         // Clean up old stack comment (from either comment mode or pre-migration).
         let comments = forge
@@ -1218,9 +1253,15 @@ mod tests {
         };
 
         let forge = MockForge::new();
-        let plan = create_submission_plan(&analysis, &forge, "origin", PrMode::Regular, false)
-            .await
-            .unwrap();
+        let plan = create_submission_plan(
+            &analysis,
+            &forge,
+            "origin",
+            PrMode::Regular,
+            SyncPrContent::None,
+        )
+        .await
+        .unwrap();
 
         assert_eq!(plan.bookmark_plans.len(), 2);
 
@@ -1243,9 +1284,15 @@ mod tests {
 
         let forge = MockForge::new().with_existing_pr("feat-a", make_pr(42, "feat-a", "main"));
 
-        let plan = create_submission_plan(&analysis, &forge, "origin", PrMode::Regular, false)
-            .await
-            .unwrap();
+        let plan = create_submission_plan(
+            &analysis,
+            &forge,
+            "origin",
+            PrMode::Regular,
+            SyncPrContent::None,
+        )
+        .await
+        .unwrap();
 
         assert!(!plan.bookmark_plans[0].needs_create);
         assert!(!plan.bookmark_plans[0].needs_base_update);
@@ -1270,9 +1317,15 @@ mod tests {
             .with_existing_pr("feat-a", make_pr(10, "feat-a", "main"))
             .with_existing_pr("feat-b", make_pr(11, "feat-b", "main"));
 
-        let plan = create_submission_plan(&analysis, &forge, "origin", PrMode::Regular, false)
-            .await
-            .unwrap();
+        let plan = create_submission_plan(
+            &analysis,
+            &forge,
+            "origin",
+            PrMode::Regular,
+            SyncPrContent::None,
+        )
+        .await
+        .unwrap();
 
         // feat-a: base is "main", existing PR base is "main" -> no update
         assert!(!plan.bookmark_plans[0].needs_base_update);
@@ -1296,16 +1349,126 @@ mod tests {
 
         let forge = MockForge::new().with_existing_pr("feat-a", make_pr(10, "feat-a", "main"));
 
-        let plan = create_submission_plan(&analysis, &forge, "origin", PrMode::Regular, false)
-            .await
-            .unwrap();
+        let plan = create_submission_plan(
+            &analysis,
+            &forge,
+            "origin",
+            PrMode::Regular,
+            SyncPrContent::None,
+        )
+        .await
+        .unwrap();
 
         assert!(!plan.bookmark_plans[0].needs_create);
         assert!(plan.bookmark_plans[1].needs_create);
     }
 
     #[tokio::test]
-    async fn plan_sync_pr_content_sets_needs_content_sync() {
+    async fn plan_sync_title_detects_change() {
+        let analysis = SubmissionAnalysis {
+            // Commit title "feature a" differs from PR title "PR for feat-a".
+            segments: vec![make_segment(&["feat-a"], "ch_a", "feature a")],
+            default_branch: "main".to_string(),
+        };
+
+        let forge = MockForge::new().with_existing_pr("feat-a", make_pr(42, "feat-a", "main"));
+
+        let plan = create_submission_plan(
+            &analysis,
+            &forge,
+            "origin",
+            PrMode::Regular,
+            SyncPrContent::All,
+        )
+        .await
+        .unwrap();
+
+        assert!(plan.bookmark_plans[0].needs_title_sync);
+        // Body is None for both commit and PR — no body sync needed.
+        assert!(!plan.bookmark_plans[0].needs_body_sync);
+    }
+
+    #[tokio::test]
+    async fn plan_sync_title_skips_when_same() {
+        let analysis = SubmissionAnalysis {
+            segments: vec![make_segment(&["feat-a"], "ch_a", "PR for feat-a")],
+            default_branch: "main".to_string(),
+        };
+
+        let forge = MockForge::new().with_existing_pr("feat-a", make_pr(42, "feat-a", "main"));
+
+        let plan = create_submission_plan(
+            &analysis,
+            &forge,
+            "origin",
+            PrMode::Regular,
+            SyncPrContent::All,
+        )
+        .await
+        .unwrap();
+
+        assert!(!plan.bookmark_plans[0].needs_title_sync);
+    }
+
+    #[tokio::test]
+    async fn plan_sync_body_detects_change() {
+        let analysis = SubmissionAnalysis {
+            segments: vec![make_segment(
+                &["feat-a"],
+                "ch_a",
+                "feature a\n\nnew body text",
+            )],
+            default_branch: "main".to_string(),
+        };
+
+        let forge = MockForge::new().with_existing_pr(
+            "feat-a",
+            make_pr_with_body(42, "feat-a", "main", "old body"),
+        );
+
+        let plan = create_submission_plan(
+            &analysis,
+            &forge,
+            "origin",
+            PrMode::Regular,
+            SyncPrContent::All,
+        )
+        .await
+        .unwrap();
+
+        assert!(plan.bookmark_plans[0].needs_body_sync);
+    }
+
+    #[tokio::test]
+    async fn plan_sync_body_ignores_fenced_section() {
+        let fenced_body =
+            "old body\n\n<!-- STAKK_BODY_START -->\nstack info\n<!-- STAKK_BODY_END -->";
+        let analysis = SubmissionAnalysis {
+            // Commit body = "old body" matches the non-fenced portion.
+            segments: vec![make_segment(&["feat-a"], "ch_a", "feature a\n\nold body")],
+            default_branch: "main".to_string(),
+        };
+
+        let forge = MockForge::new().with_existing_pr(
+            "feat-a",
+            make_pr_with_body(42, "feat-a", "main", fenced_body),
+        );
+
+        let plan = create_submission_plan(
+            &analysis,
+            &forge,
+            "origin",
+            PrMode::Regular,
+            SyncPrContent::All,
+        )
+        .await
+        .unwrap();
+
+        assert!(!plan.bookmark_plans[0].needs_body_sync);
+    }
+
+    #[tokio::test]
+    async fn plan_sync_disabled_does_not_set_flags() {
         let analysis = SubmissionAnalysis {
             segments: vec![make_segment(&["feat-a"], "ch_a", "feature a")],
             default_branch: "main".to_string(),
@@ -1313,15 +1476,22 @@ mod tests {
 
         let forge = MockForge::new().with_existing_pr("feat-a", make_pr(42, "feat-a", "main"));
 
-        let plan = create_submission_plan(&analysis, &forge, "origin", PrMode::Regular, true)
-            .await
-            .unwrap();
+        let plan = create_submission_plan(
+            &analysis,
+            &forge,
+            "origin",
+            PrMode::Regular,
+            SyncPrContent::None,
+        )
+        .await
+        .unwrap();
 
-        assert!(plan.bookmark_plans[0].needs_content_sync);
+        assert!(!plan.bookmark_plans[0].needs_title_sync);
+        assert!(!plan.bookmark_plans[0].needs_body_sync);
     }
 
     #[tokio::test]
-    async fn plan_sync_pr_content_false_for_new_prs() {
+    async fn plan_sync_new_pr_does_not_set_flags() {
         let analysis = SubmissionAnalysis {
             segments: vec![make_segment(&["feat-a"], "ch_a", "feature a")],
             default_branch: "main".to_string(),
@@ -1329,27 +1499,70 @@ mod tests {
 
         let forge = MockForge::new();
 
-        let plan = create_submission_plan(&analysis, &forge, "origin", PrMode::Regular, true)
-            .await
-            .unwrap();
+        let plan = create_submission_plan(
+            &analysis,
+            &forge,
+            "origin",
+            PrMode::Regular,
+            SyncPrContent::All,
+        )
+        .await
+        .unwrap();
 
-        assert!(!plan.bookmark_plans[0].needs_content_sync);
+        assert!(!plan.bookmark_plans[0].needs_title_sync);
+        assert!(!plan.bookmark_plans[0].needs_body_sync);
     }
 
     #[tokio::test]
-    async fn plan_sync_pr_content_disabled_does_not_set_flag() {
+    async fn plan_sync_title_only_does_not_set_body_flag() {
         let analysis = SubmissionAnalysis {
-            segments: vec![make_segment(&["feat-a"], "ch_a", "feature a")],
+            segments: vec![make_segment(&["feat-a"], "ch_a", "feature a\n\nnew body")],
             default_branch: "main".to_string(),
         };
 
-        let forge = MockForge::new().with_existing_pr("feat-a", make_pr(42, "feat-a", "main"));
+        let forge = MockForge::new().with_existing_pr(
+            "feat-a",
+            make_pr_with_body(42, "feat-a", "main", "old body"),
+        );
 
-        let plan = create_submission_plan(&analysis, &forge, "origin", PrMode::Regular, false)
-            .await
-            .unwrap();
+        let plan = create_submission_plan(
+            &analysis,
+            &forge,
+            "origin",
+            PrMode::Regular,
+            SyncPrContent::Title,
+        )
+        .await
+        .unwrap();
 
-        assert!(!plan.bookmark_plans[0].needs_content_sync);
+        assert!(plan.bookmark_plans[0].needs_title_sync);
+        assert!(!plan.bookmark_plans[0].needs_body_sync);
+    }
+
+    #[tokio::test]
+    async fn plan_sync_body_only_does_not_set_title_flag() {
+        let analysis = SubmissionAnalysis {
+            segments: vec![make_segment(&["feat-a"], "ch_a", "feature a\n\nnew body")],
+            default_branch: "main".to_string(),
+        };
+
+        let forge = MockForge::new().with_existing_pr(
+            "feat-a",
+            make_pr_with_body(42, "feat-a", "main", "old body"),
+        );
+
+        let plan = create_submission_plan(
+            &analysis,
+            &forge,
+            "origin",
+            PrMode::Regular,
+            SyncPrContent::Body,
+        )
+        .await
+        .unwrap();
+
+        assert!(!plan.bookmark_plans[0].needs_title_sync);
+        assert!(plan.bookmark_plans[0].needs_body_sync);
     }
 
     #[test]
@@ -1365,7 +1578,8 @@ mod tests {
                     needs_push: true,
                     needs_create: true,
                     needs_base_update: false,
-                    needs_content_sync: false,
+                    needs_title_sync: false,
+                    needs_body_sync: false,
                 },
                 BookmarkPlan {
                     bookmark_name: "feat-b".to_string(),
@@ -1376,7 +1590,8 @@ mod tests {
                     needs_push: true,
                     needs_create: false,
                     needs_base_update: true,
-                    needs_content_sync: false,
+                    needs_title_sync: false,
+                    needs_body_sync: false,
                 },
             ],
             remote: "origin".to_string(),
@@ -1409,7 +1624,8 @@ mod tests {
                     needs_push: true,
                     needs_create: true,
                     needs_base_update: false,
-                    needs_content_sync: false,
+                    needs_title_sync: false,
+                    needs_body_sync: false,
                 },
                 BookmarkPlan {
                     bookmark_name: "feat-b".to_string(),
@@ -1420,7 +1636,8 @@ mod tests {
                     needs_push: true,
                     needs_create: true,
                     needs_base_update: false,
-                    needs_content_sync: false,
+                    needs_title_sync: false,
+                    needs_body_sync: false,
                 },
             ],
             remote: "origin".to_string(),
@@ -1459,7 +1676,8 @@ mod tests {
                 needs_push: true,
                 needs_create: false,
                 needs_base_update: true,
-                needs_content_sync: false,
+                needs_title_sync: false,
+                needs_body_sync: false,
             }],
             remote: "origin".to_string(),
             pr_mode: PrMode::Regular,
@@ -1493,7 +1711,8 @@ mod tests {
                     needs_push: true,
                     needs_create: true,
                     needs_base_update: false,
-                    needs_content_sync: false,
+                    needs_title_sync: false,
+                    needs_body_sync: false,
                 },
                 BookmarkPlan {
                     bookmark_name: "feat-b".to_string(),
@@ -1504,7 +1723,8 @@ mod tests {
                     needs_push: true,
                     needs_create: true,
                     needs_base_update: false,
-                    needs_content_sync: false,
+                    needs_title_sync: false,
+                    needs_body_sync: false,
                 },
             ],
             remote: "origin".to_string(),
@@ -1573,7 +1793,8 @@ mod tests {
                     needs_push: true,
                     needs_create: false,
                     needs_base_update: false,
-                    needs_content_sync: false,
+                    needs_title_sync: false,
+                    needs_body_sync: false,
                 },
                 BookmarkPlan {
                     bookmark_name: "feat-b".to_string(),
@@ -1584,7 +1805,8 @@ mod tests {
                     needs_push: true,
                     needs_create: true,
                     needs_base_update: false,
-                    needs_content_sync: false,
+                    needs_title_sync: false,
+                    needs_body_sync: false,
                 },
             ],
             remote: "origin".to_string(),
@@ -1629,7 +1851,8 @@ mod tests {
                     needs_push: true,
                     needs_create: true,
                     needs_base_update: false,
-                    needs_content_sync: false,
+                    needs_title_sync: false,
+                    needs_body_sync: false,
                 },
                 BookmarkPlan {
                     bookmark_name: "feat-b".to_string(),
@@ -1640,7 +1863,8 @@ mod tests {
                     needs_push: true,
                     needs_create: true,
                     needs_base_update: false,
-                    needs_content_sync: false,
+                    needs_title_sync: false,
+                    needs_body_sync: false,
                 },
             ],
             remote: "my-remote".to_string(),
@@ -1675,7 +1899,8 @@ mod tests {
                 needs_push: true,
                 needs_create: true,
                 needs_base_update: false,
-                needs_content_sync: false,
+                needs_title_sync: false,
+                needs_body_sync: false,
             }],
             remote: "origin".to_string(),
             pr_mode: PrMode::Draft,
@@ -1701,7 +1926,8 @@ mod tests {
                 needs_push: true,
                 needs_create: true,
                 needs_base_update: false,
-                needs_content_sync: false,
+                needs_title_sync: false,
+                needs_body_sync: false,
             }],
             remote: "origin".to_string(),
             pr_mode: PrMode::Draft,
@@ -1734,7 +1960,8 @@ mod tests {
                 needs_push: true,
                 needs_create: false,
                 needs_base_update: false,
-                needs_content_sync: true,
+                needs_title_sync: true,
+                needs_body_sync: true,
             }],
             remote: "origin".to_string(),
             pr_mode: PrMode::Regular,
@@ -1771,7 +1998,8 @@ mod tests {
                 needs_push: true,
                 needs_create: false,
                 needs_base_update: false,
-                needs_content_sync: true,
+                needs_title_sync: true,
+                needs_body_sync: true,
             }],
             remote: "origin".to_string(),
             pr_mode: PrMode::Regular,
@@ -1790,6 +2018,7 @@ mod tests {
         let updated_titles = forge.updated_titles.lock().unwrap();
         assert_eq!(updated_titles[0], (42, "title only".to_string()));
 
+        // Body sync with None body clears the body to empty string.
         let updated_bodies = forge.updated_bodies.lock().unwrap();
         assert_eq!(updated_bodies[0], (42, String::new()));
     }
@@ -1806,7 +2035,8 @@ mod tests {
                 needs_push: true,
                 needs_create: false,
                 needs_base_update: false,
-                needs_content_sync: false,
+                needs_title_sync: false,
+                needs_body_sync: false,
             }],
             remote: "origin".to_string(),
             pr_mode: PrMode::Regular,
@@ -1839,7 +2069,8 @@ mod tests {
                     needs_push: true,
                     needs_create: false,
                     needs_base_update: false,
-                    needs_content_sync: true,
+                    needs_title_sync: false,
+                    needs_body_sync: true,
                 },
                 BookmarkPlan {
                     bookmark_name: "feat-b".to_string(),
@@ -1850,7 +2081,8 @@ mod tests {
                     needs_push: true,
                     needs_create: false,
                     needs_base_update: false,
-                    needs_content_sync: true,
+                    needs_title_sync: false,
+                    needs_body_sync: true,
                 },
             ],
             remote: "origin".to_string(),
@@ -1867,19 +2099,16 @@ mod tests {
             .await
             .unwrap();
 
-        // The body-mode fence-spliced bodies should contain the commit text
-        // and the STAKK_BODY_START fence.
+        // Body sync is skipped in the per-bookmark loop when body-mode is
+        // active — the fence-splicing phase handles it in a single API call.
+        // So there should be exactly 2 body updates (one per PR), not 4.
         let updated_bodies = forge.updated_bodies.lock().unwrap();
-        // First two updates are from content sync (one per PR).
-        // Next two are from body-mode fence splicing.
-        assert!(updated_bodies.len() >= 4);
-        // The fence-spliced bodies (last two) should contain the commit text.
-        let final_a = &updated_bodies[2].1;
-        let final_b = &updated_bodies[3].1;
-        assert!(final_a.contains("new commit body"));
-        assert!(final_a.contains("STAKK_BODY_START"));
-        assert!(final_b.contains("commit body b"));
-        assert!(final_b.contains("STAKK_BODY_START"));
+        assert_eq!(updated_bodies.len(), 2);
+        // Both bodies should contain the commit text and the STAKK_BODY_START fence.
+        assert!(updated_bodies[0].1.contains("new commit body"));
+        assert!(updated_bodies[0].1.contains("STAKK_BODY_START"));
+        assert!(updated_bodies[1].1.contains("commit body b"));
+        assert!(updated_bodies[1].1.contains("STAKK_BODY_START"));
     }
 
     // -----------------------------------------------------------------------
@@ -2006,7 +2235,8 @@ mod tests {
                     needs_push: true,
                     needs_create: true,
                     needs_base_update: false,
-                    needs_content_sync: false,
+                    needs_title_sync: false,
+                    needs_body_sync: false,
                 },
                 BookmarkPlan {
                     bookmark_name: "feat-b".to_string(),
@@ -2017,7 +2247,8 @@ mod tests {
                     needs_push: true,
                     needs_create: true,
                     needs_base_update: false,
-                    needs_content_sync: false,
+                    needs_title_sync: false,
+                    needs_body_sync: false,
                 },
             ],
             remote: "origin".to_string(),
@@ -2068,7 +2299,8 @@ mod tests {
                     needs_push: true,
                     needs_create: false,
                     needs_base_update: false,
-                    needs_content_sync: false,
+                    needs_title_sync: false,
+                    needs_body_sync: false,
                 },
                 BookmarkPlan {
                     bookmark_name: "feat-b".to_string(),
@@ -2079,7 +2311,8 @@ mod tests {
                     needs_push: true,
                     needs_create: true,
                     needs_base_update: false,
-                    needs_content_sync: false,
+                    needs_title_sync: false,
+                    needs_body_sync: false,
                 },
             ],
             remote: "origin".to_string(),
@@ -2158,7 +2391,8 @@ mod tests {
                     needs_push: true,
                     needs_create: false,
                     needs_base_update: false,
-                    needs_content_sync: false,
+                    needs_title_sync: false,
+                    needs_body_sync: false,
                 },
                 BookmarkPlan {
                     bookmark_name: "feat-b".to_string(),
@@ -2169,7 +2403,8 @@ mod tests {
                     needs_push: true,
                     needs_create: true,
                     needs_base_update: false,
-                    needs_content_sync: false,
+                    needs_title_sync: false,
+                    needs_body_sync: false,
                 },
             ],
             remote: "origin".to_string(),
@@ -2219,7 +2454,8 @@ mod tests {
                     needs_push: true,
                     needs_create: false,
                     needs_base_update: false,
-                    needs_content_sync: false,
+                    needs_title_sync: false,
+                    needs_body_sync: false,
                 },
                 BookmarkPlan {
                     bookmark_name: "feat-b".to_string(),
@@ -2230,7 +2466,8 @@ mod tests {
                     needs_push: true,
                     needs_create: true,
                     needs_base_update: false,
-                    needs_content_sync: false,
+                    needs_title_sync: false,
+                    needs_body_sync: false,
                 },
             ],
             remote: "origin".to_string(),
@@ -2281,7 +2518,8 @@ mod tests {
                 needs_push: true,
                 needs_create: true,
                 needs_base_update: false,
-                needs_content_sync: false,
+                needs_title_sync: false,
+                needs_body_sync: false,
             }],
             remote: "origin".to_string(),
             pr_mode: PrMode::Regular,
@@ -2355,7 +2593,8 @@ mod tests {
                 needs_push: true,
                 needs_create: false,
                 needs_base_update: false,
-                needs_content_sync: false,
+                needs_title_sync: false,
+                needs_body_sync: false,
             }],
             remote: "origin".to_string(),
             pr_mode: PrMode::Regular,
@@ -2401,7 +2640,8 @@ mod tests {
                 needs_push: true,
                 needs_create: false,
                 needs_base_update: false,
-                needs_content_sync: false,
+                needs_title_sync: false,
+                needs_body_sync: false,
             }],
             remote: "origin".to_string(),
             pr_mode: PrMode::Regular,
@@ -2452,7 +2692,8 @@ mod tests {
                     needs_push: true,
                     needs_create: false,
                     needs_base_update: true,
-                    needs_content_sync: false,
+                    needs_title_sync: false,
+                    needs_body_sync: false,
                 },
                 BookmarkPlan {
                     bookmark_name: "feat-b".to_string(),
@@ -2463,7 +2704,8 @@ mod tests {
                     needs_push: true,
                     needs_create: false,
                     needs_base_update: true,
-                    needs_content_sync: false,
+                    needs_title_sync: false,
+                    needs_body_sync: false,
                 },
             ],
             remote: "origin".to_string(),
@@ -2513,7 +2755,8 @@ mod tests {
                     needs_push: true,
                     needs_create: false,
                     needs_base_update: true,
-                    needs_content_sync: false,
+                    needs_title_sync: false,
+                    needs_body_sync: false,
                 },
                 BookmarkPlan {
                     bookmark_name: "feat-b".to_string(),
@@ -2524,7 +2767,8 @@ mod tests {
                     needs_push: true,
                     needs_create: false,
                     needs_base_update: true,
-                    needs_content_sync: false,
+                    needs_title_sync: false,
+                    needs_body_sync: false,
                 },
                 BookmarkPlan {
                     bookmark_name: "feat-c".to_string(),
@@ -2535,7 +2779,8 @@ mod tests {
                     needs_push: true,
                     needs_create: false,
                     needs_base_update: true,
-                    needs_content_sync: false,
+                    needs_title_sync: false,
+                    needs_body_sync: false,
                 },
             ],
             remote: "origin".to_string(),
@@ -2587,7 +2832,8 @@ mod tests {
                     needs_push: true,
                     needs_create: false,
                     needs_base_update: true,
-                    needs_content_sync: false,
+                    needs_title_sync: false,
+                    needs_body_sync: false,
                 },
                 BookmarkPlan {
                     bookmark_name: "feat-b".to_string(),
@@ -2598,7 +2844,8 @@ mod tests {
                     needs_push: true,
                     needs_create: true,
                     needs_base_update: false,
-                    needs_content_sync: false,
+                    needs_title_sync: false,
+                    needs_body_sync: false,
                 },
             ],
             remote: "origin".to_string(),

@@ -58,7 +58,6 @@ pub enum PrState {
 pub struct PullRequest {
     pub number: u64,
     pub html_url: String,
-    #[expect(dead_code, reason = "populated by forge, read in future milestones")]
     pub title: String,
     #[expect(dead_code, reason = "populated by forge, read in future milestones")]
     pub head_ref: String,

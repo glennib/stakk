@@ -27,6 +27,31 @@ impl std::fmt::Display for PrMode {
     }
 }
 
+/// Controls whether existing PR titles and/or bodies are updated from
+/// commit descriptions on every submit.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Deserialize, clap::ValueEnum)]
+#[serde(rename_all = "kebab-case")]
+pub enum SyncPrContent {
+    /// Do not sync (default). Title and body are only set on PR creation.
+    #[default]
+    None,
+    /// Sync only the PR title from the first line of the commit description.
+    Title,
+    /// Sync only the PR body from the commit description.
+    Body,
+    /// Sync both the PR title and body.
+    All,
+}
+
+impl std::fmt::Display for SyncPrContent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let pv = self
+            .to_possible_value()
+            .expect("all variants have possible values");
+        f.write_str(pv.get_name())
+    }
+}
+
 /// Arguments for the submit subcommand.
 #[derive(Debug, Args)]
 pub struct SubmitArgs {
@@ -117,21 +142,25 @@ pub struct SubmitArgs {
     )]
     pub stack_placement: StackPlacement,
 
-    /// Sync PR title and body from jj commit descriptions on every
-    /// submit, even for existing PRs.
+    /// Controls whether existing PR titles and/or bodies are updated
+    /// from jj commit descriptions on every submit.
     ///
-    /// By default, stakk only sets the title and body when creating a
-    /// new PR.  With this flag, existing PRs are updated to match the
-    /// current commit descriptions on every run.  Manual edits to the
-    /// PR title or body on GitHub will be overwritten.
+    /// By default (none), stakk only sets the title and body when
+    /// creating a new PR. Other modes:
+    ///   title — sync only the PR title
+    ///   body  — sync only the PR body (description)
+    ///   all   — sync both title and body
+    ///
+    /// When syncing is enabled, manual edits to the synced fields on
+    /// GitHub will be overwritten.
     #[arg(
-        long,
+        long = "sync-pr-content",
         env = "STAKK_SYNC_PR_CONTENT",
-        default_value_t = false,
-        action = clap::ArgAction::Set,
+        default_value = "none",
+        value_enum,
         verbatim_doc_comment
     )]
-    pub sync_pr_content: bool,
+    pub sync_pr_content: SyncPrContent,
 
     /// Prefix for auto-generated bookmark names.
     ///

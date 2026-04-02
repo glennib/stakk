@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use serde::Deserialize;
 
 use crate::cli::submit::PrMode;
+use crate::cli::submit::SyncPrContent;
 use crate::forge::comment::StackPlacement;
 
 /// Pre-parse the config file path from raw CLI args or environment, before clap
@@ -49,7 +50,7 @@ pub struct Config {
     pub pr_mode: Option<PrMode>,
     pub template: Option<String>,
     pub stack_placement: Option<StackPlacement>,
-    pub sync_pr_content: Option<bool>,
+    pub sync_pr_content: Option<SyncPrContent>,
     pub auto_prefix: Option<String>,
     pub bookmark_command: Option<String>,
     pub bookmarks_revset: Option<String>,

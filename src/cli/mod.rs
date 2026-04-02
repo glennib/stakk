@@ -298,32 +298,41 @@ mod tests {
     // -- sync_pr_content tests --
 
     #[test]
-    fn sync_pr_content_default_false() {
+    fn sync_pr_content_default_none() {
         let cli = parse_with_config(Config::default(), &["stakk", "submit", "bm"]);
-        assert!(!submit_args(&cli).sync_pr_content);
+        assert_eq!(
+            submit_args(&cli).sync_pr_content,
+            crate::cli::submit::SyncPrContent::None,
+        );
     }
 
     #[test]
-    fn sync_pr_content_config_true() {
+    fn sync_pr_content_config_all() {
         let config = Config {
-            sync_pr_content: Some(true),
+            sync_pr_content: Some(crate::cli::submit::SyncPrContent::All),
             ..Default::default()
         };
         let cli = parse_with_config(config, &["stakk", "submit", "bm"]);
-        assert!(submit_args(&cli).sync_pr_content);
+        assert_eq!(
+            submit_args(&cli).sync_pr_content,
+            crate::cli::submit::SyncPrContent::All,
+        );
     }
 
     #[test]
     fn sync_pr_content_cli_overrides_config() {
         let config = Config {
-            sync_pr_content: Some(true),
+            sync_pr_content: Some(crate::cli::submit::SyncPrContent::All),
             ..Default::default()
         };
         let cli = parse_with_config(
             config,
-            &["stakk", "submit", "--sync-pr-content=false", "bm"],
+            &["stakk", "submit", "--sync-pr-content=title", "bm"],
         );
-        assert!(!submit_args(&cli).sync_pr_content);
+        assert_eq!(
+            submit_args(&cli).sync_pr_content,
+            crate::cli::submit::SyncPrContent::Title,
+        );
     }
 
     // -- auto_prefix tests --
@@ -428,7 +437,7 @@ remote = "upstream"
 pr_mode = "draft"
 template = "/path/to/template.jinja"
 stack_placement = "body"
-sync_pr_content = true
+sync_pr_content = "all"
 auto_prefix = "gb-"
 bookmark_command = "my-command"
 bookmarks_revset = "all()"
@@ -439,7 +448,10 @@ heads_revset = "heads(all())"
         assert_eq!(config.pr_mode, Some(PrMode::Draft));
         assert_eq!(config.template.as_deref(), Some("/path/to/template.jinja"));
         assert_eq!(config.stack_placement, Some(StackPlacement::Body));
-        assert_eq!(config.sync_pr_content, Some(true));
+        assert_eq!(
+            config.sync_pr_content,
+            Some(crate::cli::submit::SyncPrContent::All),
+        );
         assert_eq!(config.auto_prefix.as_deref(), Some("gb-"));
         assert_eq!(config.bookmark_command.as_deref(), Some("my-command"));
         assert_eq!(config.bookmarks_revset.as_deref(), Some("all()"));
