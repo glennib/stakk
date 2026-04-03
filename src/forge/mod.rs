@@ -20,11 +20,6 @@ pub enum ForgeError {
         source: Box<dyn std::error::Error + Send + Sync>,
     },
 
-    #[expect(dead_code, reason = "used in later milestones for PR lookup errors")]
-    #[error("PR not found: #{number}")]
-    #[diagnostic(code(stakk::forge::pr_not_found))]
-    PrNotFound { number: u64 },
-
     #[error("authentication failed: {message}")]
     #[diagnostic(
         code(stakk::forge::auth_failed),
@@ -35,14 +30,6 @@ pub enum ForgeError {
         #[source]
         source: Box<dyn std::error::Error + Send + Sync>,
     },
-
-    #[expect(dead_code, reason = "used in later milestones for rate limit handling")]
-    #[error("rate limited; retry after {retry_after_seconds}s")]
-    #[diagnostic(
-        code(stakk::forge::rate_limited),
-        help("wait {retry_after_seconds}s and retry")
-    )]
-    RateLimited { retry_after_seconds: u64 },
 }
 
 /// State of a pull request.
@@ -59,10 +46,16 @@ pub struct PullRequest {
     pub number: u64,
     pub html_url: String,
     pub title: String,
-    #[expect(dead_code, reason = "populated by forge, read in future milestones")]
+    #[expect(
+        dead_code,
+        reason = "part of PR data model, not yet consumed by submission logic"
+    )]
     pub head_ref: String,
     pub base_ref: String,
-    #[expect(dead_code, reason = "populated by forge, read in future milestones")]
+    #[expect(
+        dead_code,
+        reason = "part of PR data model, not yet consumed by submission logic"
+    )]
     pub state: PrState,
     /// The PR body/description text.
     pub body: Option<String>,

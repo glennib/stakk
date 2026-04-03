@@ -28,7 +28,10 @@ pub struct CommitRefData {
     pub name: String,
     #[cfg_attr(
         not(test),
-        expect(dead_code, reason = "deserialized for completeness, used later")
+        expect(
+            dead_code,
+            reason = "deserialized for completeness, not yet read in production"
+        )
     )]
     pub target: Vec<String>,
     #[serde(default)]
@@ -38,7 +41,10 @@ pub struct CommitRefData {
     /// commit has been rewritten and the remote bookmark hasn't been updated).
     #[cfg_attr(
         not(test),
-        expect(dead_code, reason = "deserialized for completeness, used later")
+        expect(
+            dead_code,
+            reason = "deserialized for completeness, not yet read in production"
+        )
     )]
     #[serde(default)]
     pub tracking_target: Option<Vec<Option<String>>>,
@@ -80,8 +86,7 @@ pub struct Bookmark {
         not(test),
         expect(
             dead_code,
-            reason = "available for push optimization (skip synced bookmarks) in a future \
-                      milestone"
+            reason = "available for push optimization (skip synced bookmarks)"
         )
     )]
     pub synced: bool,
