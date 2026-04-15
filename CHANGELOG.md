@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.13.0](https://github.com/glennib/stakk/compare/v1.12.0...v1.13.0) - 2026-04-15
+
+### Added
+
+- strip git commit trailers from PR bodies
+
+### Other
+
+- Merge pull request #76 from glennib/renovate/tokio-1.x-lockfile
+
 ## [1.12.0](https://github.com/glennib/stakk/compare/v1.11.0...v1.12.0) - 2026-04-02
 
 ### Added
