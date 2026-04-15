@@ -71,12 +71,6 @@ impl GraphLayout {
         self.nodes.iter().find(|n| n.row == row && n.col == col)
     }
 
-    /// Get the index of a node in the nodes vec by row/col.
-    #[expect(dead_code, reason = "available for future navigation features")]
-    pub fn node_index_at(&self, row: usize, col: usize) -> Option<usize> {
-        self.nodes.iter().position(|n| n.row == row && n.col == col)
-    }
-
     /// Return all leaf nodes (selectable branch tips), sorted left-to-right by
     /// column so that index 0 is the leftmost leaf.
     pub fn leaf_nodes(&self) -> Vec<&LayoutNode> {
