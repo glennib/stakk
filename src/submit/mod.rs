@@ -3,6 +3,7 @@
 //! Takes a change graph and forge implementation and submits bookmarks as
 //! stacked pull requests, updating existing PRs idempotently.
 
+mod trailers;
 mod unwrap;
 
 use std::collections::HashSet;
@@ -35,6 +36,7 @@ use crate::graph::types::SegmentCommit;
 use crate::jj::Jj;
 use crate::jj::JjError;
 use crate::jj::runner::JjRunner;
+use crate::submit::trailers::strip_trailers;
 use crate::submit::unwrap::unwrap_markdown;
 
 /// Errors from the submission pipeline.
@@ -300,16 +302,17 @@ fn build_pr_body(commits: &[SegmentCommit]) -> Option<String> {
     }
 
     let body = if commits.len() == 1 {
-        // Single commit: strip the first line (title) and use the rest.
-        let desc = commits[0].description.trim();
+        // Single commit: strip trailers, then strip the first line (title)
+        // and use the rest.
+        let desc = strip_trailers(commits[0].description.trim());
         let rest = desc.lines().skip(1).collect::<Vec<_>>().join("\n");
         rest.trim().to_string()
     } else {
-        // Multiple commits: concatenate all descriptions.
+        // Multiple commits: strip trailers from each, then concatenate.
         let parts: Vec<&str> = commits
             .iter()
-            .map(|c| c.description.trim())
-            .filter(|d: &&str| !d.is_empty())
+            .map(|c| strip_trailers(c.description.trim()))
+            .filter(|d| !d.is_empty())
             .collect();
         parts.join("\n\n---\n\n")
     };
@@ -2262,6 +2265,102 @@ mod tests {
     fn build_pr_body_empty() {
         let body = build_pr_body(&[]);
         assert_eq!(body, None);
+    }
+
+    #[test]
+    fn build_pr_body_single_commit_strips_trailers() {
+        let commits = vec![SegmentCommit {
+            commit_id: "c1".to_string(),
+            change_id: "ch1".to_string(),
+            description: "Add feature X\n\nThis adds feature X.\n\nSigned-off-by: Alice \
+                          <a@b>\nRefs: DAT-123"
+                .to_string(),
+            author: crate::jj::types::Signature {
+                name: "Test".to_string(),
+                email: "test@test.com".to_string(),
+                timestamp: "T".to_string(),
+            },
+            committer: crate::jj::types::Signature {
+                name: "Test".to_string(),
+                email: "test@test.com".to_string(),
+                timestamp: "T".to_string(),
+            },
+            files: vec![],
+            short_change_id: "ch1".to_string(),
+        }];
+
+        let body = build_pr_body(&commits);
+        assert_eq!(body.as_deref(), Some("This adds feature X."));
+    }
+
+    #[test]
+    fn build_pr_body_single_commit_title_plus_trailers_only() {
+        let commits = vec![SegmentCommit {
+            commit_id: "c1".to_string(),
+            change_id: "ch1".to_string(),
+            description: "Add feature X\n\nSigned-off-by: Alice <a@b>".to_string(),
+            author: crate::jj::types::Signature {
+                name: "Test".to_string(),
+                email: "test@test.com".to_string(),
+                timestamp: "T".to_string(),
+            },
+            committer: crate::jj::types::Signature {
+                name: "Test".to_string(),
+                email: "test@test.com".to_string(),
+                timestamp: "T".to_string(),
+            },
+            files: vec![],
+            short_change_id: "ch1".to_string(),
+        }];
+
+        let body = build_pr_body(&commits);
+        assert_eq!(body, None);
+    }
+
+    #[test]
+    fn build_pr_body_multiple_commits_strips_trailers() {
+        let commits = vec![
+            SegmentCommit {
+                commit_id: "c1".to_string(),
+                change_id: "ch1".to_string(),
+                description: "First commit\n\nSigned-off-by: Alice <a@b>".to_string(),
+                author: crate::jj::types::Signature {
+                    name: "Test".to_string(),
+                    email: "test@test.com".to_string(),
+                    timestamp: "T".to_string(),
+                },
+                committer: crate::jj::types::Signature {
+                    name: "Test".to_string(),
+                    email: "test@test.com".to_string(),
+                    timestamp: "T".to_string(),
+                },
+                files: vec![],
+                short_change_id: "ch1".to_string(),
+            },
+            SegmentCommit {
+                commit_id: "c2".to_string(),
+                change_id: "ch2".to_string(),
+                description: "Second commit\n\nWith a body.\n\nRefs: DAT-456".to_string(),
+                author: crate::jj::types::Signature {
+                    name: "Test".to_string(),
+                    email: "test@test.com".to_string(),
+                    timestamp: "T".to_string(),
+                },
+                committer: crate::jj::types::Signature {
+                    name: "Test".to_string(),
+                    email: "test@test.com".to_string(),
+                    timestamp: "T".to_string(),
+                },
+                files: vec![],
+                short_change_id: "ch2".to_string(),
+            },
+        ];
+
+        let body = build_pr_body(&commits);
+        assert_eq!(
+            body.as_deref(),
+            Some("First commit\n\n---\n\nSecond commit\n\nWith a body.")
+        );
     }
 
     // -----------------------------------------------------------------------

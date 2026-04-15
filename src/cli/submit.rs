@@ -153,6 +153,9 @@ pub struct SubmitArgs {
     ///
     /// When syncing is enabled, manual edits to the synced fields on
     /// GitHub will be overwritten.
+    ///
+    /// Git commit trailers (Signed-off-by, Co-authored-by, Refs, etc.)
+    /// are always stripped from PR bodies, both on creation and sync.
     #[arg(
         long,
         env = "STAKK_SYNC_PR_CONTENT",
