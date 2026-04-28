@@ -1,9 +1,22 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
-    "config:recommended"
+    "config:recommended",
+    ":automergeMinor",
+    ":automergeLinters",
+    ":automergeTesters"
   ],
   "ignorePaths": [
     ".github/workflows/release.yml"
+  ],
+  "lockFileMaintenance": {
+    "enabled": true,
+    "automerge": true
+  },
+  "packageRules": [
+    {
+      "matchUpdateTypes": ["patch", "pin", "digest"],
+      "automerge": true
+    }
   ]
 }
