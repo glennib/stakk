@@ -1,21 +1,26 @@
-/// Strip git commit trailers from a commit description.
+/// Split a commit description into `(body, trailers)`.
 ///
-/// Returns a substring of the input with the trailing trailer block removed, if
-/// present. A trailer block is the last paragraph (separated from the rest by
-/// one or more blank lines) where every non-empty line matches the standard git
-/// trailer format: `Key: value`.
+/// A trailer block is the last paragraph (separated from the rest by one
+/// or more blank lines) where every non-empty line matches the standard
+/// git trailer format: `Key: value`.
 ///
-/// If the input has only one paragraph, it is returned unchanged — a single
-/// paragraph cannot be both content and trailers.
+/// `body` is the input with the trailer block removed. `trailers` is
+/// `Some(block)` when a trailer block was found, where `block` is the
+/// verbatim trailer substring (each trailer on its own line, no leading
+/// or trailing blank lines). When no trailer block is detected, returns
+/// `(trimmed_text, None)`.
 ///
-/// **Known limitation:** continuation lines (indented follow-up lines within a
-/// trailer value) are not recognized. If the last paragraph contains a mix of
-/// trailer lines and non-trailer lines (including continuations), the entire
-/// paragraph is conservatively kept.
-pub(crate) fn strip_trailers(text: &str) -> &str {
+/// If the input has only one paragraph, it is returned unchanged — a
+/// single paragraph cannot be both content and trailers.
+///
+/// **Known limitation:** continuation lines (indented follow-up lines
+/// within a trailer value) are not recognized. If the last paragraph
+/// contains a mix of trailer lines and non-trailer lines (including
+/// continuations), the entire paragraph is conservatively kept.
+pub(crate) fn split_trailers(text: &str) -> (&str, Option<&str>) {
     let trimmed = text.trim_end();
     if trimmed.is_empty() {
-        return trimmed;
+        return (trimmed, None);
     }
 
     // Find the boundary between the last paragraph and everything before it.
@@ -40,13 +45,13 @@ pub(crate) fn strip_trailers(text: &str) -> &str {
     // If we walked all the way to the start without finding a blank line, the
     // entire text is one paragraph — return unchanged.
     if i == 0 {
-        return trimmed;
+        return (trimmed, None);
     }
 
     let last_paragraph_start = trimmed[i..].find(|c: char| c != '\n' && c != '\r');
     let last_paragraph_start = match last_paragraph_start {
         Some(offset) => i + offset,
-        None => return trimmed,
+        None => return (trimmed, None),
     };
 
     let last_paragraph = &trimmed[last_paragraph_start..];
@@ -58,11 +63,10 @@ pub(crate) fn strip_trailers(text: &str) -> &str {
         .all(is_trailer_line);
 
     if !all_trailers {
-        return trimmed;
+        return (trimmed, None);
     }
 
-    // Strip: return everything before the blank-line boundary, trimmed.
-    trimmed[..i].trim_end()
+    (trimmed[..i].trim_end(), Some(last_paragraph))
 }
 
 /// Check if a line matches the git trailer format: `Key: value`.
@@ -84,90 +88,112 @@ fn is_trailer_line(line: &str) -> bool {
 mod tests {
     use super::*;
 
+    fn body(text: &str) -> &str {
+        split_trailers(text).0
+    }
+
+    fn block(text: &str) -> Option<&str> {
+        split_trailers(text).1
+    }
+
     #[test]
     fn body_with_trailers() {
         let input = "feat: add caching\n\nThis adds Redis caching.\n\nSigned-off-by: Alice \
                      <a@b>\nRefs: DAT-123";
+        assert_eq!(body(input), "feat: add caching\n\nThis adds Redis caching.");
         assert_eq!(
-            strip_trailers(input),
-            "feat: add caching\n\nThis adds Redis caching."
+            block(input),
+            Some("Signed-off-by: Alice <a@b>\nRefs: DAT-123")
         );
     }
 
     #[test]
     fn no_trailers() {
         let input = "feat: add caching\n\nThis adds Redis caching.";
-        assert_eq!(strip_trailers(input), input);
+        assert_eq!(body(input), input);
+        assert_eq!(block(input), None);
     }
 
     #[test]
     fn title_plus_trailers_no_body() {
         let input = "feat: add caching\n\nSigned-off-by: Alice <a@b>";
-        assert_eq!(strip_trailers(input), "feat: add caching");
+        assert_eq!(body(input), "feat: add caching");
+        assert_eq!(block(input), Some("Signed-off-by: Alice <a@b>"));
     }
 
     #[test]
     fn title_only() {
         let input = "feat: add caching";
-        assert_eq!(strip_trailers(input), input);
+        assert_eq!(body(input), input);
+        assert_eq!(block(input), None);
     }
 
     #[test]
     fn mixed_trailer_and_non_trailer_last_paragraph() {
         let input = "title\n\nbody\n\nSigned-off-by: Alice <a@b>\nThis is not a trailer";
-        assert_eq!(strip_trailers(input), input.trim_end());
+        assert_eq!(body(input), input.trim_end());
+        assert_eq!(block(input), None);
     }
 
     #[test]
     fn multiple_paragraphs_only_last_is_trailers() {
         let input = "title\n\nbody\n\nRefs: X\n\nSigned-off-by: Alice <a@b>";
-        assert_eq!(strip_trailers(input), "title\n\nbody\n\nRefs: X");
+        assert_eq!(body(input), "title\n\nbody\n\nRefs: X");
+        assert_eq!(block(input), Some("Signed-off-by: Alice <a@b>"));
     }
 
     #[test]
     fn empty_input() {
-        assert_eq!(strip_trailers(""), "");
+        assert_eq!(body(""), "");
+        assert_eq!(block(""), None);
     }
 
     #[test]
     fn single_paragraph_no_blank_lines() {
         let input = "Signed-off-by: Alice <a@b>\nRefs: DAT-123";
-        assert_eq!(strip_trailers(input), input);
+        assert_eq!(body(input), input);
+        assert_eq!(block(input), None);
     }
 
     #[test]
     fn multiple_blank_lines_before_trailers() {
         let input = "feat: add caching\n\nBody text.\n\n\nSigned-off-by: Alice <a@b>";
-        assert_eq!(strip_trailers(input), "feat: add caching\n\nBody text.");
+        assert_eq!(body(input), "feat: add caching\n\nBody text.");
+        assert_eq!(block(input), Some("Signed-off-by: Alice <a@b>"));
     }
 
     #[test]
     fn trailing_whitespace_in_input() {
         let input = "feat: add caching\n\nBody.\n\nRefs: DAT-123\n  ";
-        assert_eq!(strip_trailers(input), "feat: add caching\n\nBody.");
+        assert_eq!(body(input), "feat: add caching\n\nBody.");
+        assert_eq!(block(input), Some("Refs: DAT-123"));
     }
 
     #[test]
     fn co_authored_by_trailer() {
         let input = "fix: resolve deadlock\n\nCo-authored-by: Bob <bob@example.com>";
-        assert_eq!(strip_trailers(input), "fix: resolve deadlock");
+        assert_eq!(body(input), "fix: resolve deadlock");
+        assert_eq!(block(input), Some("Co-authored-by: Bob <bob@example.com>"));
     }
 
     #[test]
     fn key_with_no_space_after_colon_is_not_trailer() {
         let input = "title\n\nbody\n\nNot-a-trailer:no space here";
-        assert_eq!(strip_trailers(input), input);
+        assert_eq!(body(input), input);
+        assert_eq!(block(input), None);
     }
 
     #[test]
     fn key_with_spaces_is_not_trailer() {
         let input = "title\n\nbody\n\nNot a trailer: value here";
-        assert_eq!(strip_trailers(input), input);
+        assert_eq!(body(input), input);
+        assert_eq!(block(input), None);
     }
 
     #[test]
     fn trailer_value_can_contain_colons() {
         let input = "title\n\nbody\n\nRefs: https://example.com:8080/path";
-        assert_eq!(strip_trailers(input), "title\n\nbody");
+        assert_eq!(body(input), "title\n\nbody");
+        assert_eq!(block(input), Some("Refs: https://example.com:8080/path"));
     }
 }

@@ -14,6 +14,7 @@ use thiserror::Error;
 
 use crate::cli::submit::PrMode;
 use crate::cli::submit::SyncPrContent;
+use crate::cli::submit::TrailerHandling;
 use crate::forge::CreatePrParams;
 use crate::forge::Forge;
 use crate::forge::ForgeError;
@@ -36,7 +37,7 @@ use crate::graph::types::SegmentCommit;
 use crate::jj::Jj;
 use crate::jj::JjError;
 use crate::jj::runner::JjRunner;
-use crate::submit::trailers::strip_trailers;
+use crate::submit::trailers::split_trailers;
 use crate::submit::unwrap::unwrap_markdown;
 
 /// Errors from the submission pipeline.
@@ -296,32 +297,47 @@ pub fn analyze_submission(
 /// - Single commit: lines after the first (the title line) become the body.
 /// - Multiple commits: concatenate all descriptions with `---` separators.
 /// - If the result is empty or whitespace-only, returns `None`.
-fn build_pr_body(commits: &[SegmentCommit]) -> Option<String> {
+///
+/// Trailer blocks (Signed-off-by, Co-authored-by, Refs, etc.) are
+/// removed from the unwrap pass and either dropped (`Strip`) or
+/// reattached verbatim after unwrapping (`Keep`), so multi-line
+/// trailer blocks survive intact.
+fn build_pr_body(commits: &[SegmentCommit], trailers: TrailerHandling) -> Option<String> {
     if commits.is_empty() {
         return None;
     }
 
-    let body = if commits.len() == 1 {
-        // Single commit: strip trailers, then strip the first line (title)
-        // and use the rest.
-        let desc = strip_trailers(commits[0].description.trim());
-        let rest = desc.lines().skip(1).collect::<Vec<_>>().join("\n");
-        rest.trim().to_string()
-    } else {
-        // Multiple commits: strip trailers from each, then concatenate.
-        let parts: Vec<&str> = commits
-            .iter()
-            .map(|c| strip_trailers(c.description.trim()))
-            .filter(|d| !d.is_empty())
-            .collect();
-        parts.join("\n\n---\n\n")
-    };
+    let parts: Vec<String> = commits
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, c)| {
+            let (body, trailer_block) = split_trailers(c.description.trim());
+            // For the single-commit case, drop the title (first) line.
+            let body_text = if commits.len() == 1 && idx == 0 {
+                body.lines().skip(1).collect::<Vec<_>>().join("\n")
+            } else {
+                body.to_string()
+            };
+            let unwrapped = unwrap_markdown(body_text.trim());
+            let kept_trailers = match trailers {
+                TrailerHandling::Keep => trailer_block,
+                TrailerHandling::Strip => None,
+            };
+            match (unwrapped.is_empty(), kept_trailers) {
+                (true, None) => None,
+                (true, Some(tb)) => Some(tb.to_string()),
+                (false, None) => Some(unwrapped),
+                (false, Some(tb)) => Some(format!("{unwrapped}\n\n{tb}")),
+            }
+        })
+        .collect();
 
-    if body.is_empty() {
-        None
-    } else {
-        Some(unwrap_markdown(&body))
+    if parts.is_empty() {
+        return None;
     }
+
+    let body = parts.join("\n\n---\n\n");
+    if body.is_empty() { None } else { Some(body) }
 }
 
 // ---------------------------------------------------------------------------
@@ -338,6 +354,7 @@ pub async fn create_submission_plan<F: Forge>(
     remote: &str,
     pr_mode: PrMode,
     sync: SyncPrContent,
+    trailers: TrailerHandling,
 ) -> Result<SubmissionPlan, SubmitError> {
     // Collect bookmark names for concurrent PR lookup.
     let bookmark_names: Vec<String> = analysis
@@ -389,7 +406,7 @@ pub async fn create_submission_plan<F: Forge>(
 
         let needs_create = existing_pr.is_none();
 
-        let body = build_pr_body(&segment.commits);
+        let body = build_pr_body(&segment.commits, trailers);
 
         let wants_title = matches!(sync, SyncPrContent::Title | SyncPrContent::All);
         let wants_body = matches!(sync, SyncPrContent::Body | SyncPrContent::All);
@@ -1282,6 +1299,7 @@ mod tests {
             "origin",
             PrMode::Regular,
             SyncPrContent::None,
+            TrailerHandling::Keep,
         )
         .await
         .unwrap();
@@ -1313,6 +1331,7 @@ mod tests {
             "origin",
             PrMode::Regular,
             SyncPrContent::None,
+            TrailerHandling::Keep,
         )
         .await
         .unwrap();
@@ -1346,6 +1365,7 @@ mod tests {
             "origin",
             PrMode::Regular,
             SyncPrContent::None,
+            TrailerHandling::Keep,
         )
         .await
         .unwrap();
@@ -1378,6 +1398,7 @@ mod tests {
             "origin",
             PrMode::Regular,
             SyncPrContent::None,
+            TrailerHandling::Keep,
         )
         .await
         .unwrap();
@@ -1402,6 +1423,7 @@ mod tests {
             "origin",
             PrMode::Regular,
             SyncPrContent::All,
+            TrailerHandling::Keep,
         )
         .await
         .unwrap();
@@ -1426,6 +1448,7 @@ mod tests {
             "origin",
             PrMode::Regular,
             SyncPrContent::All,
+            TrailerHandling::Keep,
         )
         .await
         .unwrap();
@@ -1455,6 +1478,7 @@ mod tests {
             "origin",
             PrMode::Regular,
             SyncPrContent::All,
+            TrailerHandling::Keep,
         )
         .await
         .unwrap();
@@ -1483,6 +1507,7 @@ mod tests {
             "origin",
             PrMode::Regular,
             SyncPrContent::All,
+            TrailerHandling::Keep,
         )
         .await
         .unwrap();
@@ -1505,6 +1530,7 @@ mod tests {
             "origin",
             PrMode::Regular,
             SyncPrContent::None,
+            TrailerHandling::Keep,
         )
         .await
         .unwrap();
@@ -1528,6 +1554,7 @@ mod tests {
             "origin",
             PrMode::Regular,
             SyncPrContent::All,
+            TrailerHandling::Keep,
         )
         .await
         .unwrap();
@@ -1554,6 +1581,7 @@ mod tests {
             "origin",
             PrMode::Regular,
             SyncPrContent::Title,
+            TrailerHandling::Keep,
         )
         .await
         .unwrap();
@@ -1580,6 +1608,7 @@ mod tests {
             "origin",
             PrMode::Regular,
             SyncPrContent::Body,
+            TrailerHandling::Keep,
         )
         .await
         .unwrap();
@@ -2184,7 +2213,7 @@ mod tests {
             short_change_id: "ch1".to_string(),
         }];
 
-        let body = build_pr_body(&commits);
+        let body = build_pr_body(&commits, TrailerHandling::Keep);
         assert_eq!(
             body.as_deref(),
             Some("This adds feature X with foo and bar.")
@@ -2211,7 +2240,7 @@ mod tests {
             short_change_id: "ch1".to_string(),
         }];
 
-        let body = build_pr_body(&commits);
+        let body = build_pr_body(&commits, TrailerHandling::Keep);
         assert_eq!(body, None);
     }
 
@@ -2254,7 +2283,7 @@ mod tests {
             },
         ];
 
-        let body = build_pr_body(&commits);
+        let body = build_pr_body(&commits, TrailerHandling::Keep);
         assert_eq!(
             body.as_deref(),
             Some("First commit\n\n---\n\nSecond commit")
@@ -2263,7 +2292,7 @@ mod tests {
 
     #[test]
     fn build_pr_body_empty() {
-        let body = build_pr_body(&[]);
+        let body = build_pr_body(&[], TrailerHandling::Keep);
         assert_eq!(body, None);
     }
 
@@ -2289,7 +2318,7 @@ mod tests {
             short_change_id: "ch1".to_string(),
         }];
 
-        let body = build_pr_body(&commits);
+        let body = build_pr_body(&commits, TrailerHandling::Strip);
         assert_eq!(body.as_deref(), Some("This adds feature X."));
     }
 
@@ -2313,7 +2342,7 @@ mod tests {
             short_change_id: "ch1".to_string(),
         }];
 
-        let body = build_pr_body(&commits);
+        let body = build_pr_body(&commits, TrailerHandling::Strip);
         assert_eq!(body, None);
     }
 
@@ -2356,10 +2385,112 @@ mod tests {
             },
         ];
 
-        let body = build_pr_body(&commits);
+        let body = build_pr_body(&commits, TrailerHandling::Strip);
         assert_eq!(
             body.as_deref(),
             Some("First commit\n\n---\n\nSecond commit\n\nWith a body.")
+        );
+    }
+
+    #[test]
+    fn build_pr_body_single_commit_keeps_trailers() {
+        let commits = vec![SegmentCommit {
+            commit_id: "c1".to_string(),
+            change_id: "ch1".to_string(),
+            description: "Add feature X\n\nThis adds feature X.\n\nSigned-off-by: Alice \
+                          <a@b>\nRefs: DAT-123"
+                .to_string(),
+            author: crate::jj::types::Signature {
+                name: "Test".to_string(),
+                email: "test@test.com".to_string(),
+                timestamp: "T".to_string(),
+            },
+            committer: crate::jj::types::Signature {
+                name: "Test".to_string(),
+                email: "test@test.com".to_string(),
+                timestamp: "T".to_string(),
+            },
+            files: vec![],
+            short_change_id: "ch1".to_string(),
+        }];
+
+        let body = build_pr_body(&commits, TrailerHandling::Keep);
+        assert_eq!(
+            body.as_deref(),
+            Some("This adds feature X.\n\nSigned-off-by: Alice <a@b>\nRefs: DAT-123")
+        );
+    }
+
+    #[test]
+    fn build_pr_body_single_commit_title_plus_trailers_only_kept() {
+        let commits = vec![SegmentCommit {
+            commit_id: "c1".to_string(),
+            change_id: "ch1".to_string(),
+            description: "Add feature X\n\nSigned-off-by: Alice <a@b>".to_string(),
+            author: crate::jj::types::Signature {
+                name: "Test".to_string(),
+                email: "test@test.com".to_string(),
+                timestamp: "T".to_string(),
+            },
+            committer: crate::jj::types::Signature {
+                name: "Test".to_string(),
+                email: "test@test.com".to_string(),
+                timestamp: "T".to_string(),
+            },
+            files: vec![],
+            short_change_id: "ch1".to_string(),
+        }];
+
+        let body = build_pr_body(&commits, TrailerHandling::Keep);
+        assert_eq!(body.as_deref(), Some("Signed-off-by: Alice <a@b>"));
+    }
+
+    #[test]
+    fn build_pr_body_multiple_commits_keeps_trailers() {
+        let commits = vec![
+            SegmentCommit {
+                commit_id: "c1".to_string(),
+                change_id: "ch1".to_string(),
+                description: "First commit\n\nSigned-off-by: Alice <a@b>".to_string(),
+                author: crate::jj::types::Signature {
+                    name: "Test".to_string(),
+                    email: "test@test.com".to_string(),
+                    timestamp: "T".to_string(),
+                },
+                committer: crate::jj::types::Signature {
+                    name: "Test".to_string(),
+                    email: "test@test.com".to_string(),
+                    timestamp: "T".to_string(),
+                },
+                files: vec![],
+                short_change_id: "ch1".to_string(),
+            },
+            SegmentCommit {
+                commit_id: "c2".to_string(),
+                change_id: "ch2".to_string(),
+                description: "Second commit\n\nWith a body.\n\nRefs: DAT-456".to_string(),
+                author: crate::jj::types::Signature {
+                    name: "Test".to_string(),
+                    email: "test@test.com".to_string(),
+                    timestamp: "T".to_string(),
+                },
+                committer: crate::jj::types::Signature {
+                    name: "Test".to_string(),
+                    email: "test@test.com".to_string(),
+                    timestamp: "T".to_string(),
+                },
+                files: vec![],
+                short_change_id: "ch2".to_string(),
+            },
+        ];
+
+        let body = build_pr_body(&commits, TrailerHandling::Keep);
+        assert_eq!(
+            body.as_deref(),
+            Some(
+                "First commit\n\nSigned-off-by: Alice <a@b>\n\n---\n\nSecond commit\n\nWith a \
+                 body.\n\nRefs: DAT-456"
+            )
         );
     }
 

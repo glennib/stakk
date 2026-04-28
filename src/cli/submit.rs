@@ -32,7 +32,7 @@ impl std::fmt::Display for PrMode {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Deserialize, clap::ValueEnum)]
 #[serde(rename_all = "kebab-case")]
 pub enum SyncPrContent {
-    /// Do not sync (default). Title and body are only set on PR creation.
+    /// Do not sync. Title and body are only set on PR creation.
     #[default]
     None,
     /// Sync only the PR title from the first line of the commit description.
@@ -44,6 +44,27 @@ pub enum SyncPrContent {
 }
 
 impl std::fmt::Display for SyncPrContent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let pv = self
+            .to_possible_value()
+            .expect("all variants have possible values");
+        f.write_str(pv.get_name())
+    }
+}
+
+/// Controls whether git commit trailers are stripped from PR bodies.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Deserialize, clap::ValueEnum)]
+#[serde(rename_all = "kebab-case")]
+pub enum TrailerHandling {
+    /// Leave trailers in the PR body verbatim.
+    #[default]
+    Keep,
+    /// Strip the trailer block (Signed-off-by, Co-authored-by, Refs, etc.)
+    /// from the PR body.
+    Strip,
+}
+
+impl std::fmt::Display for TrailerHandling {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let pv = self
             .to_possible_value()
@@ -145,17 +166,11 @@ pub struct SubmitArgs {
     /// Controls whether existing PR titles and/or bodies are updated
     /// from jj commit descriptions on every submit.
     ///
-    /// By default (none), stakk only sets the title and body when
-    /// creating a new PR. Other modes:
-    ///   title — sync only the PR title
-    ///   body  — sync only the PR body (description)
-    ///   all   — sync both title and body
-    ///
     /// When syncing is enabled, manual edits to the synced fields on
     /// GitHub will be overwritten.
     ///
-    /// Git commit trailers (Signed-off-by, Co-authored-by, Refs, etc.)
-    /// are always stripped from PR bodies, both on creation and sync.
+    /// See --trailers for control over whether git commit trailers
+    /// (Signed-off-by, Co-authored-by, Refs, etc.) are kept or stripped.
     #[arg(
         long,
         env = "STAKK_SYNC_PR_CONTENT",
@@ -164,6 +179,19 @@ pub struct SubmitArgs {
         verbatim_doc_comment
     )]
     pub sync_pr_content: SyncPrContent,
+
+    /// Whether to keep or strip git commit trailers in PR bodies.
+    ///
+    /// Trailers are key/value lines at the end of a commit message such as
+    /// Signed-off-by, Co-authored-by, or Refs.
+    #[arg(
+        long,
+        env = "STAKK_TRAILERS",
+        default_value = "keep",
+        value_enum,
+        verbatim_doc_comment
+    )]
+    pub trailers: TrailerHandling,
 
     /// Prefix for auto-generated bookmark names.
     ///

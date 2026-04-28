@@ -5,6 +5,7 @@ use serde::Deserialize;
 
 use crate::cli::submit::PrMode;
 use crate::cli::submit::SyncPrContent;
+use crate::cli::submit::TrailerHandling;
 use crate::forge::comment::StackPlacement;
 
 /// Pre-parse the config file path from raw CLI args or environment, before clap
@@ -51,6 +52,7 @@ pub struct Config {
     pub template: Option<String>,
     pub stack_placement: Option<StackPlacement>,
     pub sync_pr_content: Option<SyncPrContent>,
+    pub trailers: Option<TrailerHandling>,
     pub auto_prefix: Option<String>,
     pub bookmark_command: Option<String>,
     pub bookmarks_revset: Option<String>,
@@ -66,6 +68,7 @@ impl Default for Config {
             template: None,
             stack_placement: None,
             sync_pr_content: None,
+            trailers: None,
             auto_prefix: None,
             bookmark_command: None,
             bookmarks_revset: None,
@@ -133,6 +136,7 @@ impl Config {
             template: self.template.or(fallback.template),
             stack_placement: self.stack_placement.or(fallback.stack_placement),
             sync_pr_content: self.sync_pr_content.or(fallback.sync_pr_content),
+            trailers: self.trailers.or(fallback.trailers),
             auto_prefix: self.auto_prefix.or(fallback.auto_prefix),
             bookmark_command: self.bookmark_command.or(fallback.bookmark_command),
             bookmarks_revset: self.bookmarks_revset.or(fallback.bookmarks_revset),
