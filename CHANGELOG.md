@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.13.1](https://github.com/glennib/stakk/compare/v1.13.0...v1.13.1) - 2026-04-28
+
+### Other
+
+- *(deps)* update rust crate tokio to v1.52.1 ([#80](https://github.com/glennib/stakk/pull/80))
+- *(renovate)* enable automerge for low-risk updates
+- Merge pull request #81 from glennib/renovate/octocrab-0.x-lockfile
+- Merge pull request #82 from glennib/renovate/clap_complete-4.x-lockfile
+- *(deps)* update rust crate clap_complete to v4.6.3
+- fix clippy pedantic warnings
+
 ## [1.13.0](https://github.com/glennib/stakk/compare/v1.12.0...v1.13.0) - 2026-04-15
 
 ### Added
