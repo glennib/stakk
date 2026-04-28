@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.14.0](https://github.com/glennib/stakk/compare/v1.13.1...v1.14.0) - 2026-04-28
+
+### Added
+
+- *(submit)* `--trailers <keep|strip>` flag, `STAKK_TRAILERS` env var, and
+  `trailers` config field for controlling whether git commit trailers
+  (Signed-off-by, Co-authored-by, Refs, etc.) are kept in PR bodies or
+  stripped before posting. Closes [#79](https://github.com/glennib/stakk/issues/79).
+
+### Changed
+
+- **Default trailer handling flipped from strip to keep.** v1.13.x stripped
+  trailers from PR bodies unconditionally; v1.14 keeps them by default so
+  squash-and-merge workflows that derive the merge message from the PR
+  description preserve trailers in the merge commit. Set `--trailers strip`
+  or `STAKK_TRAILERS=strip` (or `trailers = "strip"` in `stakk.toml`) to
+  restore the previous behavior.
+
+### Fixed
+
+- *(submit)* multi-line trailer blocks are no longer mashed into a single
+  line by markdown reflow when present in PR bodies.
+
 ## [1.13.1](https://github.com/glennib/stakk/compare/v1.13.0...v1.13.1) - 2026-04-28
 
 ### Other
