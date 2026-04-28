@@ -604,7 +604,7 @@ pub async fn execute_submission_plan<R: JjRunner, F: Forge>(
                     bookmark: bp.bookmark_name.clone(),
                     source,
                 })?;
-            pb.println(format!("  Created PR #{}: {}", pr.number, pr.html_url,));
+            pb.println(format!("  Created PR #{}: {}", pr.number, pr.html_url));
             pr
         };
 

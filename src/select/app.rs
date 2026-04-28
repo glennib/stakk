@@ -216,7 +216,7 @@ fn run_event_loop(
         let poll_timeout = if has_pending {
             Duration::from_millis(80)
         } else {
-            Duration::from_secs(60)
+            Duration::from_mins(1)
         };
 
         if !event::poll(poll_timeout)? {
@@ -577,7 +577,7 @@ fn drain_completed(
     }
 
     // Process in reverse index order so removal doesn't shift indices.
-    completed.sort_by(|a, b| b.0.cmp(&a.0));
+    completed.sort_by_key(|b| std::cmp::Reverse(b.0));
     for (pending_idx, row_idx, result) in completed {
         pending.remove(pending_idx);
 

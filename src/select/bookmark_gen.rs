@@ -116,7 +116,7 @@ pub(super) const MAX_BOOKMARK_LENGTH: usize = 255;
 pub(super) const DISALLOWED_CHARS: &str = " ~^:?*[\\";
 
 /// Timeout for in-flight cache entries before they can be retried.
-pub const COMPUTING_TIMEOUT: Duration = Duration::from_secs(60);
+pub const COMPUTING_TIMEOUT: Duration = Duration::from_mins(1);
 
 /// A cache entry for a custom bookmark name.
 #[derive(Debug, Clone)]
