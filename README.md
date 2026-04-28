@@ -211,6 +211,10 @@ heads_revset = "heads((mine() ~ empty() ~ immutable()) & trunk()..)"
 # Options: "none", "title", "body", "all"
 sync_pr_content = "all"
 
+# How to handle git commit trailers in PR bodies (default: "keep")
+# Options: "keep", "strip"
+trailers = "strip"
+
 # Shell command for generating custom bookmark names
 bookmark_command = "my-bookmark-namer"
 
@@ -282,6 +286,7 @@ stack_placement = "comment"
 | `STAKK_STACK_PLACEMENT` | Where to place the stack info: `comment` (default) or `body` (overridden by `--stack-placement`) |
 | `STAKK_AUTO_PREFIX` | Prefix for auto-generated bookmark names (overridden by `--auto-prefix`) |
 | `STAKK_SYNC_PR_CONTENT` | Sync PR title/body from commits: `none` (default), `title`, `body`, or `all` (overridden by `--sync-pr-content`) |
+| `STAKK_TRAILERS` | Whether to keep or strip git commit trailers in PR bodies: `keep` (default) or `strip` (overridden by `--trailers`) |
 | `STAKK_BOOKMARK_COMMAND` | Shell command for generating custom bookmark names (overridden by `--bookmark-command`) |
 | `GITHUB_TOKEN` | GitHub personal access token (see `stakk auth setup`) |
 | `GH_TOKEN` | Alternative to `GITHUB_TOKEN` |
@@ -314,6 +319,7 @@ graph view, then assign bookmarks to any unmarked commits before submitting.
 | `--stack-placement <mode>` | `STAKK_STACK_PLACEMENT` | Place stack info as a PR `comment` (default) or in the PR `body` |
 | `--auto-prefix <prefix>` | `STAKK_AUTO_PREFIX` | Prefix for `[~]auto` bookmark names (e.g. `gb-`) |
 | `--sync-pr-content <mode>` | `STAKK_SYNC_PR_CONTENT` | Sync PR title/body from commits: `none` (default), `title`, `body`, `all` |
+| `--trailers <mode>` | `STAKK_TRAILERS` | Keep or strip git commit trailers in PR bodies: `keep` (default), `strip` |
 
 PR titles come from the first line of the jj change description. PR bodies
 are populated from the full description (everything after the title line).

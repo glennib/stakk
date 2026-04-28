@@ -210,6 +210,7 @@ async fn submit_bookmark(args: &SubmitArgs) -> Result<(), StakkError> {
         &remote_name,
         args.pr_mode(),
         args.sync_pr_content,
+        args.trailers,
     )
     .await?;
 

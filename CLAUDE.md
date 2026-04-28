@@ -55,6 +55,28 @@ without a live jj repo or GitHub access.
 stakk uses its own comment metadata format (`STAKK_STACK` prefix), its own
 serde field naming (snake_case), and its own comment footer.
 
+### 8. CLI args, env vars, and config travel together
+
+Every user-facing `submit` arg has four touchpoints that must stay in sync.
+When adding, renaming, or changing the default of one, update all of them
+in the same change:
+
+1. **`src/cli/submit.rs`** — the clap field with `#[arg(long, env = "STAKK_…",
+   default_value = …)]` and a `verbatim_doc_comment` doc.
+2. **`src/config/mod.rs`** — add `Option<T>` field on `Config`, default to
+   `None`, and merge in `Config::merge`.
+3. **`src/cli/mod.rs`** — wire it into `apply_submit_defaults` (or
+   `apply_graph_defaults`) via `set_default(...)`, and add tests mirroring
+   the `sync_pr_content_*` set: `default`, `config_*`, `cli_overrides_config`.
+   Extend `toml_deserialize_full`.
+4. **`README.md`** — three places:
+   - the `stakk.toml` example block,
+   - the **Environment variables** table,
+   - the per-subcommand flag table (e.g. under `stakk submit`).
+
+A change that lands in only some of these will silently drop config-file
+support, fail to appear in `--help` defaults, or stay invisible in the docs.
+
 ## Architecture
 
 ```
