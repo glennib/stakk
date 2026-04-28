@@ -32,7 +32,7 @@ impl std::fmt::Display for PrMode {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Deserialize, clap::ValueEnum)]
 #[serde(rename_all = "kebab-case")]
 pub enum SyncPrContent {
-    /// Do not sync (default). Title and body are only set on PR creation.
+    /// Do not sync. Title and body are only set on PR creation.
     #[default]
     None,
     /// Sync only the PR title from the first line of the commit description.
@@ -165,12 +165,6 @@ pub struct SubmitArgs {
 
     /// Controls whether existing PR titles and/or bodies are updated
     /// from jj commit descriptions on every submit.
-    ///
-    /// By default (none), stakk only sets the title and body when
-    /// creating a new PR. Other modes:
-    ///   title — sync only the PR title
-    ///   body  — sync only the PR body (description)
-    ///   all   — sync both title and body
     ///
     /// When syncing is enabled, manual edits to the synced fields on
     /// GitHub will be overwritten.
