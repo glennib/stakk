@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.14.1](https://github.com/glennib/stakk/compare/v1.14.0...v1.14.1) - 2026-05-18
+
+### Other
+
+- *(deps)* lock file maintenance ([#99](https://github.com/glennib/stakk/pull/99))
+- *(deps)* update rust crate clap_complete to v4.6.5 ([#98](https://github.com/glennib/stakk/pull/98))
+- *(deps)* lock file maintenance ([#97](https://github.com/glennib/stakk/pull/97))
+- *(deps)* update rust crate clap_complete to v4.6.4 ([#96](https://github.com/glennib/stakk/pull/96))
+- *(deps)* update rust crate tokio to v1.52.3 ([#95](https://github.com/glennib/stakk/pull/95))
+- *(deps)* update dependency cargo-binstall to v1.19.1 ([#94](https://github.com/glennib/stakk/pull/94))
+- *(deps)* update rust crate tokio to v1.52.2 ([#92](https://github.com/glennib/stakk/pull/92))
+- *(deps)* lock file maintenance ([#91](https://github.com/glennib/stakk/pull/91))
+- *(deps)* update dependency cargo-binstall to v1.19.0 ([#90](https://github.com/glennib/stakk/pull/90))
+- *(deps)* update dependency cargo-binstall to v1.18.1 ([#87](https://github.com/glennib/stakk/pull/87))
+
 ## [1.14.0](https://github.com/glennib/stakk/compare/v1.13.1...v1.14.0) - 2026-04-28
 
 ### Added
