@@ -1,6 +1,6 @@
 [tools]
 cargo-binstall = "1.19.1"
-"cargo:cargo-dist" = "0.31.0"
+"cargo:cargo-dist" = "0.32.0"
 "cargo:cargo-edit" = "0.13.9"
 "cargo:cargo-nextest" = "0.9.132"
 "cargo:release-plz" = "0.3.157"
