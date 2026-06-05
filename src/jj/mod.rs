@@ -174,15 +174,7 @@ impl<R: JjRunner> Jj<R> {
     /// Push a bookmark to a remote.
     pub async fn push_bookmark(&self, bookmark: &str, remote: &str) -> Result<(), JjError> {
         self.runner
-            .run_jj(&[
-                "git",
-                "push",
-                "--remote",
-                remote,
-                "--bookmark",
-                bookmark,
-                "--allow-new",
-            ])
+            .run_jj(&["git", "push", "--remote", remote, "--bookmark", bookmark])
             .await?;
         Ok(())
     }
