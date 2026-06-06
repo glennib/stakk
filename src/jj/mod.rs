@@ -22,9 +22,9 @@ use crate::jj::types::LogEntryRaw;
 #[derive(Debug, Error, Diagnostic)]
 pub enum JjError {
     /// The `jj` command exited with a non-zero status.
-    #[error("jj command failed: {stderr}")]
+    #[error("jj command failed: {command}\n{stderr}")]
     #[diagnostic(code(stakk::jj::command_failed))]
-    CommandFailed { stderr: String },
+    CommandFailed { command: String, stderr: String },
 
     /// Failed to parse `jj` output.
     #[error("failed to parse jj output ({context}): {source}")]
