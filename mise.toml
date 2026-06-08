@@ -1,5 +1,5 @@
 [tools]
-cargo-binstall = "1.19.1"
+cargo-binstall = "1.20.0"
 "cargo:cargo-dist" = "0.32.0"
 "cargo:cargo-edit" = "0.13.9"
 "cargo:cargo-nextest" = "0.9.132"
