@@ -59,6 +59,13 @@ address new features and desired changes.
 
 ## Installation
 
+### Requirements
+
+stakk shells out to the [`jj`](https://github.com/jj-vcs/jj) CLI, which must be
+installed and on your `PATH`. The minimum supported jj version is **0.39.0**.
+Older versions may work but are untested; stakk prints a warning when it detects
+one.
+
 ### mise (recommended)
 
 ```
