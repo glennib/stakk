@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.16.0](https://github.com/glennib/stakk/compare/v1.15.0...v1.16.0) - 2026-06-08
+
+### Added
+
+- *(jj)* warn on startup when jj is older than the minimum supported version
+
 ## [1.15.0](https://github.com/glennib/stakk/compare/v1.14.1...v1.15.0) - 2026-06-06
 
 ### Added
