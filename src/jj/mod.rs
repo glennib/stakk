@@ -40,7 +40,7 @@ pub enum JjError {
     #[error("could not run jj: {0}")]
     #[diagnostic(
         code(stakk::jj::not_found),
-        help("Make sure jj is installed and available on your PATH")
+        help("make sure jj is installed and available on your PATH")
     )]
     NotFound(std::io::Error),
 

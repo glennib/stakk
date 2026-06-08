@@ -61,7 +61,7 @@ pub enum StakkError {
     #[error("no GitHub remote found")]
     #[diagnostic(
         code(stakk::remote::no_github),
-        help("Make sure this repository has a GitHub remote configured")
+        help("make sure this repository has a GitHub remote configured")
     )]
     NoGithubRemote,
 
@@ -87,7 +87,7 @@ pub enum StakkError {
     #[error("interactive mode requires a terminal")]
     #[diagnostic(
         code(stakk::not_interactive),
-        help("Pass the bookmark name explicitly: stakk submit <BOOKMARK>")
+        help("pass the bookmark name explicitly: stakk submit <BOOKMARK>")
     )]
     NotInteractive,
 
