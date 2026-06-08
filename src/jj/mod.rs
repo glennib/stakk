@@ -7,6 +7,7 @@
 pub mod remote;
 pub mod runner;
 pub mod types;
+pub mod version;
 
 use miette::Diagnostic;
 use thiserror::Error;
@@ -17,6 +18,7 @@ use crate::jj::types::BookmarkEntryRaw;
 use crate::jj::types::GitRemote;
 use crate::jj::types::LogEntry;
 use crate::jj::types::LogEntryRaw;
+use crate::jj::version::JjVersion;
 
 /// Errors from interacting with `jj`.
 #[derive(Debug, Error, Diagnostic)]
@@ -66,6 +68,16 @@ pub struct Jj<R: JjRunner> {
 impl<R: JjRunner> Jj<R> {
     pub fn new(runner: R) -> Self {
         Self { runner }
+    }
+
+    /// Query and parse `jj --version`.
+    ///
+    /// Returns `Ok(None)` when jj ran but produced output we couldn't parse
+    /// (e.g. an unusual dev build) — callers should stay silent in that case.
+    /// Returns `Err` only when jj could not be run at all.
+    pub async fn version(&self) -> Result<Option<JjVersion>, JjError> {
+        let output = self.runner.run_jj(&["--version"]).await?;
+        Ok(version::parse(&output))
     }
 
     /// List bookmarks matching the given revset.
@@ -573,5 +585,62 @@ mod tests {
         jj.create_bookmark("stakk-abcdefghijkl", "abcdefghijklmnop")
             .await
             .unwrap();
+    }
+
+    #[tokio::test]
+    async fn version_parses_plain() {
+        let runner = MockJjRunner {
+            handler: |args: &[&str]| {
+                assert_eq!(args, ["--version"]);
+                Ok("jj 0.42.0\n".to_string())
+            },
+        };
+        let jj = Jj::new(runner);
+        let version = jj.version().await.unwrap();
+        assert_eq!(
+            version,
+            Some(JjVersion {
+                major: 0,
+                minor: 42,
+                patch: 0
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn version_dev_build_parses() {
+        let runner = MockJjRunner {
+            handler: |_args: &[&str]| {
+                Ok("jj 0.42.0-b8f7c455170e3273897aaf94431f8ccfb1afa7ad\n".to_string())
+            },
+        };
+        let jj = Jj::new(runner);
+        let version = jj.version().await.unwrap();
+        assert_eq!(
+            version,
+            Some(JjVersion {
+                major: 0,
+                minor: 42,
+                patch: 0
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn version_garbage_is_none() {
+        let runner = MockJjRunner {
+            handler: |_args: &[&str]| Ok("not a version\n".to_string()),
+        };
+        let jj = Jj::new(runner);
+        assert_eq!(jj.version().await.unwrap(), None);
+    }
+
+    #[tokio::test]
+    async fn version_runner_error_propagates() {
+        let runner = MockJjRunner {
+            handler: |_args: &[&str]| Err(JjError::NotFound(std::io::Error::other("boom"))),
+        };
+        let jj = Jj::new(runner);
+        assert!(jj.version().await.is_err());
     }
 }

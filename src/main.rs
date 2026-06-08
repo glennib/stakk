@@ -24,6 +24,7 @@ use crate::forge::Forge;
 use crate::jj::Jj;
 use crate::jj::remote::parse_github_url;
 use crate::jj::runner::RealJjRunner;
+use crate::jj::version::MIN_SUPPORTED_JJ_VERSION;
 
 #[tokio::main]
 async fn main() {
@@ -41,6 +42,17 @@ async fn run() -> Result<(), StakkError> {
     let config = config::Config::load(config_path)?;
     let cmd = cli::apply_config_defaults(config, Cli::command());
     let cli = Cli::from_arg_matches(&cmd.get_matches())?;
+
+    // Warn about an outdated jj for commands that shell out to it. Commands that
+    // never touch jj (completions, `auth setup`) skip the check.
+    let runs_jj = match &cli.command {
+        Some(Commands::Completions { .. }) => false,
+        Some(Commands::Auth(args)) => matches!(args.command, AuthCommands::Test),
+        _ => true, // Submit, Show, and None (= submit) all use jj.
+    };
+    if runs_jj {
+        warn_if_jj_too_old().await;
+    }
 
     match cli.command {
         Some(Commands::Submit(args)) => {
@@ -66,6 +78,24 @@ async fn run() -> Result<(), StakkError> {
     }
 
     Ok(())
+}
+
+/// Warn (to stderr) if the installed jj is older than the minimum supported
+/// version.
+///
+/// Never fails the command: if jj can't be run, or its version output can't be
+/// parsed (e.g. an unusual dev build), this stays silent. A genuine jj problem
+/// surfaces moments later with a more specific diagnostic.
+async fn warn_if_jj_too_old() {
+    let jj = Jj::new(RealJjRunner);
+    if let Ok(Some(version)) = jj.version().await
+        && version < MIN_SUPPORTED_JJ_VERSION
+    {
+        eprintln!(
+            "Warning: jj {version} is older than the minimum supported version \
+             ({MIN_SUPPORTED_JJ_VERSION}). stakk may not work correctly — consider upgrading jj."
+        );
+    }
 }
 
 async fn auth_test() -> Result<(), StakkError> {
