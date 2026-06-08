@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.16.1](https://github.com/glennib/stakk/compare/v1.16.0...v1.16.1) - 2026-06-08
+
+### Fixed
+
+- standardize capitalization of diagnostic help messages
+- *(jj)* drop removed `--allow-new` flag from `jj git push`
+
 ## [1.16.0](https://github.com/glennib/stakk/compare/v1.15.0...v1.16.0) - 2026-06-08
 
 ### Added
