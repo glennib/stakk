@@ -52,9 +52,12 @@ pub enum SubmitError {
     BookmarkNotFound { bookmark: String },
 
     /// A segment in the change graph has no bookmark name.
-    #[error("segment has no bookmark name")]
-    #[diagnostic(code(stakk::submit::segment_missing_bookmark))]
-    SegmentMissingBookmark,
+    #[error("segment for change {change_id} has no bookmark name")]
+    #[diagnostic(
+        code(stakk::submit::segment_missing_bookmark),
+        help("this is likely a bug in stakk — please report it")
+    )]
+    SegmentMissingBookmark { change_id: String },
 
     /// Failed to look up an existing PR for a bookmark.
     #[error("failed to check for existing PR for '{bookmark}'")]
@@ -364,7 +367,9 @@ pub async fn create_submission_plan<F: Forge>(
             seg.bookmark_names
                 .first()
                 .cloned()
-                .ok_or(SubmitError::SegmentMissingBookmark)
+                .ok_or_else(|| SubmitError::SegmentMissingBookmark {
+                    change_id: seg.change_id.clone(),
+                })
         })
         .collect::<Result<_, _>>()?;
 
