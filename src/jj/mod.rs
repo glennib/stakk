@@ -30,7 +30,13 @@ pub enum JjError {
 
     /// Failed to parse `jj` output.
     #[error("failed to parse jj output ({context}): {source}")]
-    #[diagnostic(code(stakk::jj::parse_error))]
+    #[diagnostic(
+        code(stakk::jj::parse_error),
+        help(
+            "jj's output may have changed shape — this can indicate a jj/stakk version \
+             incompatibility; check `jj --version`"
+        )
+    )]
     ParseError {
         context: String,
         source: serde_json::Error,

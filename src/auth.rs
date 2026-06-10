@@ -42,12 +42,15 @@ pub enum AuthError {
     #[error("no GitHub authentication found")]
     #[diagnostic(
         code(stakk::auth::no_token),
-        help("Run `gh auth login` or set GITHUB_TOKEN/GH_TOKEN")
+        help("run `gh auth login` or set GITHUB_TOKEN/GH_TOKEN")
     )]
     NoAuthFound,
 
     #[error("failed to run `gh auth token`: {0}")]
-    #[diagnostic(code(stakk::auth::gh_cli_error))]
+    #[diagnostic(
+        code(stakk::auth::gh_cli_error),
+        help("install the `gh` CLI, or set GITHUB_TOKEN/GH_TOKEN to skip it")
+    )]
     GhCliError(std::io::Error),
 }
 
