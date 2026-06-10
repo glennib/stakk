@@ -50,10 +50,24 @@ pub struct BranchStack {
 pub struct ChangeGraph {
     /// Child `change_id` → parent `change_id` (toward trunk). Each entry
     /// represents a stacking relationship between two bookmarked changes.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "populated during graph construction; exposed for diagnostics"
+        )
+    )]
     pub adjacency_list: HashMap<String, String>,
 
     /// Change IDs that are leaf nodes (no children point to them as parent).
     /// Each leaf defines one stack.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "populated during graph construction; exposed for diagnostics"
+        )
+    )]
     pub stack_leaves: HashSet<String>,
 
     /// Change IDs closest to trunk with no parent in the adjacency list.
@@ -77,7 +91,10 @@ pub struct ChangeGraph {
     /// stacking.
     #[cfg_attr(
         not(test),
-        expect(dead_code, reason = "used in later milestones for diagnostics")
+        expect(
+            dead_code,
+            reason = "populated during graph construction; exposed for diagnostics"
+        )
     )]
     pub tainted_change_ids: HashSet<String>,
 
