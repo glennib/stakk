@@ -94,6 +94,11 @@ pub struct BookmarkRow {
     pub existing_bookmark_idx: usize,
     /// Whether this is the trunk row (not toggleable).
     pub is_trunk: bool,
+    /// Whether jj considers this commit immutable.
+    pub is_immutable: bool,
+    /// Local bookmark names on this commit that the graph's bookmarks revset
+    /// filtered out (shown as a hint on locked rows).
+    pub excluded_bookmarks: Vec<String>,
     /// Author signature.
     pub author: Signature,
     /// Files changed by this commit.
@@ -103,10 +108,19 @@ pub struct BookmarkRow {
 }
 
 impl BookmarkRow {
+    /// Whether this row is locked: its commit is immutable and carries no
+    /// bookmark known to the graph, so any name assigned here would be
+    /// filtered out by the bookmarks revset on the post-creation graph
+    /// rebuild. Immutable rows that *are* segment boundaries (possible under
+    /// custom revsets without `~ immutable()`) stay fully functional.
+    pub fn is_locked(&self) -> bool {
+        !self.is_trunk && self.is_immutable && self.existing_bookmarks.is_empty()
+    }
+
     /// Get the effective bookmark name for this row.
     #[cfg_attr(not(test), expect(dead_code, reason = "used in tests for validation"))]
     pub fn effective_name(&self) -> Option<&str> {
-        if self.is_trunk {
+        if self.is_trunk || self.is_locked() {
             return None;
         }
         match &self.state {
@@ -238,6 +252,8 @@ impl BookmarkAssignmentState {
                     tfidf_name: None,
                     user_input_name: None,
                     is_trunk: node.is_trunk,
+                    is_immutable: node.is_immutable,
+                    excluded_bookmarks: node.excluded_bookmarks.clone(),
                     author: node.author.clone(),
                     files: node.files.clone(),
                     has_bookmark_command,
@@ -276,7 +292,7 @@ impl BookmarkAssignmentState {
         let Some(row) = self.rows.get(cursor) else {
             return;
         };
-        if row.is_trunk {
+        if row.is_trunk || row.is_locked() {
             return;
         }
 
@@ -349,7 +365,7 @@ impl BookmarkAssignmentState {
         let Some(row) = self.rows.get(cursor) else {
             return;
         };
-        if row.is_trunk {
+        if row.is_trunk || row.is_locked() {
             return;
         }
 
@@ -512,7 +528,7 @@ impl BookmarkAssignmentState {
         let Some(row) = self.rows.get(cursor) else {
             return VaryResult::Noop;
         };
-        if row.is_trunk {
+        if row.is_trunk || row.is_locked() {
             return VaryResult::Noop;
         }
 
@@ -556,7 +572,7 @@ impl BookmarkAssignmentState {
         let Some(row) = self.rows.get(cursor) else {
             return VaryResult::Noop;
         };
-        if row.is_trunk {
+        if row.is_trunk || row.is_locked() {
             return VaryResult::Noop;
         }
 
@@ -877,7 +893,16 @@ impl<'a> BookmarkWidget<'a> {
                     }
                 }
                 RowState::Unchecked => {
-                    if let Some(first) = row.existing_bookmarks.first() {
+                    if row.is_locked() {
+                        if row.excluded_bookmarks.is_empty() {
+                            "(immutable)".to_string()
+                        } else {
+                            format!(
+                                "(immutable \u{2014} bookmark {} excluded by --bookmarks-revset)",
+                                row.excluded_bookmarks.join(", ")
+                            )
+                        }
+                    } else if let Some(first) = row.existing_bookmarks.first() {
                         first.clone()
                     } else {
                         "(Space to assign)".to_string()
@@ -970,6 +995,7 @@ pub fn bookmark_help_line(
     editing: bool,
     current_row_state: Option<&RowState>,
     existing_count: usize,
+    current_row_locked: bool,
 ) -> Line<'static> {
     let key_style = Style::default()
         .fg(Color::Yellow)
@@ -982,6 +1008,18 @@ pub fn bookmark_help_line(
             Span::raw(" delete  "),
             Span::styled("Esc/Enter", key_style),
             Span::raw(" done"),
+        ]);
+    }
+
+    if current_row_locked {
+        return Line::from(vec![
+            Span::styled(" \u{2191}\u{2193}/jk", key_style),
+            Span::raw(" navigate  "),
+            Span::raw("immutable \u{2014} locked  "),
+            Span::styled("Enter", key_style),
+            Span::raw(" confirm  "),
+            Span::styled("Esc/q", key_style),
+            Span::raw(" back"),
         ]);
     }
 
@@ -1043,6 +1081,8 @@ mod tests {
             summary: summary.to_string(),
             description: summary.to_string(),
             bookmark_names: bookmarks.iter().map(ToString::to_string).collect(),
+            excluded_bookmarks: vec![],
+            is_immutable: false,
             is_trunk,
             is_leaf,
             stack_index: 0,
@@ -1440,6 +1480,8 @@ mod tests {
             custom_name: None,
             tfidf_name: None,
             is_trunk: false,
+            is_immutable: false,
+            excluded_bookmarks: vec![],
             author: crate::jj::types::Signature {
                 name: "Test".to_string(),
                 email: "test@test.com".to_string(),
@@ -2062,5 +2104,143 @@ mod tests {
         state.toggle_current(); // UseGenerated
         state.toggle_current(); // Should skip UseCustom → Unchecked
         assert_eq!(state.rows[1].state, RowState::Unchecked);
+    }
+
+    // -- Locked (immutable) row tests --
+
+    /// A node on an immutable commit with no boundary bookmarks, carrying
+    /// bookmark names the graph's revset filtered out.
+    fn make_immutable_node(change_id: &str, summary: &str, excluded: &[&str]) -> LayoutNode {
+        let mut node = make_node(change_id, summary, &[], false, false);
+        node.is_immutable = true;
+        node.excluded_bookmarks = excluded.iter().map(ToString::to_string).collect();
+        node
+    }
+
+    fn make_locked_state(excluded: &[&str]) -> BookmarkAssignmentState {
+        let nodes = [
+            make_node("", "trunk", &[], true, false),
+            make_immutable_node("ch_imm", "pinned work", excluded),
+            make_node("ch_leaf", "leaf work", &["leaf"], false, true),
+        ];
+        let refs: Vec<&LayoutNode> = nodes.iter().collect();
+        BookmarkAssignmentState::from_path(&refs, false, None)
+    }
+
+    #[test]
+    fn locked_row_toggle_is_noop() {
+        let mut state = make_locked_state(&["pinned"]);
+        assert!(state.rows[1].is_locked());
+        state.cursor = 1;
+        state.toggle_current();
+        assert_eq!(state.rows[1].state, RowState::Unchecked);
+        state.toggle_current_reverse();
+        assert_eq!(state.rows[1].state, RowState::Unchecked);
+    }
+
+    #[test]
+    fn locked_row_vary_is_noop() {
+        let mut state = make_locked_state(&["pinned"]);
+        state.cursor = 1;
+        assert_eq!(state.vary_current(), VaryResult::Noop);
+        assert_eq!(state.vary_current_reverse(), VaryResult::Noop);
+        assert_eq!(state.rows[1].state, RowState::Unchecked);
+    }
+
+    /// Immutable rows that are segment boundaries (existing bookmarks —
+    /// possible under custom revsets without `~ immutable()`) are not
+    /// locked; the workaround path stays fully functional.
+    #[test]
+    fn immutable_row_with_existing_bookmarks_still_toggles() {
+        let nodes = [make_node("", "trunk", &[], true, false), {
+            let mut node = make_node("ch_a", "work", &["feat"], false, true);
+            node.is_immutable = true;
+            node
+        }];
+        let refs: Vec<&LayoutNode> = nodes.iter().collect();
+        let mut state = BookmarkAssignmentState::from_path(&refs, false, None);
+
+        assert!(!state.rows[1].is_locked());
+        assert_eq!(state.rows[1].state, RowState::UseExisting(0));
+        state.toggle_current();
+        assert_ne!(state.rows[1].state, RowState::UseExisting(0));
+    }
+
+    #[test]
+    fn locked_row_excluded_from_build_result() {
+        let state = make_locked_state(&["pinned"]);
+        let result = state.build_result().unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].bookmark_name, "leaf");
+    }
+
+    #[test]
+    fn effective_name_none_for_locked_row() {
+        let mut row = make_bare_row(RowState::Unchecked);
+        row.existing_bookmarks = vec![];
+        row.is_immutable = true;
+        assert!(row.is_locked());
+        assert_eq!(row.effective_name(), None);
+    }
+
+    #[test]
+    fn locked_row_renders_immutable_hint() {
+        let state = make_locked_state(&["pinned"]);
+        let widget = BookmarkWidget::new(&state, 0, None, None);
+
+        let area = Rect::new(0, 0, 80, 10);
+        let mut buf = Buffer::empty(area);
+        widget.render(area, &mut buf);
+
+        let content: String = (0..area.height)
+            .map(|y| {
+                (0..area.width)
+                    .map(|x| buf.cell((x, y)).unwrap().symbol().to_string())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(
+            content.contains("(immutable \u{2014} bookmark pinned excluded"),
+            "expected immutable hint with excluded names, got:\n{content}"
+        );
+    }
+
+    #[test]
+    fn locked_row_renders_plain_immutable_hint_without_excluded() {
+        let state = make_locked_state(&[]);
+        let widget = BookmarkWidget::new(&state, 0, None, None);
+
+        let area = Rect::new(0, 0, 80, 10);
+        let mut buf = Buffer::empty(area);
+        widget.render(area, &mut buf);
+
+        let content: String = (0..area.height)
+            .map(|y| {
+                (0..area.width)
+                    .map(|x| buf.cell((x, y)).unwrap().symbol().to_string())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(
+            content.contains("(immutable)"),
+            "expected plain immutable hint, got:\n{content}"
+        );
+    }
+
+    #[test]
+    fn help_line_locked_omits_cycle_keys() {
+        let line = bookmark_help_line(false, false, Some(&RowState::Unchecked), 0, true);
+        let text: String = line.spans.iter().map(|s| s.content.clone()).collect();
+        assert!(text.contains("immutable \u{2014} locked"));
+        assert!(!text.contains("Space"));
+        assert!(!text.contains("skip"));
+
+        let unlocked = bookmark_help_line(false, false, Some(&RowState::Unchecked), 0, false);
+        let text: String = unlocked.spans.iter().map(|s| s.content.clone()).collect();
+        assert!(text.contains("Space"));
     }
 }

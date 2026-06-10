@@ -405,6 +405,8 @@ mod tests {
                     },
                     files: vec![],
                     short_change_id: change_id[..4.min(change_id.len())].to_string(),
+                    is_immutable: false,
+                    local_bookmark_names: vec![],
                 })
                 .collect(),
         }

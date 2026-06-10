@@ -51,6 +51,33 @@ pub enum SubmitError {
     )]
     BookmarkNotFound { bookmark: String },
 
+    /// Selected bookmarks were never consumed by any segment in the target
+    /// stack — typically because their commits are immutable in jj, so the
+    /// bookmarks revset excluded them from the change graph.
+    #[error(
+        "selected bookmark(s) not in the submission stack: {} ({} on immutable commit(s))",
+        missing.join(", "),
+        if immutable.is_empty() { "none".to_string() } else { immutable.join(", ") }
+    )]
+    #[diagnostic(
+        code(stakk::submit::selected_bookmarks_excluded),
+        help(
+            "the bookmark(s) exist and point at the right commits, but the commits are immutable \
+             in jj, so the default --bookmarks-revset (mine() ~ trunk() ~ immutable()) excludes \
+             them from the graph — usually caused by stale untracked remote bookmarks pinning the \
+             commits. Fix the cause with `jj bookmark forget --include-remotes 'glob:<pattern>'`, \
+             or include immutable commits for one run with `--bookmarks-revset 'mine() ~ \
+             trunk()'` (env: STAKK_BOOKMARKS_REVSET)"
+        )
+    )]
+    SelectedBookmarksExcluded {
+        /// Selected names not consumed by any segment (sorted).
+        missing: Vec<String>,
+        /// Subset of `missing` found on immutable commits in the stack
+        /// (sorted).
+        immutable: Vec<String>,
+    },
+
     /// A segment in the change graph has no bookmark name.
     #[error("segment for change {change_id} has no bookmark name")]
     #[diagnostic(
@@ -283,6 +310,40 @@ pub fn analyze_submission(
         } else {
             accumulated_commits.extend(seg.commits.iter().cloned());
         }
+    }
+
+    // Every selected bookmark must be a segment boundary somewhere in the
+    // stack. A selected name matching no segment means the graph excluded it
+    // (its commit is in the stack, but the bookmarks revset filtered the
+    // bookmark — typically because the commit is immutable). Silently folding
+    // it away would submit fewer PRs than the user selected. Selected names
+    // above the target are fine: they're boundaries, just not part of this
+    // submission.
+    let known: HashSet<&str> = stack
+        .segments
+        .iter()
+        .flat_map(|s| &s.bookmark_names)
+        .map(String::as_str)
+        .collect();
+    let mut missing: Vec<String> = selected_bookmarks
+        .iter()
+        .filter(|name| !known.contains(name.as_str()))
+        .cloned()
+        .collect();
+    if !missing.is_empty() {
+        missing.sort_unstable();
+        let immutable: Vec<String> = missing
+            .iter()
+            .filter(|name| {
+                stack
+                    .segments
+                    .iter()
+                    .flat_map(|s| &s.commits)
+                    .any(|c| c.is_immutable && c.local_bookmark_names.contains(name))
+            })
+            .cloned()
+            .collect();
+        return Err(SubmitError::SelectedBookmarksExcluded { missing, immutable });
     }
 
     Ok(SubmissionAnalysis {
@@ -881,6 +942,8 @@ mod tests {
                     timestamp: "T".to_string(),
                 },
                 files: vec![],
+                is_immutable: false,
+                local_bookmark_names: vec![],
                 short_change_id: change_id[..4.min(change_id.len())].to_string(),
             }],
         }
@@ -1280,6 +1343,67 @@ mod tests {
         assert_eq!(result.segments[0].commits.len(), 1); // A's own only
         assert_eq!(result.segments[1].bookmark_names, vec!["feat-c"]);
         assert_eq!(result.segments[1].commits.len(), 2); // C's own + B's inherited
+    }
+
+    /// A selected bookmark that never becomes a segment boundary must error
+    /// loudly, with immutable-commit diagnosis from the graph data.
+    #[test]
+    fn analyze_errors_when_selected_bookmark_excluded() {
+        let seg_a = make_segment(&["feat-a"], "ch_a", "feature a");
+        // feat-a's segment contains an immutable mid-segment commit carrying
+        // the filtered-out bookmark "ghost".
+        let mut seg_b = make_segment(&["feat-b"], "ch_b", "feature b");
+        seg_b.commits[0].is_immutable = true;
+        seg_b.commits[0].local_bookmark_names = vec!["ghost".to_string()];
+        let graph = make_graph(vec![BranchStack {
+            segments: vec![seg_a, seg_b],
+        }]);
+
+        let selected = HashSet::from(["feat-b".to_string(), "ghost".to_string()]);
+        let result = analyze_submission("feat-b", &graph, "main", &selected);
+        match result {
+            Err(SubmitError::SelectedBookmarksExcluded { missing, immutable }) => {
+                assert_eq!(missing, vec!["ghost"]);
+                assert_eq!(immutable, vec!["ghost"]);
+            }
+            other => panic!("expected SelectedBookmarksExcluded, got {other:?}"),
+        }
+    }
+
+    /// A missing selected name on no known commit still errors, but without
+    /// the immutable diagnosis.
+    #[test]
+    fn analyze_excluded_error_distinguishes_non_immutable_missing() {
+        let seg_a = make_segment(&["feat-a"], "ch_a", "feature a");
+        let graph = make_graph(vec![BranchStack {
+            segments: vec![seg_a],
+        }]);
+
+        let selected = HashSet::from(["feat-a".to_string(), "vanished".to_string()]);
+        let result = analyze_submission("feat-a", &graph, "main", &selected);
+        match result {
+            Err(SubmitError::SelectedBookmarksExcluded { missing, immutable }) => {
+                assert_eq!(missing, vec!["vanished"]);
+                assert!(immutable.is_empty());
+            }
+            other => panic!("expected SelectedBookmarksExcluded, got {other:?}"),
+        }
+    }
+
+    /// The explicit `--bookmark <name>` path (selected == {target}) can never
+    /// trigger the excluded-bookmarks guard.
+    #[test]
+    fn analyze_explicit_single_bookmark_never_triggers_guard() {
+        let seg_a = make_segment(&["feat-a"], "ch_a", "feature a");
+        let seg_b = make_segment(&["feat-b"], "ch_b", "feature b");
+        let graph = make_graph(vec![BranchStack {
+            segments: vec![seg_a, seg_b],
+        }]);
+
+        let selected = HashSet::from(["feat-b".to_string()]);
+        let result = analyze_submission("feat-b", &graph, "main", &selected).unwrap();
+        assert_eq!(result.segments.len(), 1);
+        assert_eq!(result.segments[0].bookmark_names, vec!["feat-b"]);
     }
 
     // -----------------------------------------------------------------------
@@ -2215,6 +2339,8 @@ mod tests {
                 timestamp: "T".to_string(),
             },
             files: vec![],
+            is_immutable: false,
+            local_bookmark_names: vec![],
             short_change_id: "ch1".to_string(),
         }];
 
@@ -2242,6 +2368,8 @@ mod tests {
                 timestamp: "T".to_string(),
             },
             files: vec![],
+            is_immutable: false,
+            local_bookmark_names: vec![],
             short_change_id: "ch1".to_string(),
         }];
 
@@ -2267,6 +2395,8 @@ mod tests {
                     timestamp: "T".to_string(),
                 },
                 files: vec![],
+                is_immutable: false,
+                local_bookmark_names: vec![],
                 short_change_id: "ch1".to_string(),
             },
             SegmentCommit {
@@ -2284,6 +2414,8 @@ mod tests {
                     timestamp: "T".to_string(),
                 },
                 files: vec![],
+                is_immutable: false,
+                local_bookmark_names: vec![],
                 short_change_id: "ch2".to_string(),
             },
         ];
@@ -2320,6 +2452,8 @@ mod tests {
                 timestamp: "T".to_string(),
             },
             files: vec![],
+            is_immutable: false,
+            local_bookmark_names: vec![],
             short_change_id: "ch1".to_string(),
         }];
 
@@ -2344,6 +2478,8 @@ mod tests {
                 timestamp: "T".to_string(),
             },
             files: vec![],
+            is_immutable: false,
+            local_bookmark_names: vec![],
             short_change_id: "ch1".to_string(),
         }];
 
@@ -2369,6 +2505,8 @@ mod tests {
                     timestamp: "T".to_string(),
                 },
                 files: vec![],
+                is_immutable: false,
+                local_bookmark_names: vec![],
                 short_change_id: "ch1".to_string(),
             },
             SegmentCommit {
@@ -2386,6 +2524,8 @@ mod tests {
                     timestamp: "T".to_string(),
                 },
                 files: vec![],
+                is_immutable: false,
+                local_bookmark_names: vec![],
                 short_change_id: "ch2".to_string(),
             },
         ];
@@ -2416,6 +2556,8 @@ mod tests {
                 timestamp: "T".to_string(),
             },
             files: vec![],
+            is_immutable: false,
+            local_bookmark_names: vec![],
             short_change_id: "ch1".to_string(),
         }];
 
@@ -2443,6 +2585,8 @@ mod tests {
                 timestamp: "T".to_string(),
             },
             files: vec![],
+            is_immutable: false,
+            local_bookmark_names: vec![],
             short_change_id: "ch1".to_string(),
         }];
 
@@ -2468,6 +2612,8 @@ mod tests {
                     timestamp: "T".to_string(),
                 },
                 files: vec![],
+                is_immutable: false,
+                local_bookmark_names: vec![],
                 short_change_id: "ch1".to_string(),
             },
             SegmentCommit {
@@ -2485,6 +2631,8 @@ mod tests {
                     timestamp: "T".to_string(),
                 },
                 files: vec![],
+                is_immutable: false,
+                local_bookmark_names: vec![],
                 short_change_id: "ch2".to_string(),
             },
         ];

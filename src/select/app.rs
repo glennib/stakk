@@ -27,6 +27,7 @@ use super::bookmark_gen::BookmarkGenError;
 use super::bookmark_gen::BookmarkNameCache;
 use super::bookmark_gen::CacheEntry;
 use super::bookmark_widget::BookmarkAssignmentState;
+use super::bookmark_widget::BookmarkRow;
 use super::bookmark_widget::BookmarkWidget;
 use super::bookmark_widget::CustomNameState;
 use super::bookmark_widget::InputMode;
@@ -744,6 +745,10 @@ fn render_bookmark_screen(
                 .rows
                 .get(state.cursor)
                 .map_or(0, |r| r.existing_bookmarks.len()),
+            state
+                .rows
+                .get(state.cursor)
+                .is_some_and(BookmarkRow::is_locked),
         ),
         help_area,
     );

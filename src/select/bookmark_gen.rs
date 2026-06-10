@@ -506,6 +506,8 @@ mod tests {
             state,
             generated_name: Some(default_bookmark_name(change_id)),
             is_trunk,
+            is_immutable: false,
+            excluded_bookmarks: vec![],
             author: Signature {
                 name: "Test".to_string(),
                 email: "test@test.com".to_string(),

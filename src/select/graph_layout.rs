@@ -23,8 +23,16 @@ pub struct LayoutNode {
     pub summary: String,
     /// Full commit description.
     pub description: String,
-    /// Bookmark names on this commit (may be empty).
+    /// Segment-boundary bookmark names on this commit (may be empty). Only
+    /// the last commit of a segment carries them — not to be conflated with
+    /// `excluded_bookmarks`.
     pub bookmark_names: Vec<String>,
+    /// Local bookmark names on this commit that are *not* segment-boundary
+    /// names — bookmarks the graph's bookmarks revset filtered out (e.g. on
+    /// immutable commits).
+    pub excluded_bookmarks: Vec<String>,
+    /// Whether jj considers this commit immutable.
+    pub is_immutable: bool,
     /// Whether this node is the trunk node.
     pub is_trunk: bool,
     /// Whether this node is a leaf (no children).
@@ -112,6 +120,8 @@ pub fn build_layout(graph: &ChangeGraph) -> GraphLayout {
         summary: "trunk".to_string(),
         description: String::new(),
         bookmark_names: vec![],
+        excluded_bookmarks: vec![],
+        is_immutable: false,
         is_trunk: true,
         is_leaf: false,
         stack_index: 0,
@@ -160,6 +170,13 @@ pub fn build_layout(graph: &ChangeGraph) -> GraphLayout {
                     vec![]
                 };
 
+                let excluded_bookmarks: Vec<String> = commit
+                    .local_bookmark_names
+                    .iter()
+                    .filter(|name| !bookmark_names.contains(name))
+                    .cloned()
+                    .collect();
+
                 let summary = commit
                     .description
                     .lines()
@@ -182,6 +199,8 @@ pub fn build_layout(graph: &ChangeGraph) -> GraphLayout {
                     summary,
                     description: commit.description.clone(),
                     bookmark_names,
+                    excluded_bookmarks,
+                    is_immutable: commit.is_immutable,
                     is_trunk: false,
                     is_leaf,
                     stack_index: stack_idx,
@@ -302,6 +321,8 @@ mod tests {
                     },
                     files: vec![],
                     short_change_id: change_id[..4.min(change_id.len())].to_string(),
+                    is_immutable: false,
+                    local_bookmark_names: vec![],
                 })
                 .collect(),
         }
@@ -507,6 +528,48 @@ mod tests {
         assert!(path[0].is_trunk);
         assert_eq!(path[1].change_id, "ch_shared");
         assert_eq!(path[2].change_id, "ch_b");
+    }
+
+    #[test]
+    fn immutable_flag_and_excluded_bookmarks_threaded() {
+        // Two-commit segment: the mid-segment commit is immutable and carries
+        // a bookmark that the graph filtered out; the boundary commit carries
+        // its own boundary name plus a filtered-out extra.
+        let mut segment = make_segment(&["feat"], "ch_a", &["second commit", "first commit"]);
+        // Commits are newest-first: [0] = boundary ("second"), [1] = mid.
+        segment.commits[0].local_bookmark_names =
+            vec!["feat".to_string(), "other-user".to_string()];
+        segment.commits[1].is_immutable = true;
+        segment.commits[1].local_bookmark_names = vec!["pinned".to_string()];
+
+        let graph = make_graph(vec![BranchStack {
+            segments: vec![segment],
+        }]);
+        let layout = build_layout(&graph);
+
+        let trunk = &layout.nodes[0];
+        assert!(trunk.is_trunk);
+        assert!(!trunk.is_immutable);
+        assert!(trunk.excluded_bookmarks.is_empty());
+
+        let mid = layout
+            .nodes
+            .iter()
+            .find(|n| n.summary == "first commit")
+            .unwrap();
+        assert!(mid.is_immutable);
+        assert!(mid.bookmark_names.is_empty());
+        assert_eq!(mid.excluded_bookmarks, vec!["pinned"]);
+
+        // Boundary names are subtracted from excluded_bookmarks.
+        let boundary = layout
+            .nodes
+            .iter()
+            .find(|n| n.summary == "second commit")
+            .unwrap();
+        assert!(!boundary.is_immutable);
+        assert_eq!(boundary.bookmark_names, vec!["feat"]);
+        assert_eq!(boundary.excluded_bookmarks, vec!["other-user"]);
     }
 
     #[test]
