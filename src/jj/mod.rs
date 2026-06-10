@@ -222,18 +222,6 @@ impl<R: JjRunner> Jj<R> {
             .map(String::from)
             .collect())
     }
-
-    /// Fetch from all remotes.
-    #[expect(
-        dead_code,
-        reason = "available for pre-submission fetch in a future milestone"
-    )]
-    pub async fn git_fetch(&self) -> Result<(), JjError> {
-        self.runner
-            .run_jj(&["git", "fetch", "--all-remotes"])
-            .await?;
-        Ok(())
-    }
 }
 
 fn parse_bookmarks(output: &str) -> Result<Vec<Bookmark>, JjError> {

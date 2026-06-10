@@ -7,7 +7,6 @@ pub mod types;
 
 use std::collections::HashMap;
 use std::collections::HashSet;
-use std::collections::VecDeque;
 
 use self::types::BookmarkSegment;
 use self::types::BranchStack;
@@ -398,46 +397,6 @@ fn collect_timestamps_desc(stack: &BranchStack) -> Vec<&str> {
         .collect();
     timestamps.sort_unstable_by(|a, b| b.cmp(a));
     timestamps
-}
-
-/// Topological sort using Kahn's algorithm.
-///
-/// Returns change IDs ordered leaves-first, roots-last. This is the order
-/// suitable for display (the user sees their leaf work at the top).
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "used in later milestones for display ordering")
-)]
-pub fn topological_sort(graph: &ChangeGraph) -> Vec<String> {
-    // Calculate in-degrees: how many children point to each parent.
-    let mut in_degrees: HashMap<&String, usize> = HashMap::new();
-    for parent_id in graph.adjacency_list.values() {
-        *in_degrees.entry(parent_id).or_insert(0) += 1;
-    }
-
-    // Start from leaves, sorted for deterministic output.
-    let mut leaves: Vec<String> = graph.stack_leaves.iter().cloned().collect();
-    leaves.sort();
-    let mut queue: VecDeque<String> = leaves.into();
-
-    let mut result = Vec::new();
-
-    while let Some(change_id) = queue.pop_front() {
-        result.push(change_id.clone());
-
-        if let Some(parent_id) = graph.adjacency_list.get(&change_id)
-            && let Some(degree) = in_degrees.get_mut(parent_id)
-        {
-            *degree -= 1;
-            if *degree == 0 {
-                // Parent is now ready — push to front to keep stacks
-                // visually grouped (DFS-like).
-                queue.push_front(parent_id.clone());
-            }
-        }
-    }
-
-    result
 }
 
 #[cfg(test)]
@@ -992,117 +951,6 @@ mod tests {
         // Adjacency: ch_b -> ch_a, ch_c -> ch_a
         assert_eq!(graph.adjacency_list.get("ch_b").unwrap(), "ch_a");
         assert_eq!(graph.adjacency_list.get("ch_c").unwrap(), "ch_a");
-    }
-
-    /// Topological sort: leaves first, roots last.
-    ///
-    /// Graph: `ch_c` -> `ch_b` -> `ch_a` (linear)
-    /// Expected sort: [`ch_c`, `ch_b`, `ch_a`]
-    #[tokio::test]
-    async fn topological_sort_linear() {
-        let runner = MockJjRunner {
-            handler: |args: &[&str]| {
-                if args[0] == "diff" {
-                    return Ok(String::new());
-                }
-                if args[0] == "bookmark" {
-                    let lines = [
-                        bookmark_json("bm_c", "c_c", "ch_c"),
-                        bookmark_json("bm_b", "c_b", "ch_b"),
-                        bookmark_json("bm_a", "c_a", "ch_a"),
-                    ];
-                    return Ok(lines.join("\n"));
-                }
-
-                let revset = args[2];
-                if revset.contains("c_c") {
-                    let lines = [
-                        log_entry_json("c_c", "ch_c", &["c_b"], &["bm_c"]),
-                        log_entry_json("c_b", "ch_b", &["c_a"], &["bm_b"]),
-                        log_entry_json("c_a", "ch_a", &["trunk_c"], &["bm_a"]),
-                    ];
-                    return Ok(lines.join("\n"));
-                }
-
-                Ok(String::new())
-            },
-        };
-
-        let jj = Jj::new(runner);
-        let graph = build_change_graph(
-            &jj,
-            "mine() ~ trunk() ~ immutable()",
-            "heads((mine() ~ empty() ~ immutable()) & trunk()..)",
-        )
-        .await
-        .unwrap();
-        let sorted = topological_sort(&graph);
-
-        assert_eq!(sorted, vec!["ch_c", "ch_b", "ch_a"]);
-    }
-
-    /// Topological sort with branching: leaves processed first, then shared
-    /// root.
-    ///
-    /// Graph: `ch_b` -> `ch_a`, `ch_c` -> `ch_a`
-    /// Expected: [`ch_b`, `ch_c`, `ch_a`] or [`ch_c`, `ch_b`, `ch_a`] depending
-    /// on sort. With alphabetical leaf ordering: `ch_b` before `ch_c`.
-    #[tokio::test]
-    async fn topological_sort_branching() {
-        let runner = MockJjRunner {
-            handler: |args: &[&str]| {
-                if args[0] == "diff" {
-                    return Ok(String::new());
-                }
-                if args[0] == "bookmark" {
-                    let lines = [
-                        bookmark_json("bm_b", "c_b", "ch_b"),
-                        bookmark_json("bm_c", "c_c", "ch_c"),
-                        bookmark_json("bm_a", "c_a", "ch_a"),
-                    ];
-                    return Ok(lines.join("\n"));
-                }
-
-                let revset = args[2];
-                if revset.contains("c_b") {
-                    let lines = [
-                        log_entry_json("c_b", "ch_b", &["c_a"], &["bm_b"]),
-                        log_entry_json("c_a", "ch_a", &["trunk_c"], &["bm_a"]),
-                    ];
-                    return Ok(lines.join("\n"));
-                }
-                if revset.contains("c_c") {
-                    let lines = [
-                        log_entry_json("c_c", "ch_c", &["c_a"], &["bm_c"]),
-                        log_entry_json("c_a", "ch_a", &["trunk_c"], &["bm_a"]),
-                    ];
-                    return Ok(lines.join("\n"));
-                }
-
-                Ok(String::new())
-            },
-        };
-
-        let jj = Jj::new(runner);
-        let graph = build_change_graph(
-            &jj,
-            "mine() ~ trunk() ~ immutable()",
-            "heads((mine() ~ empty() ~ immutable()) & trunk()..)",
-        )
-        .await
-        .unwrap();
-        let sorted = topological_sort(&graph);
-
-        // ch_b is processed first (alphabetical), its parent ch_a becomes
-        // ready but ch_c hasn't been processed yet. Since we push_front the
-        // parent, ch_a goes to front, then ch_c is next in queue.
-        // Actually with push_front: queue starts [ch_b, ch_c].
-        // Pop ch_b -> result [ch_b]. Parent ch_a has in-degree 2, decrement
-        // to 1 — not ready yet. Queue: [ch_c].
-        // Pop ch_c -> result [ch_b, ch_c]. Parent ch_a decremented to 0,
-        // push_front. Queue: [ch_a].
-        // Pop ch_a -> result [ch_b, ch_c, ch_a].
-        assert_eq!(sorted, vec!["ch_b", "ch_c", "ch_a"]);
     }
 
     /// Single bookmark, single commit — simplest possible case.
