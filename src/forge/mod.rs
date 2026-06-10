@@ -36,6 +36,16 @@ pub enum ForgeError {
         source: Box<dyn std::error::Error + Send + Sync>,
     },
 
+    #[error("malformed forge response: missing field `{field}`")]
+    #[diagnostic(
+        code(stakk::forge::malformed_response),
+        help(
+            "the forge API response is missing the `{field}` field — this may indicate a forge \
+             API change"
+        )
+    )]
+    MalformedResponse { field: &'static str },
+
     #[expect(dead_code, reason = "used in later milestones for rate limit handling")]
     #[error("rate limited; retry after {retry_after_seconds}s")]
     #[diagnostic(

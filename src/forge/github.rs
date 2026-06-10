@@ -63,15 +63,7 @@ impl Forge for GitHubForge {
             .await
             .map_err(map_octocrab_error)?;
 
-        Ok(pulls.items.into_iter().next().map(|pr| PullRequest {
-            number: pr.number,
-            html_url: pr.html_url.map(|u| u.to_string()).unwrap_or_default(),
-            title: pr.title.unwrap_or_default(),
-            head_ref: pr.head.ref_field,
-            base_ref: pr.base.ref_field,
-            state: map_pr_state(pr.state.as_ref(), pr.merged_at.is_some()),
-            body: pr.body,
-        }))
+        pulls.items.into_iter().next().map(convert_pr).transpose()
     }
 
     async fn create_pr(&self, params: CreatePrParams) -> Result<PullRequest, ForgeError> {
@@ -88,15 +80,7 @@ impl Forge for GitHubForge {
 
         let pr = builder.send().await.map_err(map_octocrab_error)?;
 
-        Ok(PullRequest {
-            number: pr.number,
-            html_url: pr.html_url.map(|u| u.to_string()).unwrap_or_default(),
-            title: pr.title.unwrap_or_default(),
-            head_ref: pr.head.ref_field,
-            base_ref: pr.base.ref_field,
-            state: PrState::Open,
-            body: pr.body,
-        })
+        convert_pr(pr)
     }
 
     async fn update_pr_base(&self, pr_number: u64, new_base: &str) -> Result<(), ForgeError> {
@@ -182,6 +166,32 @@ impl Forge for GitHubForge {
             .map_err(map_octocrab_error)?;
         Ok(())
     }
+}
+
+/// Convert an octocrab pull request into the forge-agnostic type.
+///
+/// octocrab 0.53 made `number`, `head`, and `base` optional; GitHub always
+/// returns them, so a missing field is a malformed response.
+fn convert_pr(pr: octocrab::models::pulls::PullRequest) -> Result<PullRequest, ForgeError> {
+    let number = pr
+        .number
+        .ok_or(ForgeError::MalformedResponse { field: "number" })?;
+    let head = pr
+        .head
+        .ok_or(ForgeError::MalformedResponse { field: "head" })?;
+    let base = pr
+        .base
+        .ok_or(ForgeError::MalformedResponse { field: "base" })?;
+
+    Ok(PullRequest {
+        number,
+        html_url: pr.html_url.map(|u| u.to_string()).unwrap_or_default(),
+        title: pr.title.unwrap_or_default(),
+        head_ref: head.ref_field,
+        base_ref: base.ref_field,
+        state: map_pr_state(pr.state.as_ref(), pr.merged_at.is_some()),
+        body: pr.body,
+    })
 }
 
 fn map_octocrab_error(e: octocrab::Error) -> ForgeError {
