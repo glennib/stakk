@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.16.2](https://github.com/glennib/stakk/compare/v1.16.1...v1.16.2) - 2026-06-10
+
+### Fixed
+
+- *(submit)* identify the segment in the missing-bookmark error
+- *(errors)* add actionable help to auth and jj parse errors
+- *(deps)* update rust crate octocrab to 0.53.0 ([#93](https://github.com/glennib/stakk/pull/93))
+
+### Other
+
+- remove remaining future-milestone dead code
+- remove dead code and clarify expect() reasons
+- *(deps)* update dependency cargo-binstall to v1.20.0 ([#115](https://github.com/glennib/stakk/pull/115))
+
 ## [1.16.1](https://github.com/glennib/stakk/compare/v1.16.0...v1.16.1) - 2026-06-08
 
 ### Fixed
