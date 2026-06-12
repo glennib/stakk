@@ -64,7 +64,7 @@ const BOOKMARK_TEMPLATE: &str = r#""{\"name\":" ++ json(self.name()) ++ ",\"sync
 
 // Template for `jj log`: produces one JSON object per line with commit +
 // bookmarks + shortest unique change ID prefix.
-const LOG_TEMPLATE: &str = r#""{\"commit\":" ++ json(self) ++ ",\"local_bookmarks\":" ++ json(local_bookmarks) ++ ",\"remote_bookmarks\":" ++ json(remote_bookmarks) ++ ",\"short_change_id\":\"" ++ change_id.shortest() ++ "\"}\n""#;
+const LOG_TEMPLATE: &str = r#""{\"commit\":" ++ json(self) ++ ",\"local_bookmarks\":" ++ json(local_bookmarks) ++ ",\"remote_bookmarks\":" ++ json(remote_bookmarks) ++ ",\"immutable\":" ++ immutable ++ ",\"short_change_id\":\"" ++ change_id.shortest() ++ "\"}\n""#;
 
 /// Main interface for interacting with `jj`.
 pub struct Jj<R: JjRunner> {
@@ -288,6 +288,7 @@ fn parse_log_entries(output: &str) -> Result<Vec<LogEntry>, JjError> {
                     None => b.name.clone(),
                 })
                 .collect(),
+            immutable: raw.immutable,
             short_change_id: raw.short_change_id,
         });
     }
@@ -372,7 +373,7 @@ mod tests {
 
     #[test]
     fn parse_log_entries_single() {
-        let input = r#"{"commit":{"commit_id":"abc","parents":["def"],"change_id":"xyz","description":"desc\n","author":{"name":"A","email":"a@b.c","timestamp":"T"},"committer":{"name":"A","email":"a@b.c","timestamp":"T"}},"local_bookmarks":[{"name":"feat","target":["abc"]}],"remote_bookmarks":[{"name":"feat","remote":"origin","target":["abc"],"tracking_target":["abc"]}],"short_change_id":"xyz"}"#;
+        let input = r#"{"commit":{"commit_id":"abc","parents":["def"],"change_id":"xyz","description":"desc\n","author":{"name":"A","email":"a@b.c","timestamp":"T"},"committer":{"name":"A","email":"a@b.c","timestamp":"T"}},"local_bookmarks":[{"name":"feat","target":["abc"]}],"remote_bookmarks":[{"name":"feat","remote":"origin","target":["abc"],"tracking_target":["abc"]}],"immutable":false,"short_change_id":"xyz"}"#;
         let entries = parse_log_entries(input).unwrap();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].commit_id, "abc");
@@ -382,7 +383,7 @@ mod tests {
 
     #[test]
     fn parse_log_entries_no_bookmarks() {
-        let input = r#"{"commit":{"commit_id":"abc","parents":[],"change_id":"xyz","description":"","author":{"name":"A","email":"a@b.c","timestamp":"T"},"committer":{"name":"A","email":"a@b.c","timestamp":"T"}},"local_bookmarks":[],"remote_bookmarks":[],"short_change_id":"xyz"}"#;
+        let input = r#"{"commit":{"commit_id":"abc","parents":[],"change_id":"xyz","description":"","author":{"name":"A","email":"a@b.c","timestamp":"T"},"committer":{"name":"A","email":"a@b.c","timestamp":"T"}},"local_bookmarks":[],"remote_bookmarks":[],"immutable":false,"short_change_id":"xyz"}"#;
         let entries = parse_log_entries(input).unwrap();
         assert_eq!(entries.len(), 1);
         assert!(entries[0].local_bookmark_names.is_empty());
@@ -391,13 +392,31 @@ mod tests {
 
     #[test]
     fn parse_log_entries_multiple() {
-        let line1 = r#"{"commit":{"commit_id":"aaa","parents":[],"change_id":"x1","description":"first","author":{"name":"A","email":"a@b.c","timestamp":"T"},"committer":{"name":"A","email":"a@b.c","timestamp":"T"}},"local_bookmarks":[],"remote_bookmarks":[],"short_change_id":"x1"}"#;
-        let line2 = r#"{"commit":{"commit_id":"bbb","parents":["aaa"],"change_id":"x2","description":"second","author":{"name":"A","email":"a@b.c","timestamp":"T"},"committer":{"name":"A","email":"a@b.c","timestamp":"T"}},"local_bookmarks":[],"remote_bookmarks":[],"short_change_id":"x2"}"#;
+        let line1 = r#"{"commit":{"commit_id":"aaa","parents":[],"change_id":"x1","description":"first","author":{"name":"A","email":"a@b.c","timestamp":"T"},"committer":{"name":"A","email":"a@b.c","timestamp":"T"}},"local_bookmarks":[],"remote_bookmarks":[],"immutable":false,"short_change_id":"x1"}"#;
+        let line2 = r#"{"commit":{"commit_id":"bbb","parents":["aaa"],"change_id":"x2","description":"second","author":{"name":"A","email":"a@b.c","timestamp":"T"},"committer":{"name":"A","email":"a@b.c","timestamp":"T"}},"local_bookmarks":[],"remote_bookmarks":[],"immutable":false,"short_change_id":"x2"}"#;
         let input = format!("{line1}\n{line2}");
         let entries = parse_log_entries(&input).unwrap();
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].commit_id, "aaa");
         assert_eq!(entries[1].commit_id, "bbb");
+    }
+
+    #[test]
+    fn parse_log_entries_immutable_true() {
+        let input = r#"{"commit":{"commit_id":"abc","parents":[],"change_id":"xyz","description":"","author":{"name":"A","email":"a@b.c","timestamp":"T"},"committer":{"name":"A","email":"a@b.c","timestamp":"T"}},"local_bookmarks":[{"name":"pinned","target":["abc"]}],"remote_bookmarks":[],"immutable":true,"short_change_id":"xyz"}"#;
+        let entries = parse_log_entries(input).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert!(entries[0].immutable);
+        assert_eq!(entries[0].local_bookmark_names, vec!["pinned"]);
+    }
+
+    /// The `immutable` field is deliberately not serde-defaulted: output from
+    /// a template that doesn't emit it must fail loudly, not parse as false.
+    #[test]
+    fn parse_log_entries_missing_immutable_is_error() {
+        let input = r#"{"commit":{"commit_id":"abc","parents":[],"change_id":"xyz","description":"","author":{"name":"A","email":"a@b.c","timestamp":"T"},"committer":{"name":"A","email":"a@b.c","timestamp":"T"}},"local_bookmarks":[],"remote_bookmarks":[],"short_change_id":"xyz"}"#;
+        let result = parse_log_entries(input);
+        assert!(matches!(result, Err(JjError::ParseError { .. })));
     }
 
     // -- parse_git_remote_list tests --
@@ -478,7 +497,7 @@ mod tests {
     async fn get_default_branch_integration() {
         let runner = MockJjRunner {
             handler: |_args: &[&str]| {
-                Ok(r#"{"commit":{"commit_id":"abc","parents":[],"change_id":"xyz","description":"","author":{"name":"A","email":"a@b.c","timestamp":"T"},"committer":{"name":"A","email":"a@b.c","timestamp":"T"}},"local_bookmarks":[{"name":"main","target":["abc"]}],"remote_bookmarks":[{"name":"main","remote":"git","target":["abc"],"tracking_target":["abc"]},{"name":"main","remote":"origin","target":["abc"],"tracking_target":["abc"]}],"short_change_id":"xyz"}"#.to_string())
+                Ok(r#"{"commit":{"commit_id":"abc","parents":[],"change_id":"xyz","description":"","author":{"name":"A","email":"a@b.c","timestamp":"T"},"committer":{"name":"A","email":"a@b.c","timestamp":"T"}},"local_bookmarks":[{"name":"main","target":["abc"]}],"remote_bookmarks":[{"name":"main","remote":"git","target":["abc"],"tracking_target":["abc"]},{"name":"main","remote":"origin","target":["abc"],"tracking_target":["abc"]}],"immutable":false,"short_change_id":"xyz"}"#.to_string())
             },
         };
         let jj = Jj::new(runner);
@@ -490,7 +509,7 @@ mod tests {
     async fn get_default_branch_no_remote_bookmarks() {
         let runner = MockJjRunner {
             handler: |_args: &[&str]| {
-                Ok(r#"{"commit":{"commit_id":"abc","parents":[],"change_id":"xyz","description":"","author":{"name":"A","email":"a@b.c","timestamp":"T"},"committer":{"name":"A","email":"a@b.c","timestamp":"T"}},"local_bookmarks":[],"remote_bookmarks":[],"short_change_id":"xyz"}"#.to_string())
+                Ok(r#"{"commit":{"commit_id":"abc","parents":[],"change_id":"xyz","description":"","author":{"name":"A","email":"a@b.c","timestamp":"T"},"committer":{"name":"A","email":"a@b.c","timestamp":"T"}},"local_bookmarks":[],"remote_bookmarks":[],"immutable":false,"short_change_id":"xyz"}"#.to_string())
             },
         };
         let jj = Jj::new(runner);
@@ -506,7 +525,7 @@ mod tests {
                 // Check the revset is constructed correctly
                 let revset = args[2];
                 assert!(revset.contains(".."));
-                Ok(r#"{"commit":{"commit_id":"c1","parents":["c0"],"change_id":"ch1","description":"change 1","author":{"name":"A","email":"a@b.c","timestamp":"T"},"committer":{"name":"A","email":"a@b.c","timestamp":"T"}},"local_bookmarks":[],"remote_bookmarks":[],"short_change_id":"ch1"}"#.to_string())
+                Ok(r#"{"commit":{"commit_id":"c1","parents":["c0"],"change_id":"ch1","description":"change 1","author":{"name":"A","email":"a@b.c","timestamp":"T"},"committer":{"name":"A","email":"a@b.c","timestamp":"T"}},"local_bookmarks":[],"remote_bookmarks":[],"immutable":false,"short_change_id":"ch1"}"#.to_string())
             },
         };
         let jj = Jj::new(runner);
@@ -544,7 +563,7 @@ mod tests {
             handler: |args: &[&str]| {
                 assert_eq!(args[0], "log");
                 assert_eq!(args[2], "custom-heads-revset");
-                Ok(r#"{"commit":{"commit_id":"h1","parents":["c_a"],"change_id":"ch_h1","description":"unbookmarked head","author":{"name":"A","email":"a@b.c","timestamp":"T"},"committer":{"name":"A","email":"a@b.c","timestamp":"T"}},"local_bookmarks":[],"remote_bookmarks":[],"short_change_id":"ch_h"}"#.to_string())
+                Ok(r#"{"commit":{"commit_id":"h1","parents":["c_a"],"change_id":"ch_h1","description":"unbookmarked head","author":{"name":"A","email":"a@b.c","timestamp":"T"},"committer":{"name":"A","email":"a@b.c","timestamp":"T"}},"local_bookmarks":[],"remote_bookmarks":[],"immutable":false,"short_change_id":"ch_h"}"#.to_string())
             },
         };
         let jj = Jj::new(runner);

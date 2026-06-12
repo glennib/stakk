@@ -208,6 +208,10 @@ stack_placement = "body"
 auto_prefix = "gb-"
 
 # Revset for discovering bookmarks (default: "mine() ~ trunk() ~ immutable()")
+# Note: the default excludes bookmarks on immutable commits. Stale untracked
+# remote bookmarks can pin commits immutable — clean them up with
+# `jj bookmark forget --include-remotes 'glob:<pattern>'`, or drop the
+# `~ immutable()` term for one run to include them.
 bookmarks_revset = "mine() ~ trunk() ~ immutable()"
 
 # Revset for discovering unbookmarked heads

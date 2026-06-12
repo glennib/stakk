@@ -192,6 +192,24 @@ States are **skipped** when they would produce no name or a duplicate of
 another state's name (e.g., UseTfidf skipped if it matches an existing
 bookmark; UseGenerated skipped if it matches an existing one).
 
+### Locked Rows (immutable commits)
+
+A row is **locked** when `is_immutable && existing_bookmarks.is_empty()`
+(`BookmarkRow::is_locked()`): its commit is jj-immutable and carries no
+bookmark known to the graph, so any name assigned there would be filtered out
+by the bookmarks revset on the post-creation graph rebuild. Locked rows are
+permanently `[ ]` Unchecked (dark gray) and render a hint —
+`(immutable — bookmark <names> excluded by --bookmarks-revset)` when the
+commit carries filtered-out bookmarks (`excluded_bookmarks`), else
+`(immutable)`. All mutating keys (Space, `b`, `r`, `R`, `i`) no-op; the row
+stays focusable so the hint is discoverable, and the help line shows
+`immutable — locked` instead of the cycle keys. Immutable rows that *are*
+segment boundaries (possible under custom revsets without `~ immutable()`)
+are not locked. Accepted limitation: locking keys on commit immutability, not
+revset semantics — under a custom revset that includes immutable commits, a
+bare immutable row stays locked; create the bookmark outside the TUI and the
+row unlocks as a boundary.
+
 ### Variation (`r`/`R`)
 
 `r`/`R` cycles *within* the current state type:
@@ -259,6 +277,18 @@ are in-flight to animate the spinner (10-frame animation).
 - ratatui inline viewport: `enable_raw_mode()` before, `disable_raw_mode()` after.
 - Graph layout deduplicates shared segments by `commit_id` (not `change_id`).
 - Auto-generated bookmark names: `stakk-<first 12 chars of change_id>`.
+- `LOG_TEMPLATE` emits an `immutable` field; `LogEntryRaw` is deliberately
+  *not* serde-defaulted so a template/parser mismatch fails loudly as a
+  `ParseError` instead of silently parsing `immutable: false`.
+- `SegmentCommit::local_bookmark_names` carries the *unfiltered* local
+  bookmark names from jj log — unlike `BookmarkSegment::bookmark_names`,
+  it includes bookmarks the bookmarks revset excluded (e.g. on immutable
+  commits). Used to diagnose excluded selections and label locked TUI rows.
+- `analyze_submission` errors (`stakk::submit::selected_bookmarks_excluded`)
+  when a selected bookmark is a boundary in no segment of the target stack,
+  instead of silently folding it away. The intentional fold for
+  deliberately-unchecked rows is unaffected (unchecked names are never in
+  `selected_bookmarks`).
 - Stack reorder safety: bookmarks must be pushed one-at-a-time with immediate
   base/PR updates. If all bookmarks are pushed before bases are updated, a PR
   whose head moved down the stack will have an empty diff (head is ancestor of

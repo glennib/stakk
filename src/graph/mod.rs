@@ -287,6 +287,8 @@ async fn traverse_and_discover_segments<R: JjRunner>(
                     committer: change.committer.clone(),
                     short_change_id: change.short_change_id.clone(),
                     files: vec![],
+                    is_immutable: change.immutable,
+                    local_bookmark_names: change.local_bookmark_names.clone(),
                 });
             }
         }
@@ -436,6 +438,17 @@ mod tests {
         parents: &[&str],
         local_bookmarks: &[&str],
     ) -> String {
+        log_entry_json_full(commit_id, change_id, parents, local_bookmarks, false)
+    }
+
+    /// Build a log entry NDJSON line with an explicit `immutable` flag.
+    fn log_entry_json_full(
+        commit_id: &str,
+        change_id: &str,
+        parents: &[&str],
+        local_bookmarks: &[&str],
+        immutable: bool,
+    ) -> String {
         let parents_json: Vec<String> = parents.iter().map(|p| format!("\"{p}\"")).collect();
         let parents_str = parents_json.join(",");
 
@@ -447,7 +460,7 @@ mod tests {
 
         let short = &change_id[..4.min(change_id.len())];
         format!(
-            r#"{{"commit":{{"commit_id":"{commit_id}","parents":[{parents_str}],"change_id":"{change_id}","description":"desc {commit_id}","author":{{"name":"T","email":"t@t.t","timestamp":"T"}},"committer":{{"name":"T","email":"t@t.t","timestamp":"T"}}}},"local_bookmarks":[{bookmarks_str}],"remote_bookmarks":[],"short_change_id":"{short}"}}"#,
+            r#"{{"commit":{{"commit_id":"{commit_id}","parents":[{parents_str}],"change_id":"{change_id}","description":"desc {commit_id}","author":{{"name":"T","email":"t@t.t","timestamp":"T"}},"committer":{{"name":"T","email":"t@t.t","timestamp":"T"}}}},"local_bookmarks":[{bookmarks_str}],"remote_bookmarks":[],"immutable":{immutable},"short_change_id":"{short}"}}"#,
         )
     }
 
@@ -1069,6 +1082,8 @@ mod tests {
                         committer: test_sig(ts),
                         short_change_id: id[..4].to_string(),
                         files: vec![],
+                        is_immutable: false,
+                        local_bookmark_names: vec![],
                     }],
                 },
             );
@@ -1129,6 +1144,61 @@ mod tests {
         assert_eq!(graph.segments.len(), 1);
         let seg = graph.segments.get("ch_x").unwrap();
         assert_eq!(seg.bookmark_names, vec!["bm_user"]);
+    }
+
+    /// The immutable flag and unfiltered local bookmark names are threaded
+    /// into `SegmentCommit`, even for bookmarks excluded from the graph.
+    ///
+    /// Commit c_mid is immutable and carries bookmark bm_pinned, which the
+    /// bookmarks revset filtered out (not in `get_my_bookmarks` output). It
+    /// must not become a segment boundary, but its commit must record the
+    /// flag and the bookmark name so later phases can diagnose the exclusion.
+    #[tokio::test]
+    async fn immutable_flag_and_local_bookmarks_threaded() {
+        let runner = MockJjRunner {
+            handler: |args: &[&str]| {
+                if args[0] == "diff" {
+                    return Ok(String::new());
+                }
+                if args[0] == "bookmark" {
+                    return Ok(bookmark_json("bm_leaf", "c_leaf", "ch_leaf"));
+                }
+
+                let revset = args[2];
+                if revset.contains("c_leaf") {
+                    let lines = [
+                        log_entry_json("c_leaf", "ch_leaf", &["c_mid"], &["bm_leaf"]),
+                        log_entry_json_full("c_mid", "ch_mid", &["trunk_c"], &["bm_pinned"], true),
+                    ];
+                    return Ok(lines.join("\n"));
+                }
+
+                Ok(String::new())
+            },
+        };
+
+        let jj = Jj::new(runner);
+        let graph = build_change_graph(
+            &jj,
+            "mine() ~ trunk() ~ immutable()",
+            "heads((mine() ~ empty() ~ immutable()) & trunk()..)",
+        )
+        .await
+        .unwrap();
+
+        // bm_pinned is not a boundary: one segment, named after bm_leaf only.
+        assert_eq!(graph.segments.len(), 1);
+        let seg = graph.segments.get("ch_leaf").unwrap();
+        assert_eq!(seg.bookmark_names, vec!["bm_leaf"]);
+        assert_eq!(seg.commits.len(), 2);
+
+        let leaf_commit = &seg.commits[0];
+        assert!(!leaf_commit.is_immutable);
+        assert_eq!(leaf_commit.local_bookmark_names, vec!["bm_leaf"]);
+
+        let mid_commit = &seg.commits[1];
+        assert!(mid_commit.is_immutable);
+        assert_eq!(mid_commit.local_bookmark_names, vec!["bm_pinned"]);
     }
 
     /// A commit with only non-user bookmarks is treated as unbookmarked

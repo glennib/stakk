@@ -56,6 +56,9 @@ pub struct LogEntryRaw {
     pub commit: CommitData,
     pub local_bookmarks: Vec<CommitRefData>,
     pub remote_bookmarks: Vec<CommitRefData>,
+    /// Whether jj considers the commit immutable. Deliberately not
+    /// serde-defaulted: a template/parser mismatch must fail loudly.
+    pub immutable: bool,
     /// Shortest unique change ID prefix (from `change_id.shortest(4)`).
     pub short_change_id: String,
 }
@@ -103,6 +106,8 @@ pub struct LogEntry {
     pub committer: Signature,
     pub local_bookmark_names: Vec<String>,
     pub remote_bookmark_names: Vec<String>,
+    /// Whether jj considers the commit immutable.
+    pub immutable: bool,
     /// Shortest unique change ID prefix (from jj).
     pub short_change_id: String,
 }
@@ -187,10 +192,12 @@ mod tests {
             "remote_bookmarks": [
                 {"name":"feature","remote":"origin","target":["abc123"],"tracking_target":["abc123"]}
             ],
+            "immutable": false,
             "short_change_id": "xyz7"
         }"#;
         let entry: LogEntryRaw = serde_json::from_str(json).unwrap();
         assert_eq!(entry.commit.commit_id, "abc123");
+        assert!(!entry.immutable);
         assert_eq!(entry.local_bookmarks.len(), 1);
         assert_eq!(entry.local_bookmarks[0].name, "feature");
         assert_eq!(entry.remote_bookmarks.len(), 1);

@@ -18,6 +18,12 @@ pub struct SegmentCommit {
     pub short_change_id: String,
     /// Files changed by this commit.
     pub files: Vec<String>,
+    /// Whether jj considers the commit immutable.
+    pub is_immutable: bool,
+    /// All local bookmark names on this commit, unfiltered — unlike
+    /// `BookmarkSegment::bookmark_names`, this includes bookmarks excluded
+    /// from the graph by the bookmarks revset (e.g. on immutable commits).
+    pub local_bookmark_names: Vec<String>,
 }
 
 /// A group of consecutive commits belonging to one or more bookmarks.
