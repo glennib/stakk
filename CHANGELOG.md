@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.16.3](https://github.com/glennib/stakk/compare/v1.16.2...v1.16.3) - 2026-06-22
+
+### Fixed
+
+- stop silently dropping selected bookmarks on jj-immutable revs
+
+### Other
+
+- *(deps)* lock file maintenance ([#126](https://github.com/glennib/stakk/pull/126))
+- *(deps)* update dependency cargo-binstall to v1.20.1 ([#125](https://github.com/glennib/stakk/pull/125))
+- *(deps)* update rust crate ratatui to v0.30.2 ([#124](https://github.com/glennib/stakk/pull/124))
+- *(deps)* update rust crate minijinja to v2.21.0 ([#122](https://github.com/glennib/stakk/pull/122))
+- *(deps)* lock file maintenance ([#121](https://github.com/glennib/stakk/pull/121))
+
 ## [1.16.2](https://github.com/glennib/stakk/compare/v1.16.1...v1.16.2) - 2026-06-10
 
 ### Fixed
