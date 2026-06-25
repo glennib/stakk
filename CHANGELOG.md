@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.17.1](https://github.com/glennib/stakk/compare/v1.17.0...v1.17.1) - 2026-06-25
+
+### Other
+
+- *(deps)* update actions/checkout action to v7
+- *(deps)* update actions/cache action to v6
+
 ## [1.17.0](https://github.com/glennib/stakk/compare/v1.16.3...v1.17.0) - 2026-06-25
 
 ### Added
