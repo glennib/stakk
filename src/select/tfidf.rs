@@ -278,7 +278,30 @@ fn compute_tfidf(docs: &[Vec<WeightedToken>]) -> HashMap<String, f64> {
     scores
 }
 
+/// Map each term to its first-occurrence position across all documents.
+///
+/// Documents are scanned in order (trunk-to-tip), and tokens within a
+/// document in textual order (description tokens precede file-path tokens, as
+/// built by [`tfidf_bookmark_name`]). The resulting indices are strictly
+/// increasing, giving a total order with no ties.
+fn first_occurrence_order(docs: &[Vec<WeightedToken>]) -> HashMap<String, usize> {
+    let mut occurrence = HashMap::new();
+    let mut next = 0;
+    for doc in docs {
+        for token in doc {
+            if !occurrence.contains_key(&token.term) {
+                occurrence.insert(token.term.clone(), next);
+                next += 1;
+            }
+        }
+    }
+    occurrence
+}
+
 /// Generate a TF-IDF-based bookmark name from commit data.
+///
+/// The chosen terms are joined in order of first occurrence across the commits
+/// (trunk-to-tip), not alphabetically.
 ///
 /// Returns `None` if no meaningful terms are found.
 pub fn tfidf_bookmark_name(
@@ -337,9 +360,16 @@ pub fn tfidf_bookmark_name(
         return None;
     }
 
+    // Order terms by first occurrence across the commits (trunk-to-tip),
+    // scanning each commit's tokens in textual order (description before
+    // files). This means a word combination is rendered in reading order
+    // rather than alphabetically; combos are already distinct sets (see
+    // `combinations`), so the same words never appear in two orderings.
+    let occurrence = first_occurrence_order(&docs);
+
     let idx = variation % combos.len();
     let mut chosen: Vec<&str> = combos[idx].clone();
-    chosen.sort_unstable();
+    chosen.sort_by_key(|term| occurrence.get(*term).copied().unwrap_or(usize::MAX));
 
     let name = chosen.join("-");
     let sanitized = sanitize(&name, disallowed_chars, max_length);
@@ -578,6 +608,26 @@ mod tests {
                 || name.contains("queries"),
             "expected meaningful terms in name, got: {name}"
         );
+    }
+
+    #[test]
+    fn tfidf_orders_terms_by_occurrence() {
+        // Force the word set so only the ordering varies: `implement` is a stop
+        // word, leaving exactly {foo, baz, bar} across the two commits. The pool
+        // then yields a single combo, so the rendered name is determined purely
+        // by first-occurrence order (trunk-to-tip), not alphabetically.
+        let commits = vec![
+            CommitData {
+                description: "implement foo",
+                files: &[],
+            },
+            CommitData {
+                description: "baz bar",
+                files: &[],
+            },
+        ];
+        let name = tfidf_bookmark_name(&commits, 3, 0, 255, " ~^:?*[\\");
+        assert_eq!(name.as_deref(), Some("foo-baz-bar"));
     }
 
     #[test]
