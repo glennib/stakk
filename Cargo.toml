@@ -21,7 +21,7 @@ name = "stakk"
 path = "src/main.rs"
 
 [dependencies]
-base64 = "0.22.1"
+base64 = "0.23.0"
 clap = { version = "4", features = ["derive", "env"] }
 clap_complete = "4.6.0"
 console = "0.16"
