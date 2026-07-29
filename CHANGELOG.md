@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.17.2](https://github.com/glennib/stakk/compare/v1.17.1...v1.17.2) - 2026-07-28
+
+### Fixed
+
+- *(deps)* update rust crate base64 to 0.23.0 ([#152](https://github.com/glennib/stakk/pull/152))
+
+### Other
+
+- *(deps)* update rust crate toml to v1.1.4 ([#155](https://github.com/glennib/stakk/pull/155))
+- *(deps)* update rust crate clap_complete to v4.6.8 ([#154](https://github.com/glennib/stakk/pull/154))
+- *(deps)* lock file maintenance ([#153](https://github.com/glennib/stakk/pull/153))
+- *(deps)* update dependency cargo-binstall to v1.21.1 ([#151](https://github.com/glennib/stakk/pull/151))
+- *(deps)* update rust crate tokio to v1.53.1 ([#150](https://github.com/glennib/stakk/pull/150))
+- *(deps)* update rust crate serde_json to v1.0.151 ([#149](https://github.com/glennib/stakk/pull/149))
+- *(deps)* update rust crate clap to v4.6.3 ([#148](https://github.com/glennib/stakk/pull/148))
+- *(deps)* update rust crate thiserror to v2.0.19 ([#147](https://github.com/glennib/stakk/pull/147))
+- *(deps)* update rust crate serde to v1.0.229 ([#146](https://github.com/glennib/stakk/pull/146))
+- *(deps)* update rust crate futures to v0.3.33 ([#145](https://github.com/glennib/stakk/pull/145))
+- *(deps)* update rust crate tokio to v1.53.0 ([#144](https://github.com/glennib/stakk/pull/144))
+- *(deps)* update rust crate tokio to v1.52.4 ([#143](https://github.com/glennib/stakk/pull/143))
+- *(deps)* update rust crate clap to v4.6.2 ([#142](https://github.com/glennib/stakk/pull/142))
+- *(deps)* update dependency cargo-binstall to v1.21.0 ([#141](https://github.com/glennib/stakk/pull/141))
+
 ## [1.17.1](https://github.com/glennib/stakk/compare/v1.17.0...v1.17.1) - 2026-06-29
 
 ### Other
