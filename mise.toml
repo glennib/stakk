@@ -2,7 +2,7 @@
 cargo-binstall = "1.21.1"
 "cargo:cargo-dist" = "0.32.0"
 "cargo:cargo-edit" = "0.13.9"
-"cargo:cargo-nextest" = "0.9.132"
+"cargo:cargo-nextest" = "0.9.140"
 "cargo:release-plz" = "0.3.157"
 
 [tasks.fmt]
