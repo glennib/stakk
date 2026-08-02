@@ -61,7 +61,7 @@ pub enum RowState {
     UseCustom(CustomNameState),
     /// Included in submission; a user-typed bookmark name.
     UserInput(String),
-    /// Excluded from submission.
+    /// No PR of its own; the commit will be included in the PR above it.
     Unchecked,
 }
 
