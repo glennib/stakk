@@ -274,6 +274,15 @@ are in-flight to animate the spinner (10-frame animation).
 - `format_stack_comment` returns `Result` because user templates can fail.
 - Body-mode fences (`STAKK_BODY_START`/`STAKK_BODY_END`) are HTML comments,
   invisible on GitHub. Migration between placement modes is automatic.
+- `--stack-placement none` writes no stack info and instead runs
+  `cleanup_stack_artifacts` on every PR, deleting the stack comment and
+  stripping the body fence. Single-bookmark submissions take the same
+  cleanup path (one PR is not a stack), so the two share one branch that
+  runs *before* the template and context setup that only `comment`/`body`
+  need. PRs created in the same run are skipped — they cannot yet carry a
+  stack comment. In `none` mode the custom `--template` is never read or
+  compiled, so a broken template does not fail a submission that will not
+  render it.
 - ratatui inline viewport: `enable_raw_mode()` before, `disable_raw_mode()` after.
 - Graph layout deduplicates shared segments by `commit_id` (not `change_id`).
 - Auto-generated bookmark names: `stakk-<first 12 chars of change_id>`.
@@ -303,6 +312,10 @@ are in-flight to animate the spinner (10-frame animation).
   enables updating existing PRs. Change detection avoids redundant API calls.
   In `--stack-placement body` mode, body sync skips the per-bookmark API call
   and lets the fence-splicing phase handle it in one update.
+- **`--stack-placement none` also removes** — disabling stack info retires
+  the existing artifacts rather than leaving them stale, so the feature can
+  be turned off cleanly. Deletion is not previewed by `--dry-run`, which
+  returns before the execute phase.
 - **`--dry-run` not in env vars** — one-off decision, surprising as a default.
 - **Generic `Jj<R: JjRunner>`** — zero-cost dispatch, edition 2024 async traits.
 - **Three-phase submission** — analyze (pure) → plan (queries forge) → execute.

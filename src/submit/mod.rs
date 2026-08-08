@@ -699,9 +699,38 @@ pub async fn execute_submission_plan<R: JjRunner, F: Forge>(
     }
 
     // Step 3: Concurrently create/update stack comments on all PRs.
-    // For single-bookmark submissions, skip stack info entirely and just
-    // clean up any stale stack artifacts from a previously larger stack.
-    if stack_entries.len() > 1 {
+    //
+    // Two cases write no stack info and instead retire any artifacts left on
+    // the PRs: `none` placement, and single-bookmark submissions, which are
+    // not a stack at all (the artifacts are stale leftovers from when the PR
+    // belonged to a larger stack).
+    let cleanup_only = placement == StackPlacement::None || stack_entries.len() == 1;
+
+    if cleanup_only {
+        pb.set_message("Cleaning up stack artifacts...");
+        let cleanup_futures: Vec<_> = stack_entries
+            .iter()
+            .enumerate()
+            .map(|(i, entry)| {
+                let bp = &plan.bookmark_plans[i];
+                let existing_body = effective_body(bp).unwrap_or_default();
+                // A PR created moments ago in this very run carries neither a
+                // stack comment nor a body fence — nothing to look for.
+                let created_now = bp.needs_create;
+                let pb = &pb;
+                async move {
+                    if created_now {
+                        return Ok(());
+                    }
+                    cleanup_stack_artifacts(forge, entry.pr_number, &existing_body, pb).await
+                }
+            })
+            .collect();
+        let results = futures::future::join_all(cleanup_futures).await;
+        for result in results {
+            result?;
+        }
+    } else if stack_entries.len() > 1 {
         pb.set_message("Updating stack comments...");
         let comment_data = StackCommentData {
             version: 0,
@@ -848,33 +877,10 @@ pub async fn execute_submission_plan<R: JjRunner, F: Forge>(
                     result?;
                 }
             }
-            StackPlacement::None => {
-                pb.set_message("Cleaning up stack artifacts...");
-                let cleanup_futures: Vec<_> = stack_entries
-                    .iter()
-                    .enumerate()
-                    .map(|(i, entry)| {
-                        let existing_body =
-                            effective_body(&plan.bookmark_plans[i]).unwrap_or_default();
-                        let pb = &pb;
-                        async move {
-                            cleanup_stack_artifacts(forge, entry.pr_number, &existing_body, pb)
-                                .await
-                        }
-                    })
-                    .collect();
-                let results = futures::future::join_all(cleanup_futures).await;
-                for result in results {
-                    result?;
-                }
-            }
+            // Handled by the cleanup branch above, which runs before any of
+            // the rendering setup this arm would not use.
+            StackPlacement::None => {}
         }
-    } else if stack_entries.len() == 1 {
-        // Single bookmark — not a stack. Clean up any stale stack artifacts
-        // from when this PR was part of a larger stack.
-        let entry = &stack_entries[0];
-        let existing_body = effective_body(&plan.bookmark_plans[0]).unwrap_or_default();
-        cleanup_stack_artifacts(forge, entry.pr_number, &existing_body, &pb).await?;
     }
 
     pb.finish_and_clear();
@@ -1029,6 +1035,9 @@ mod tests {
         updated_bodies: Mutex<Vec<(u64, String)>>,
         deleted_comments: Mutex<Vec<u64>>,
         existing_comments: HashMap<u64, Vec<Comment>>,
+        /// PR numbers `list_comments` was called for, to assert that no
+        /// lookup is made on PRs that cannot carry a stack comment.
+        listed_comments: Mutex<Vec<u64>>,
         next_pr_number: Mutex<u64>,
         ops: Option<OpLog>,
     }
@@ -1045,6 +1054,7 @@ mod tests {
                 updated_bodies: Mutex::new(Vec::new()),
                 deleted_comments: Mutex::new(Vec::new()),
                 existing_comments: HashMap::new(),
+                listed_comments: Mutex::new(Vec::new()),
                 next_pr_number: Mutex::new(100),
                 ops: None,
             }
@@ -1134,6 +1144,7 @@ mod tests {
             &self,
             pr_number: u64,
         ) -> impl std::future::Future<Output = Result<Vec<Comment>, ForgeError>> + Send {
+            self.listed_comments.lock().unwrap().push(pr_number);
             let comments = self
                 .existing_comments
                 .get(&pr_number)
@@ -3193,6 +3204,11 @@ mod tests {
         assert_eq!(updated_comments.len(), 0);
         let updated_bodies = forge.updated_bodies.lock().unwrap();
         assert_eq!(updated_bodies.len(), 0);
+
+        // Both PRs were created in this run, so neither can carry a stack
+        // comment — cleanup must not spend an API call looking.
+        let listed = forge.listed_comments.lock().unwrap();
+        assert!(listed.is_empty(), "unexpected comment lookups: {listed:?}");
     }
 
     #[tokio::test]
@@ -3296,6 +3312,11 @@ mod tests {
         // No new comments should be created.
         let created = forge.created_comments.lock().unwrap();
         assert_eq!(created.len(), 0);
+
+        // Only the pre-existing PR is inspected; feat-b was created in this
+        // run and is skipped.
+        let listed = forge.listed_comments.lock().unwrap();
+        assert_eq!(*listed, vec![50]);
     }
 
     #[tokio::test]

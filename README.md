@@ -28,10 +28,9 @@ idempotent updates.
   stack with links, updated in place on re-runs. Optionally, the stack info
   can be placed in the PR body instead (`--stack-placement body`) or disabled
   entirely (`--stack-placement none`, which also removes existing stack
-  comments/body fences). Comments
-  are rendered with [minijinja](https://github.com/mitsuhiko/minijinja)
-  templates and can be customized with `--template` or the `STAKK_TEMPLATE`
-  environment variable.
+  comments and body fences). Comments are rendered with
+  [minijinja](https://github.com/mitsuhiko/minijinja) templates and can be
+  customized with `--template` or the `STAKK_TEMPLATE` environment variable.
 - **Idempotent** — re-running `stakk submit` is always safe. Existing PRs are
   updated, never duplicated.
 - **Dry-run mode** — `--dry-run` shows exactly what would happen without
