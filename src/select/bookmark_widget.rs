@@ -262,8 +262,9 @@ impl BookmarkAssignmentState {
             })
             .collect();
 
-        // Start cursor on the first non-trunk row.
-        let cursor = rows.iter().position(|r| !r.is_trunk).unwrap_or(0);
+        // Start cursor on the last non-trunk row — the leaf, which renders at
+        // the top of the reversed row display.
+        let cursor = rows.iter().rposition(|r| !r.is_trunk).unwrap_or(0);
 
         Self {
             rows,
@@ -1133,6 +1134,29 @@ mod tests {
     }
 
     #[test]
+    fn state_from_path_starts_cursor_on_leaf() {
+        let nodes = [
+            make_node("", "trunk", &[], true, false),
+            make_node("ch_a", "add base", &["base"], false, false),
+            make_node("ch_b", "add feature", &[], false, true),
+        ];
+        let refs: Vec<&LayoutNode> = nodes.iter().collect();
+        let state = BookmarkAssignmentState::from_path(&refs, false, None);
+
+        // Highest index = leaf = top row on screen.
+        assert_eq!(state.cursor, 2);
+    }
+
+    #[test]
+    fn state_from_path_trunk_only_keeps_cursor_on_trunk() {
+        let nodes = [make_node("", "trunk", &[], true, false)];
+        let refs: Vec<&LayoutNode> = nodes.iter().collect();
+        let state = BookmarkAssignmentState::from_path(&refs, false, None);
+
+        assert_eq!(state.cursor, 0);
+    }
+
+    #[test]
     fn toggle_checks_and_unchecks() {
         let nodes = [
             make_node("", "trunk", &[], true, false),
@@ -1141,7 +1165,7 @@ mod tests {
         let refs: Vec<&LayoutNode> = nodes.iter().collect();
         let mut state = BookmarkAssignmentState::from_path(&refs, false, None);
 
-        // Cursor should start on the non-trunk row; starts UseExisting.
+        // Cursor starts on the leaf row; starts UseExisting.
         assert_eq!(state.cursor, 1);
         assert_eq!(state.rows[1].state, RowState::UseExisting(0));
 

@@ -165,8 +165,8 @@ bookmarks to commits.
 
 2. **BookmarkAssignment** — Assign bookmark names to each commit in the
    selected path. Navigate rows with `↑`/`↓` (`j`/`k`). Rows are displayed
-   in reverse order (leaf at top, trunk at bottom). Confirm with Enter,
-   cancel back to GraphView with Esc/`q`.
+   in reverse order (leaf at top, trunk at bottom), and the cursor starts on
+   the leaf row. Confirm with Enter, cancel back to GraphView with Esc/`q`.
 
 ### Bookmark Row State Cycle
 
