@@ -725,7 +725,8 @@ fn render_bookmark_screen(
         )])
     } else {
         Line::from(vec![Span::styled(
-            " Checked commits ([x]/[+]/[~]/[*]) will be pushed and have PRs created or updated.",
+            " Checked commits ([x]/[+]/[~]/[*]) will get own PRs. Unchecked will be part of the \
+             PR above them.",
             Style::default().fg(Color::Gray).add_modifier(Modifier::DIM),
         )])
     };

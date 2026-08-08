@@ -179,14 +179,14 @@ Each non-trunk row cycles through state *types* via Space (forward) / `b`
 
 (`[*]custom` only present when `--bookmark-command` is configured.)
 
-| Checkbox | State             | Color        | Description                                       |
-|----------|-------------------|--------------|---------------------------------------------------|
-| `[x]`   | UseExisting(idx)  | green, bold  | Use an existing bookmark; `r`/`R` cycles when >1  |
-| `[~]`   | UseTfidf          | blue, bold   | TF-IDF name from commit description + files        |
-| `[>]`   | UserInput         | lt-yellow    | Manual entry — press `i` to edit, validates live   |
-| `[+]`   | UseGenerated      | yellow, bold | Auto `stakk-<change_id[:12]>`                      |
-| `[*]`   | UseCustom         | cyan, bold   | External `--bookmark-command` with async spinner   |
-| `[ ]`   | Unchecked         | dark gray    | Excluded from submission                           |
+| Checkbox | State            | Color        | Description                                                 |
+|----------|------------------|--------------|-------------------------------------------------------------|
+| `[x]`    | UseExisting(idx) | green, bold  | Use an existing bookmark; `r`/`R` cycles when >1            |
+| `[~]`    | UseTfidf         | blue, bold   | TF-IDF name from commit description + files                 |
+| `[>]`    | UserInput        | lt-yellow    | Manual entry — press `i` to edit, validates live            |
+| `[+]`    | UseGenerated     | yellow, bold | Auto `stakk-<change_id[:12]>`                               |
+| `[*]`    | UseCustom        | cyan, bold   | External `--bookmark-command` with async spinner            |
+| `[ ]`    | Unchecked        | dark gray    | No PR of its own; the commit is included in the PR above it |
 
 States are **skipped** when they would produce no name or a duplicate of
 another state's name (e.g., UseTfidf skipped if it matches an existing
