@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.18.0](https://github.com/glennib/stakk/compare/v1.17.2...v1.18.0) - 2026-08-08
+
+### Added
+
+- allow disabling comments
+- *(select)* start bookmark cursor on the leaf row
+
+### Fixed
+
+- *(select)* clarify unchecked commit behavior in bookmark TUI
+
+### Other
+
+- *(deps)* upgrade octocrab to 0.54.1
+- *(submit)* tighten the --stack-placement none cleanup path
+- *(claude)* realign bookmark row state table
+- *(deps)* update rust crate thiserror to v2.0.20 ([#170](https://github.com/glennib/stakk/pull/170))
+- *(deps)* update rust crate clap to v4.6.6 ([#167](https://github.com/glennib/stakk/pull/167))
+- *(deps)* update rust crate minijinja to v2.23.0 ([#169](https://github.com/glennib/stakk/pull/169))
+- *(deps)* update rust crate clap_complete to v4.6.9 ([#168](https://github.com/glennib/stakk/pull/168))
+- *(deps)* update dependency cargo:cargo-nextest to v0.9.143 ([#166](https://github.com/glennib/stakk/pull/166))
+- *(deps)* update rust crate base64 to v0.23.1 ([#165](https://github.com/glennib/stakk/pull/165))
+- *(deps)* update rust crate minijinja to v2.22.0 ([#164](https://github.com/glennib/stakk/pull/164))
+- *(deps)* lock file maintenance ([#163](https://github.com/glennib/stakk/pull/163))
+- *(deps)* update rust crate clap to v4.6.5 ([#161](https://github.com/glennib/stakk/pull/161))
+- *(deps)* update dependency cargo:release-plz to v0.3.160 ([#160](https://github.com/glennib/stakk/pull/160))
+- *(deps)* update dependency cargo:cargo-edit to v0.13.13 ([#158](https://github.com/glennib/stakk/pull/158))
+- *(deps)* update dependency cargo:cargo-nextest to v0.9.140 ([#159](https://github.com/glennib/stakk/pull/159))
+
 ## [1.17.2](https://github.com/glennib/stakk/compare/v1.17.1...v1.17.2) - 2026-07-28
 
 ### Fixed
