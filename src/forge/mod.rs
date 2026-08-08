@@ -30,16 +30,6 @@ pub enum ForgeError {
         #[source]
         source: Box<dyn std::error::Error + Send + Sync>,
     },
-
-    #[error("malformed forge response: missing field `{field}`")]
-    #[diagnostic(
-        code(stakk::forge::malformed_response),
-        help(
-            "the forge API response is missing the `{field}` field — this may indicate a forge \
-             API change"
-        )
-    )]
-    MalformedResponse { field: &'static str },
 }
 
 /// State of a pull request.
