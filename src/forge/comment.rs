@@ -22,6 +22,9 @@ pub enum StackPlacement {
     Comment,
     /// Place the stack content in a fenced section of the PR body.
     Body,
+    /// Write no stack info at all. Existing stack comments and body
+    /// fences are removed on submit.
+    None,
 }
 
 impl std::fmt::Display for StackPlacement {

@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- *(submit)* add `--stack-placement none` to disable stack comments/body
+  fences entirely; existing stakk stack artifacts are removed on the next
+  submit (e.g. when relying on GitHub's native stacked PRs)
+
 ## [1.17.2](https://github.com/glennib/stakk/compare/v1.17.1...v1.17.2) - 2026-07-28
 
 ### Fixed

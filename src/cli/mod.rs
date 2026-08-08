@@ -298,6 +298,29 @@ mod tests {
         assert_eq!(submit_args(&cli).stack_placement, StackPlacement::Comment);
     }
 
+    #[test]
+    fn stack_placement_config_none() {
+        let config = Config {
+            stack_placement: Some(StackPlacement::None),
+            ..Default::default()
+        };
+        let cli = parse_with_config(config, &["stakk", "submit", "bm"]);
+        assert_eq!(submit_args(&cli).stack_placement, StackPlacement::None);
+    }
+
+    #[test]
+    fn stack_placement_cli_none_overrides_config() {
+        let config = Config {
+            stack_placement: Some(StackPlacement::Body),
+            ..Default::default()
+        };
+        let cli = parse_with_config(
+            config,
+            &["stakk", "submit", "--stack-placement", "none", "bm"],
+        );
+        assert_eq!(submit_args(&cli).stack_placement, StackPlacement::None);
+    }
+
     // -- sync_pr_content tests --
 
     #[test]
@@ -527,6 +550,12 @@ heads_revset = "heads(all())"
     fn toml_stack_placement_kebab_case() {
         let config: Config = toml::from_str(r#"stack_placement = "comment""#).unwrap();
         assert_eq!(config.stack_placement, Some(StackPlacement::Comment));
+    }
+
+    #[test]
+    fn toml_stack_placement_none() {
+        let config: Config = toml::from_str(r#"stack_placement = "none""#).unwrap();
+        assert_eq!(config.stack_placement, Some(StackPlacement::None));
     }
 
     #[test]

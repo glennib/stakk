@@ -151,6 +151,10 @@ pub struct SubmitArgs {
     /// Do not edit the fenced section by hand — it is overwritten on
     /// every run.
     ///
+    /// In none mode no stack info is written at all. Existing stack
+    /// comments and body fences are removed from each PR on submit, so
+    /// the feature can be retired cleanly.
+    ///
     /// Switching modes migrates automatically: moving to body mode
     /// deletes the old stack comment, and moving to comment mode strips
     /// the fenced section from the PR body.
