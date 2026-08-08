@@ -21,6 +21,7 @@ use crate::cli::submit::SubmitArgs;
 use crate::error::StakkError::Interrupted;
 use crate::error::StakkError::{self};
 use crate::forge::Forge;
+use crate::forge::comment::StackPlacement;
 use crate::jj::Jj;
 use crate::jj::remote::parse_github_url;
 use crate::jj::runner::RealJjRunner;
@@ -256,17 +257,17 @@ async fn submit_bookmark(args: &SubmitArgs) -> Result<(), StakkError> {
         return Ok(());
     }
 
-    // Load template.
-    let template_source = match &args.template {
-        Some(path) => {
-            Some(
-                std::fs::read_to_string(path).map_err(|e| StakkError::TemplateLoadFailed {
-                    path: path.clone(),
-                    reason: e.to_string(),
-                })?,
-            )
-        }
-        None => None,
+    // Load template. In `none` placement no stack content is ever rendered,
+    // so a custom template is neither read nor compiled — a broken or missing
+    // one must not fail a submission that will not use it.
+    let template_source = match (&args.template, args.stack_placement) {
+        (Some(path), StackPlacement::Comment | StackPlacement::Body) => Some(
+            std::fs::read_to_string(path).map_err(|e| StakkError::TemplateLoadFailed {
+                path: path.clone(),
+                reason: e.to_string(),
+            })?,
+        ),
+        _ => None,
     };
     let comment_env = forge::comment::build_comment_env(template_source.as_deref())?;
 

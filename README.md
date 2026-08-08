@@ -26,10 +26,11 @@ idempotent updates.
   branches so each PR shows only its own diff.
 - **Stack-awareness comments** — adds a comment to every PR listing the full
   stack with links, updated in place on re-runs. Optionally, the stack info
-  can be placed in the PR body instead (`--stack-placement body`). Comments
-  are rendered with [minijinja](https://github.com/mitsuhiko/minijinja)
-  templates and can be customized with `--template` or the `STAKK_TEMPLATE`
-  environment variable.
+  can be placed in the PR body instead (`--stack-placement body`) or disabled
+  entirely (`--stack-placement none`, which also removes existing stack
+  comments and body fences). Comments are rendered with
+  [minijinja](https://github.com/mitsuhiko/minijinja) templates and can be
+  customized with `--template` or the `STAKK_TEMPLATE` environment variable.
 - **Idempotent** — re-running `stakk submit` is always safe. Existing PRs are
   updated, never duplicated.
 - **Dry-run mode** — `--dry-run` shows exactly what would happen without
@@ -201,7 +202,9 @@ pr_mode = "draft"
 # Path to a custom minijinja template for stack comments
 template = "/path/to/my-template.md.jinja"
 
-# Where to place stack info: "comment" or "body" (default: "comment")
+# Where to place stack info: "comment", "body", or "none" (default: "comment")
+# "none" writes no stack info and removes existing stack comments/body fences
+# on the next submit (e.g. if you rely on GitHub's native stacked PRs).
 stack_placement = "body"
 
 # Prefix for auto-generated bookmark names (default: none)
@@ -294,7 +297,7 @@ stack_placement = "comment"
 | `STAKK_PR_MODE` | PR creation mode: `regular` or `draft` (overridden by `--pr-mode`) |
 | `STAKK_DRAFT` | Set to `true` to always create draft PRs (overridden by `--draft`) |
 | `STAKK_TEMPLATE` | Path to a custom minijinja template for stack comments (overridden by `--template`) |
-| `STAKK_STACK_PLACEMENT` | Where to place the stack info: `comment` (default) or `body` (overridden by `--stack-placement`) |
+| `STAKK_STACK_PLACEMENT` | Where to place the stack info: `comment` (default), `body`, or `none` (overridden by `--stack-placement`) |
 | `STAKK_AUTO_PREFIX` | Prefix for auto-generated bookmark names (overridden by `--auto-prefix`) |
 | `STAKK_SYNC_PR_CONTENT` | Sync PR title/body from commits: `none` (default), `title`, `body`, or `all` (overridden by `--sync-pr-content`) |
 | `STAKK_TRAILERS` | Whether to keep or strip git commit trailers in PR bodies: `keep` (default) or `strip` (overridden by `--trailers`) |
@@ -327,7 +330,7 @@ graph view, then assign bookmarks to any unmarked commits before submitting.
 | `--draft` | `STAKK_DRAFT` | Create new PRs as drafts |
 | `--remote <name>` | `STAKK_REMOTE` | Push to a specific remote (default: `origin`) |
 | `--template <path>` | `STAKK_TEMPLATE` | Use a custom minijinja template for stack comments |
-| `--stack-placement <mode>` | `STAKK_STACK_PLACEMENT` | Place stack info as a PR `comment` (default) or in the PR `body` |
+| `--stack-placement <mode>` | `STAKK_STACK_PLACEMENT` | Place stack info as a PR `comment` (default), in the PR `body`, or write none at all with `none` |
 | `--auto-prefix <prefix>` | `STAKK_AUTO_PREFIX` | Prefix for `[~]auto` bookmark names (e.g. `gb-`) |
 | `--sync-pr-content <mode>` | `STAKK_SYNC_PR_CONTENT` | Sync PR title/body from commits: `none` (default), `title`, `body`, `all` |
 | `--trailers <mode>` | `STAKK_TRAILERS` | Keep or strip git commit trailers in PR bodies: `keep` (default), `strip` |
