@@ -124,6 +124,8 @@ pub fn run_tui(
                 .collect::<Vec<_>>()
                 .join(" → ");
             eprintln!("Selected stack: {stack}");
+            // Blank line between the selection summary and the plan output.
+            eprintln!();
         }
         Ok(None) => eprintln!("Selection cancelled."),
         Err(_) => {}

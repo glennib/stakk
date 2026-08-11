@@ -271,7 +271,9 @@ async fn submit_bookmark(args: &SubmitArgs) -> Result<(), StakkError> {
     };
     let comment_env = forge::comment::build_comment_env(template_source.as_deref())?;
 
-    // Phase 3: Execute.
+    // Phase 3: Execute. The header separates the plan from the result lines
+    // printed during execution.
+    println!("\nExecuting:");
     let result =
         submit::execute_submission_plan(&plan, &jj, &forge, &comment_env, args.stack_placement)
             .await?;

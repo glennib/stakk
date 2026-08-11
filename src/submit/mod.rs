@@ -721,15 +721,21 @@ pub async fn execute_submission_plan<R: JjRunner, F: Forge>(
                 let pb = &pb;
                 async move {
                     if created_now {
-                        return Ok(());
+                        return Ok(false);
                     }
                     cleanup_stack_artifacts(forge, entry.pr_number, &existing_body, pb).await
                 }
             })
             .collect();
         let results = futures::future::join_all(cleanup_futures).await;
+        let mut cleaned = 0usize;
         for result in results {
-            result?;
+            if result? {
+                cleaned += 1;
+            }
+        }
+        if cleaned > 0 {
+            pb.println(format!("  Removed stale stack info from {cleaned} PR(s)."));
         }
     } else if stack_entries.len() > 1 {
         pb.set_message("Updating stack comments...");
@@ -823,6 +829,10 @@ pub async fn execute_submission_plan<R: JjRunner, F: Forge>(
                 for result in comment_results {
                     result?;
                 }
+                pb.println(format!(
+                    "  Stack comment updated on {} PR(s).",
+                    stack_entries.len()
+                ));
             }
             StackPlacement::Body => {
                 let body_futures: Vec<_> =
@@ -877,6 +887,10 @@ pub async fn execute_submission_plan<R: JjRunner, F: Forge>(
                 for result in body_results {
                     result?;
                 }
+                pb.println(format!(
+                    "  Stack section updated in {} PR bodies.",
+                    stack_entries.len()
+                ));
             }
             // Handled by the cleanup branch above, which runs before any of
             // the rendering setup this arm would not use.
@@ -893,28 +907,32 @@ pub async fn execute_submission_plan<R: JjRunner, F: Forge>(
 ///
 /// Used when stack info is disabled (`StackPlacement::None`) or when a
 /// submission no longer forms a stack, to retire stakk's footprint on
-/// already-created PRs.
+/// already-created PRs. Returns `true` if any artifact was found on the PR.
 async fn cleanup_stack_artifacts<F: Forge>(
     forge: &F,
     pr_number: u64,
     existing_body: &str,
     pb: &indicatif::ProgressBar,
-) -> Result<(), SubmitError> {
+) -> Result<bool, SubmitError> {
+    let mut found = false;
+
     // Clean up the old stack comment (from comment mode or pre-migration).
     let comments = forge
         .list_comments(pr_number)
         .await
         .map_err(|source| SubmitError::CommentFailed { pr_number, source })?;
-    if let Some(old) = find_stack_comment(&comments)
-        && let Err(e) = forge.delete_comment(old.id).await
-    {
-        pb.println(format!(
-            "  Warning: failed to clean up old stack comment on PR #{pr_number}: {e}"
-        ));
+    if let Some(old) = find_stack_comment(&comments) {
+        found = true;
+        if let Err(e) = forge.delete_comment(old.id).await {
+            pb.println(format!(
+                "  Warning: failed to clean up old stack comment on PR #{pr_number}: {e}"
+            ));
+        }
     }
 
     // Clean up the old body fence (from body mode).
     if find_stack_in_body(existing_body).is_some() {
+        found = true;
         let stripped = strip_stack_from_body(existing_body);
         if let Err(e) = forge.update_pr_body(pr_number, &stripped).await {
             pb.println(format!(
@@ -923,7 +941,7 @@ async fn cleanup_stack_artifacts<F: Forge>(
         }
     }
 
-    Ok(())
+    Ok(found)
 }
 
 // ---------------------------------------------------------------------------
