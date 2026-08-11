@@ -50,6 +50,9 @@ use crate::error::StakkError::Interrupted;
 use crate::error::StakkError::{self};
 use crate::graph::types::ChangeGraph;
 
+/// Terminal type used by the TUI: inline viewport over stderr.
+type Tui = Terminal<CrosstermBackend<io::Stderr>>;
+
 /// Which screen is currently active.
 enum Screen {
     /// Viewing the graph and selecting a branch.
@@ -86,20 +89,9 @@ pub fn run_tui(
     let mut bookmark_state: Option<BookmarkAssignmentState> = None;
     let mut screen = Screen::GraphView;
 
-    // Calculate viewport height: content rows + title + subtitle + help.
-    let (_, term_height) = crossterm::terminal::size()?;
-    let content_height = display_line_count(layout.total_rows) + 3;
-    let viewport_height = u16::try_from(content_height.min(30).min(usize::from(term_height) - 2))
-        .expect("viewport height fits in u16");
-
-    // Set up inline viewport.
+    // Set up inline viewport sized for the graph screen.
     crossterm::terminal::enable_raw_mode()?;
-
-    let backend = CrosstermBackend::new(io::stderr());
-    let options = ratatui::TerminalOptions {
-        viewport: ratatui::Viewport::Inline(viewport_height),
-    };
-    let mut terminal = Terminal::with_options(backend, options)?;
+    let mut terminal = make_terminal(graph_viewport_height(&layout)?)?;
 
     let result = run_event_loop(
         &mut terminal,
@@ -113,18 +105,76 @@ pub fn run_tui(
         &bookmark_cache,
     );
 
-    // Clear the inline viewport so subsequent output doesn't interleave with TUI
-    // remnants. Moves cursor to viewport top, erases to end of screen, shows
-    // cursor. Use let _ to avoid masking errors from the event loop result.
-    let _ = terminal.clear();
-    let _ = terminal.show_cursor();
+    // Collapse the inline viewport: erase it and park the cursor at its top,
+    // so subsequent output starts where the TUI was instead of below a blank
+    // region. Use let _ to avoid masking errors from the event loop result.
+    let _ = collapse_viewport(&mut terminal);
+    let _ = crossterm::execute!(io::stderr(), crossterm::cursor::Show);
 
     // Restore terminal.
     crossterm::terminal::disable_raw_mode()?;
-    // Blank line between TUI area and subsequent output.
-    eprintln!();
+
+    // One-line summary in place of the TUI. Errors are rendered by the caller.
+    match &result {
+        Ok(Some(selection)) => {
+            let stack = selection
+                .assignments
+                .iter()
+                .map(|a| a.bookmark_name.as_str())
+                .collect::<Vec<_>>()
+                .join(" → ");
+            eprintln!("Selected stack: {stack}");
+        }
+        Ok(None) => eprintln!("Selection cancelled."),
+        Err(_) => {}
+    }
 
     result
+}
+
+/// Viewport height for a screen with `content_rows` content lines: content
+/// plus title, subtitle, and help lines, capped at 30 lines and the terminal
+/// height.
+fn viewport_height_for(content_rows: usize) -> io::Result<u16> {
+    let (_, term_height) = crossterm::terminal::size()?;
+    let height = (content_rows + 3)
+        .min(30)
+        .min(usize::from(term_height).saturating_sub(2));
+    Ok(u16::try_from(height).expect("viewport height fits in u16"))
+}
+
+/// Viewport height for the graph screen.
+fn graph_viewport_height(layout: &GraphLayout) -> io::Result<u16> {
+    viewport_height_for(display_line_count(layout.total_rows))
+}
+
+/// Create an inline-viewport terminal of the given height at the current
+/// cursor position.
+fn make_terminal(viewport_height: u16) -> io::Result<Tui> {
+    let backend = CrosstermBackend::new(io::stderr());
+    let options = ratatui::TerminalOptions {
+        viewport: ratatui::Viewport::Inline(viewport_height),
+    };
+    Terminal::with_options(backend, options)
+}
+
+/// Erase the inline viewport and park the cursor at its top-left corner.
+fn collapse_viewport(terminal: &mut Tui) -> io::Result<()> {
+    let area = terminal.get_frame().area();
+    crossterm::execute!(
+        io::stderr(),
+        crossterm::cursor::MoveTo(area.x, area.y),
+        crossterm::terminal::Clear(crossterm::terminal::ClearType::FromCursorDown),
+    )
+}
+
+/// Replace the inline viewport with one of a different height, anchored at
+/// the same top row. Erases the old viewport first so shrinking leaves no
+/// stale rows behind; ratatui cannot resize an inline viewport in place.
+fn replace_viewport(terminal: &mut Tui, viewport_height: u16) -> io::Result<()> {
+    collapse_viewport(terminal)?;
+    *terminal = make_terminal(viewport_height)?;
+    Ok(())
 }
 
 #[expect(
@@ -132,7 +182,7 @@ pub fn run_tui(
     reason = "TUI event loop needs all context threaded through"
 )]
 fn run_event_loop(
-    terminal: &mut Terminal<CrosstermBackend<io::Stderr>>,
+    terminal: &mut Tui,
     layout: &GraphLayout,
     graph_state: &mut GraphViewState,
     bookmark_state: &mut Option<BookmarkAssignmentState>,
@@ -250,11 +300,13 @@ fn run_event_loop(
                         let leaves = layout.leaf_nodes();
                         if let Some(leaf) = leaves.get(graph_state.selected_leaf) {
                             let path = path_to_leaf(layout, leaf.row, leaf.col);
-                            *bookmark_state = Some(BookmarkAssignmentState::from_path(
+                            let state = BookmarkAssignmentState::from_path(
                                 &path,
                                 has_bookmark_command,
                                 auto_prefix,
-                            ));
+                            );
+                            replace_viewport(terminal, viewport_height_for(state.rows.len())?)?;
+                            *bookmark_state = Some(state);
                             *screen = Screen::BookmarkAssignment;
                         }
                     }
@@ -403,6 +455,7 @@ fn run_event_loop(
                     }
                     Action::Cancel => {
                         pending.clear();
+                        replace_viewport(terminal, graph_viewport_height(layout)?)?;
                         *screen = Screen::GraphView;
                         *bookmark_state = None;
                     }

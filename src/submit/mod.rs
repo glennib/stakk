@@ -529,7 +529,8 @@ impl fmt::Display for SubmissionPlan {
         } else {
             ""
         };
-        writeln!(
+        // No trailing newline — callers decide how to terminate the output.
+        write!(
             f,
             "Submission plan ({} bookmark(s), remote: {}{draft_label}):",
             self.bookmark_plans.len(),
@@ -537,31 +538,31 @@ impl fmt::Display for SubmissionPlan {
         )?;
 
         for bp in &self.bookmark_plans {
-            writeln!(f, "  {} (base: {})", bp.bookmark_name, bp.base)?;
+            write!(f, "\n  {} (base: {})", bp.bookmark_name, bp.base)?;
             if bp.needs_push {
-                writeln!(f, "    - push bookmark to {}", self.remote)?;
+                write!(f, "\n    - push bookmark to {}", self.remote)?;
             }
             if bp.needs_create {
-                writeln!(f, "    - create PR: \"{}\"", bp.title)?;
+                write!(f, "\n    - create PR: \"{}\"", bp.title)?;
             }
             if bp.needs_base_update
                 && let Some(pr) = &bp.existing_pr
             {
-                writeln!(
+                write!(
                     f,
-                    "    - update PR #{} base: {} -> {}",
+                    "\n    - update PR #{} base: {} -> {}",
                     pr.number, pr.base_ref, bp.base,
                 )?;
             }
             if bp.needs_title_sync
                 && let Some(pr) = &bp.existing_pr
             {
-                writeln!(f, "    - sync PR #{} title from commits", pr.number)?;
+                write!(f, "\n    - sync PR #{} title from commits", pr.number)?;
             }
             if bp.needs_body_sync
                 && let Some(pr) = &bp.existing_pr
             {
-                writeln!(f, "    - sync PR #{} body from commits", pr.number)?;
+                write!(f, "\n    - sync PR #{} body from commits", pr.number)?;
             }
             if !bp.needs_create
                 && !bp.needs_base_update
@@ -569,7 +570,7 @@ impl fmt::Display for SubmissionPlan {
                 && !bp.needs_body_sync
                 && let Some(pr) = &bp.existing_pr
             {
-                writeln!(f, "    - PR #{} up to date", pr.number)?;
+                write!(f, "\n    - PR #{} up to date", pr.number)?;
             }
         }
 

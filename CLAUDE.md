@@ -284,6 +284,12 @@ are in-flight to animate the spinner (10-frame animation).
   compiled, so a broken template does not fail a submission that will not
   render it.
 - ratatui inline viewport: `enable_raw_mode()` before, `disable_raw_mode()` after.
+- The inline viewport is sized per screen (graph vs bookmark rows). ratatui
+  cannot resize an inline viewport in place, so screen transitions erase the
+  viewport and recreate the `Terminal` anchored at the same top row
+  (`replace_viewport` in `select/app.rs`). On exit the viewport is collapsed
+  (cursor to viewport top, erase down) and a one-line summary is printed in
+  its place — no blank region is left behind.
 - Graph layout deduplicates shared segments by `commit_id` (not `change_id`).
 - Auto-generated bookmark names: `stakk-<first 12 chars of change_id>`.
 - `LOG_TEMPLATE` emits an `immutable` field; `LogEntryRaw` is deliberately
