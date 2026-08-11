@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.19.0](https://github.com/glennib/stakk/compare/v1.18.0...v1.19.0) - 2026-08-11
+
+### Added
+
+- *(submit)* separate execution output from the plan and persist stack-info status
+- *(select)* collapse the TUI viewport on exit and size it per screen
+
 ## [1.18.0](https://github.com/glennib/stakk/compare/v1.17.2...v1.18.0) - 2026-08-08
 
 ### Added
