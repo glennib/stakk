@@ -6,6 +6,7 @@ mod forge;
 mod graph;
 mod jj;
 mod select;
+mod show;
 mod submit;
 
 use std::collections::HashSet;
@@ -16,6 +17,7 @@ use clap::FromArgMatches;
 use crate::cli::Cli;
 use crate::cli::Commands;
 use crate::cli::ShowArgs;
+use crate::cli::ShowFormat;
 use crate::cli::auth::AuthCommands;
 use crate::cli::submit::SubmitArgs;
 use crate::error::StakkError::Interrupted;
@@ -321,9 +323,13 @@ async fn resolve_github_remote(
 }
 
 async fn show_status(args: &ShowArgs) -> Result<(), StakkError> {
-    let pb = indicatif::ProgressBar::new_spinner();
-    pb.enable_steady_tick(std::time::Duration::from_millis(120));
-    pb.set_message("Loading repository status...");
+    // No spinner in json mode: machine-readable output stays quiet.
+    let spinner = matches!(args.format, ShowFormat::Pretty).then(|| {
+        let pb = indicatif::ProgressBar::new_spinner();
+        pb.enable_steady_tick(std::time::Duration::from_millis(120));
+        pb.set_message("Loading repository status...");
+        pb
+    });
 
     let jj = Jj::new(RealJjRunner);
 
@@ -335,42 +341,18 @@ async fn show_status(args: &ShowArgs) -> Result<(), StakkError> {
         graph::build_change_graph(&jj, &args.graph.bookmarks_revset, &args.graph.heads_revset)
             .await?;
 
-    pb.finish_and_clear();
-
-    println!("Default branch: {default_branch}");
-    for remote in &remotes {
-        let github = parse_github_url(&remote.url)
-            .map(|r| format!(" ({r})"))
-            .unwrap_or_default();
-        println!("Remote: {} {}{}", remote.name, remote.url, github);
+    if let Some(pb) = spinner {
+        pb.finish_and_clear();
     }
 
-    if change_graph.stacks.is_empty() {
-        println!("\nNo bookmark stacks found.");
-    } else {
-        println!("\nStacks ({} found):", change_graph.stacks.len());
-        for (i, stack) in change_graph.stacks.iter().enumerate() {
-            println!("  Stack {}:", i + 1);
-            for segment in &stack.segments {
-                let names = segment.bookmark_names.join(", ");
-                let commit_count = segment.commits.len();
-                let desc = segment
-                    .commits
-                    .first()
-                    .and_then(|c| c.description.lines().next())
-                    .map(str::trim)
-                    .filter(|l| !l.is_empty())
-                    .unwrap_or("(no description)");
-                println!("    {names} ({commit_count} commit(s)): {desc}");
-            }
-        }
-
-        if change_graph.excluded_bookmark_count > 0 {
-            println!(
-                "\n  ({} bookmark(s) excluded due to merge commits)",
-                change_graph.excluded_bookmark_count,
-            );
-        }
+    let data = show::ShowData {
+        default_branch: &default_branch,
+        remotes: &remotes,
+        graph: &change_graph,
+    };
+    match args.format {
+        ShowFormat::Pretty => print!("{}", show::render_pretty(&data, console::colors_enabled())),
+        ShowFormat::Json => print!("{}", show::render_json(&data)),
     }
 
     Ok(())

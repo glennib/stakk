@@ -3,6 +3,7 @@
 //! Builds `ChangeGraph`, `BookmarkSegment`, and `BranchStack` from jj output to
 //! determine the stacking order of bookmarks for PR submission.
 
+pub mod layout;
 pub mod types;
 
 use std::collections::HashMap;

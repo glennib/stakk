@@ -1,0 +1,194 @@
+---
+source: src/show/mod.rs
+expression: render_json(&data)
+---
+{
+  "schema_version": 1,
+  "default_branch": "main",
+  "remotes": [
+    {
+      "name": "origin",
+      "url": "git@github.com:glennib/stakk.git",
+      "github": "glennib/stakk"
+    },
+    {
+      "name": "mirror",
+      "url": "https://gitlab.com/x/y.git",
+      "github": null
+    }
+  ],
+  "excluded_bookmark_count": 1,
+  "stacks": [
+    {
+      "segments": [
+        {
+          "bookmark_names": [
+            "base"
+          ],
+          "commits": [
+            {
+              "change_id": "qzvsmyxk",
+              "short_change_id": "qzvs",
+              "commit_id": "c_qzvsmyxk_1",
+              "description": "add base",
+              "author": {
+                "name": "Test",
+                "email": "test@test.com",
+                "timestamp": "2026-01-01T00:00:00Z"
+              },
+              "files": [
+                "src/qzvsmyxk_1.rs"
+              ],
+              "is_immutable": false,
+              "local_bookmark_names": [],
+              "is_boundary": false,
+              "is_leaf": false
+            },
+            {
+              "change_id": "qzvsmyxk",
+              "short_change_id": "qzvs",
+              "commit_id": "c_qzvsmyxk_0",
+              "description": "extend base",
+              "author": {
+                "name": "Test",
+                "email": "test@test.com",
+                "timestamp": "2026-01-01T00:00:00Z"
+              },
+              "files": [
+                "src/qzvsmyxk_0.rs"
+              ],
+              "is_immutable": false,
+              "local_bookmark_names": [
+                "base"
+              ],
+              "is_boundary": true,
+              "is_leaf": false
+            }
+          ]
+        },
+        {
+          "bookmark_names": [
+            "feat-a"
+          ],
+          "commits": [
+            {
+              "change_id": "wmtkoylq",
+              "short_change_id": "wmtk",
+              "commit_id": "c_wmtkoylq_1",
+              "description": "feat a work",
+              "author": {
+                "name": "Test",
+                "email": "test@test.com",
+                "timestamp": "2026-01-01T00:00:00Z"
+              },
+              "files": [
+                "src/wmtkoylq_1.rs"
+              ],
+              "is_immutable": false,
+              "local_bookmark_names": [],
+              "is_boundary": false,
+              "is_leaf": false
+            },
+            {
+              "change_id": "wmtkoylq",
+              "short_change_id": "wmtk",
+              "commit_id": "c_wmtkoylq_0",
+              "description": "",
+              "author": {
+                "name": "Test",
+                "email": "test@test.com",
+                "timestamp": "2026-01-01T00:00:00Z"
+              },
+              "files": [
+                "src/wmtkoylq_0.rs"
+              ],
+              "is_immutable": false,
+              "local_bookmark_names": [
+                "feat-a"
+              ],
+              "is_boundary": true,
+              "is_leaf": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "segments": [
+        {
+          "bookmark_names": [
+            "base"
+          ],
+          "commits": [
+            {
+              "change_id": "qzvsmyxk",
+              "short_change_id": "qzvs",
+              "commit_id": "c_qzvsmyxk_1",
+              "description": "add base",
+              "author": {
+                "name": "Test",
+                "email": "test@test.com",
+                "timestamp": "2026-01-01T00:00:00Z"
+              },
+              "files": [
+                "src/qzvsmyxk_1.rs"
+              ],
+              "is_immutable": false,
+              "local_bookmark_names": [],
+              "is_boundary": false,
+              "is_leaf": false
+            },
+            {
+              "change_id": "qzvsmyxk",
+              "short_change_id": "qzvs",
+              "commit_id": "c_qzvsmyxk_0",
+              "description": "extend base",
+              "author": {
+                "name": "Test",
+                "email": "test@test.com",
+                "timestamp": "2026-01-01T00:00:00Z"
+              },
+              "files": [
+                "src/qzvsmyxk_0.rs"
+              ],
+              "is_immutable": false,
+              "local_bookmark_names": [
+                "base"
+              ],
+              "is_boundary": true,
+              "is_leaf": false
+            }
+          ]
+        },
+        {
+          "bookmark_names": [
+            "feat-b"
+          ],
+          "commits": [
+            {
+              "change_id": "rlkvnnup",
+              "short_change_id": "rlkv",
+              "commit_id": "c_rlkvnnup_0",
+              "description": "feat b work",
+              "author": {
+                "name": "Test",
+                "email": "test@test.com",
+                "timestamp": "2026-01-01T00:00:00Z"
+              },
+              "files": [
+                "src/rlkvnnup_0.rs"
+              ],
+              "is_immutable": true,
+              "local_bookmark_names": [
+                "feat-b",
+                "old-mark"
+              ],
+              "is_boundary": true,
+              "is_leaf": true
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

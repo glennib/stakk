@@ -39,14 +39,14 @@ use super::event::Action;
 use super::event::EditAction;
 use super::event::map_event;
 use super::event::map_event_editing;
-use super::graph_layout::GraphLayout;
-use super::graph_layout::build_layout;
 use super::graph_widget::GraphViewState;
 use super::graph_widget::GraphWidget;
 use super::graph_widget::graph_help_line;
 use super::graph_widget::max_collapsed_height;
 use crate::error::StakkError::Interrupted;
 use crate::error::StakkError::{self};
+use crate::graph::layout::GraphLayout;
+use crate::graph::layout::build_layout;
 use crate::graph::types::ChangeGraph;
 
 /// Terminal type used by the TUI: inline viewport over stderr.

@@ -91,15 +91,16 @@ src/
 │   ├── comment.rs   # Stack comment formatting, parsing, and template context
 │   └── default_comment.md.jinja  # Default minijinja template for stack comments
 ├── graph/           # Change graph construction (ChangeGraph, BookmarkSegment, BranchStack)
+│   └── layout.rs    # Convert ChangeGraph → jj-log-style row list (commit tree + display rows)
 ├── select/          # Interactive TUI selection (ratatui inline viewport)
 │   ├── mod.rs       # Public API: resolve_bookmark_interactively(), SelectionResult
 │   ├── app.rs       # App state machine, event loop, terminal init
-│   ├── graph_layout.rs  # Convert ChangeGraph → jj-log-style row list (commit tree + display rows)
 │   ├── graph_widget.rs  # Screen 1: jj-log-style graph widget (leaf selection, collapsing, scrolling)
 │   ├── bookmark_widget.rs # Screen 2: bookmark toggle/assignment widget
 │   ├── bookmark_gen.rs # Bookmark validation and external command execution
 │   ├── tfidf.rs     # TF-IDF algorithm for auto-generated bookmark names
 │   └── event.rs     # crossterm key event mapping to app actions
+├── show/            # `stakk show` rendering: pretty graph + schema-versioned JSON (offline, pure jj)
 ├── submit/          # Three-phase submission (analyze → plan → execute)
 └── error.rs         # Error types (thiserror)
 ```

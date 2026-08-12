@@ -55,9 +55,32 @@ pub enum Commands {
     },
 }
 
+/// Output format for the show subcommand.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, clap::ValueEnum)]
+pub enum ShowFormat {
+    /// Human-readable jj-log-style graph of all bookmark stacks.
+    #[default]
+    Pretty,
+    /// Machine-readable, schema-versioned JSON document.
+    Json,
+}
+
 /// Arguments for the show subcommand.
 #[derive(Debug, Args)]
 pub struct ShowArgs {
+    /// Output format.
+    ///
+    /// pretty renders a jj-log-style commit graph, always fully
+    /// expanded, with each commit's short change id, bookmarks, and
+    /// description summary.
+    ///
+    /// json emits a schema-versioned document describing every stack,
+    /// segment, and commit — intended for scripts and agents. Its
+    /// identifiers (short_change_id, bookmark names) can be passed
+    /// directly to `stakk submit`.
+    #[arg(long, default_value = "pretty", value_enum, verbatim_doc_comment)]
+    pub format: ShowFormat,
+
     #[command(flatten)]
     pub graph: GraphArgs,
 }

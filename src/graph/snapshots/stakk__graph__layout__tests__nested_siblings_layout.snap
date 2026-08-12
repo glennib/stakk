@@ -1,5 +1,5 @@
 ---
-source: src/select/graph_layout.rs
+source: src/graph/layout.rs
 expression: rows_to_string(&layout)
 ---
 0:email work

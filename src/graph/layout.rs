@@ -13,6 +13,26 @@ use jiff::Timestamp;
 use crate::graph::types::ChangeGraph;
 use crate::jj::types::Signature;
 
+/// Glyphs shared by all renderers of the layout (the TUI graph widget and
+/// `stakk show`'s pretty format).
+///
+/// Node glyph for a commit on the selected path (TUI only).
+pub const NODE_SELECTED: &str = "\u{25cf}"; // ●
+/// Node glyph for a commit.
+pub const NODE_OTHER: &str = "\u{25cb}"; // ○
+/// Node glyph for the trunk pseudo-node.
+pub const TRUNK_CHAR: &str = "\u{25c6}"; // ◆
+/// Marker for a collapsed run of commits (TUI only).
+pub const ELLIPSIS: &str = "\u{22ef}"; // ⋯
+/// One edge-gutter cell.
+pub const GUTTER_CELL: &str = "\u{2502} "; // "│ "
+/// First cell of a connector row.
+pub const CONNECTOR_TEE: &str = "\u{251c}"; // ├
+/// Tail of a connector row.
+pub const CONNECTOR_TAIL: &str = "\u{2500}\u{256f}"; // ─╯
+/// Marker trailing the selected leaf (TUI only).
+pub const LEAF_MARKER: &str = "\u{25c0}"; // ◀
+
 /// A commit node in the layout tree.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LayoutNode {
