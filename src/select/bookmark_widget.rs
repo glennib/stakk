@@ -772,6 +772,7 @@ impl BookmarkAssignmentState {
 
             assignments.push(BookmarkAssignment {
                 change_id: r.change_id.clone(),
+                short_change_id: r.short_change_id.clone(),
                 bookmark_name,
                 is_new,
             });

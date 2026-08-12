@@ -48,6 +48,7 @@ use crate::error::StakkError::{self};
 use crate::graph::layout::GraphLayout;
 use crate::graph::layout::build_layout;
 use crate::graph::types::ChangeGraph;
+use crate::graph::types::SegmentCommit;
 
 /// Terminal type used by the TUI: inline viewport over stderr.
 type Tui = Terminal<CrosstermBackend<io::Stderr>>;
@@ -94,6 +95,7 @@ pub fn run_tui(
 
     let result = run_event_loop(
         &mut terminal,
+        graph,
         &layout,
         &mut graph_state,
         &mut bookmark_state,
@@ -131,6 +133,30 @@ pub fn run_tui(
     }
 
     result
+}
+
+/// The trunk-to-tip commit chain of the stack whose tip is the currently
+/// selected leaf.
+///
+/// Every layout leaf is the tip of a stack: layout nodes come from
+/// `graph.stacks`, and a node without children is by construction the last
+/// commit of at least one stack.
+fn selected_stack_path(
+    graph: &ChangeGraph,
+    layout: &GraphLayout,
+    graph_state: &GraphViewState,
+) -> Vec<SegmentCommit> {
+    let leaf = layout.leaves[graph_state.selected_leaf];
+    let leaf_commit_id = &layout.nodes[leaf].commit_id;
+    let stack = graph
+        .stacks
+        .iter()
+        .find(|s| {
+            s.tip_commit()
+                .is_some_and(|c| &c.commit_id == leaf_commit_id)
+        })
+        .expect("every layout leaf is the tip of a stack");
+    stack.commits_trunk_to_tip().cloned().collect()
 }
 
 /// Viewport height for a screen with `content_rows` content lines: content
@@ -185,6 +211,7 @@ fn replace_viewport(terminal: &mut Tui, viewport_height: u16) -> io::Result<()> 
 )]
 fn run_event_loop(
     terminal: &mut Tui,
+    graph: &ChangeGraph,
     layout: &GraphLayout,
     graph_state: &mut GraphViewState,
     bookmark_state: &mut Option<BookmarkAssignmentState>,
@@ -390,7 +417,8 @@ fn run_event_loop(
                             match state.build_result() {
                                 Ok(assignments) if assignments.is_empty() => {}
                                 Ok(assignments) => {
-                                    return Ok(Some(SelectionResult { assignments }));
+                                    let path = selected_stack_path(graph, layout, graph_state);
+                                    return Ok(Some(SelectionResult { assignments, path }));
                                 }
                                 Err(SelectionError::DuplicateName(name)) => {
                                     error_message =

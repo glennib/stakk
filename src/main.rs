@@ -9,8 +9,6 @@ mod select;
 mod show;
 mod submit;
 
-use std::collections::HashSet;
-
 use clap::CommandFactory;
 use clap::FromArgMatches;
 
@@ -160,86 +158,51 @@ async fn submit_bookmark(args: &SubmitArgs) -> Result<(), StakkError> {
     // Resolve bookmark: explicit argument or interactive selection.
     pb.finish_and_clear();
 
-    // `selected_bookmarks` is `None` for an explicit bookmark argument: the
-    // target and all its bookmarked ancestors are submitted as stacked PRs.
-    // The interactive TUI yields an explicit set so deliberately unchecked
-    // bookmarks fold into the next selected segment.
-    let (bookmark, change_graph, selected_bookmarks) = match &args.bookmark {
-        Some(name) => (name.clone(), change_graph, None),
+    // Phase 1: Analyze. A positional bookmark argument submits the target
+    // and all its bookmarked ancestors as stacked PRs (no folding). The
+    // interactive TUI instead yields explicit assignments on a selected
+    // path; the analysis is built directly from those, so new bookmarks
+    // need not exist yet — they are created in the execute phase, which
+    // keeps --dry-run free of side effects.
+    let (analysis, bookmark_creations) = match &args.bookmark {
+        Some(name) => {
+            let analysis = submit::analyze_submission(name, &change_graph, &default_branch, None)?;
+            (analysis, Vec::new())
+        }
         None => match select::resolve_bookmark_interactively(
             &change_graph,
             args.bookmark_command.as_deref(),
             args.auto_prefix.as_deref(),
         )? {
             Some(result) => {
-                // Create any new bookmarks that were assigned.
-                let has_new = result.assignments.iter().any(|a| a.is_new);
-                for assignment in &result.assignments {
-                    if assignment.is_new {
-                        let pb = indicatif::ProgressBar::new_spinner();
-                        pb.enable_steady_tick(std::time::Duration::from_millis(120));
-                        pb.set_message(format!(
-                            "Creating bookmark {}...",
-                            assignment.bookmark_name
-                        ));
-                        jj.create_bookmark(&assignment.bookmark_name, &assignment.change_id)
-                            .await?;
-                        pb.finish_and_clear();
-                    }
-                }
-
-                // Collect selected bookmark names for filtering.
-                let selected: HashSet<String> = result
+                let analysis = submit::analysis_from_selection(
+                    &result.path,
+                    &result.assignments,
+                    &default_branch,
+                )?;
+                let creations: Vec<submit::BookmarkCreation> = result
                     .assignments
                     .iter()
-                    .map(|a| a.bookmark_name.clone())
+                    .filter(|a| a.is_new)
+                    .map(|a| submit::BookmarkCreation {
+                        bookmark_name: a.bookmark_name.clone(),
+                        change_id: a.change_id.clone(),
+                        short_change_id: a.short_change_id.clone(),
+                    })
                     .collect();
-
-                // Use the leaf-most assignment's bookmark name.
-                let leaf_bookmark = result
-                    .assignments
-                    .last()
-                    .map(|a| a.bookmark_name.clone())
-                    .unwrap_or_default();
-
-                // Rebuild graph if we created new bookmarks.
-                let graph = if has_new {
-                    let pb = indicatif::ProgressBar::new_spinner();
-                    pb.enable_steady_tick(std::time::Duration::from_millis(120));
-                    pb.set_message("Rebuilding change graph...");
-                    let g = graph::build_change_graph(
-                        &jj,
-                        &args.graph.bookmarks_revset,
-                        &args.graph.heads_revset,
-                    )
-                    .await?;
-                    pb.finish_and_clear();
-                    g
-                } else {
-                    change_graph
-                };
-
-                (leaf_bookmark, graph, Some(selected))
+                (analysis, creations)
             }
             None => return Ok(()),
         },
     };
 
-    // Phase 1: Analyze.
+    // Phase 2: Plan.
     let pb = indicatif::ProgressBar::new_spinner();
     pb.enable_steady_tick(std::time::Duration::from_millis(120));
-    pb.set_message("Analyzing submission...");
-    let analysis = submit::analyze_submission(
-        &bookmark,
-        &change_graph,
-        &default_branch,
-        selected_bookmarks.as_ref(),
-    )?;
-
-    // Phase 2: Plan.
     pb.set_message("Checking for existing pull requests...");
     let plan = submit::create_submission_plan(
         &analysis,
+        bookmark_creations,
         &forge,
         &remote_name,
         args.pr_mode(),

@@ -212,8 +212,9 @@ bookmark; UseGenerated skipped if it matches an existing one).
 
 A row is **locked** when `is_immutable && existing_bookmarks.is_empty()`
 (`BookmarkRow::is_locked()`): its commit is jj-immutable and carries no
-bookmark known to the graph, so any name assigned there would be filtered out
-by the bookmarks revset on the post-creation graph rebuild. Locked rows are
+bookmark known to the graph, so a bookmark created there would be filtered
+out by the default bookmarks revset (`~ immutable()`) on every subsequent
+run — stakk would create a PR it can never see or manage again. Locked rows are
 permanently `[ ]` Unchecked (dark gray) and render a hint —
 `(immutable — bookmark <names> excluded by --bookmarks-revset)` when the
 commit carries filtered-out bookmarks (`excluded_bookmarks`), else
@@ -333,16 +334,26 @@ following, update `scripts/record-demo.py` in the same change:
   bookmark names from jj log — unlike `BookmarkSegment::bookmark_names`,
   it includes bookmarks the bookmarks revset excluded (e.g. on immutable
   commits). Used to diagnose excluded selections and label locked TUI rows.
-- `analyze_submission` takes `Option<&HashSet<String>>` for the selection.
-  `None` is the explicit `stakk submit <bookmark>` path: every boundary from
-  trunk through the target is submitted as its own stacked PR — no folding
-  (issue #184). Only the interactive TUI passes `Some(...)`, where unselected
-  segments fold into the next selected one.
-- `analyze_submission` errors (`stakk::submit::selected_bookmarks_excluded`)
-  when a selected bookmark is a boundary in no segment of the target stack,
-  instead of silently folding it away. The intentional fold for
-  deliberately-unchecked rows is unaffected (unchecked names are never in
-  `selected_bookmarks`).
+- Two phase-1 constructors: the positional `stakk submit <bookmark>` path
+  uses `analyze_submission(..., None)` — every boundary from trunk through
+  the target is its own stacked PR, no folding (issue #184). Selection-based
+  paths (the TUI) use `analysis_from_selection(path, assignments, ...)`:
+  boundaries are matched by change ID on the selected trunk→tip path, so new
+  bookmarks need not exist yet and no graph rebuild happens; commits between
+  boundaries fold into the boundary above.
+- `analyze_submission`'s `Option<&HashSet<String>>` folding arm and its
+  `stakk::submit::selected_bookmarks_excluded` guard are exercised only by
+  tests now — production selection flows go through
+  `analysis_from_selection` instead.
+- New bookmarks are created by `execute_submission_plan`
+  (`SubmissionPlan::bookmark_creations`, before the push loop), not at
+  selection time — so `--dry-run` never mutates the repo and the plan
+  prints `Create bookmark <name> at <short_change_id>` lines instead.
+  Accepted limitation: nothing checks a new bookmark's name against the
+  bookmarks revset anymore (the old post-creation rebuild + excluded-guard
+  did, erroring after the bookmark was already created). Under a custom
+  `--bookmarks-revset` that excludes the new name, the submission succeeds
+  but subsequent runs will not see or manage that bookmark's PR.
 - Stack reorder safety: bookmarks must be pushed one-at-a-time with immediate
   base/PR updates. If all bookmarks are pushed before bases are updated, a PR
   whose head moved down the stack will have an empty diff (head is ancestor of
@@ -363,7 +374,9 @@ following, update `scripts/record-demo.py` in the same change:
   returns before the execute phase.
 - **`--dry-run` not in env vars** — one-off decision, surprising as a default.
 - **Generic `Jj<R: JjRunner>`** — zero-cost dispatch, edition 2024 async traits.
-- **Three-phase submission** — analyze (pure) → plan (queries forge) → execute.
+- **Three-phase submission** — analyze (pure) → plan (queries forge) →
+  execute. All repo mutations (bookmark creation, pushes) live in execute,
+  so `--dry-run` — which returns after printing the plan — is fully inert.
 - **ratatui over inquire** — visual graph rendering, bookmark assignment TUI.
 - **minijinja for stack comments** — customizable templates, metadata outside template.
 - **Interleaved push+update** — `execute_submission_plan` processes each bookmark

@@ -6,6 +6,7 @@
 mod trailers;
 mod unwrap;
 
+use std::collections::HashMap;
 use std::collections::HashSet;
 use std::fmt;
 
@@ -96,6 +97,45 @@ pub enum SubmitError {
         bookmark: String,
         #[source]
         source: ForgeError,
+    },
+
+    /// A selected assignment targets a commit that is not on the selected
+    /// path.
+    #[error(
+        "bookmark assignment '{bookmark}' targets change {change_id}, which is not on the \
+         selected path"
+    )]
+    #[diagnostic(
+        code(stakk::submit::assignment_off_path),
+        help("this indicates a bug in the selection layer — please report it")
+    )]
+    AssignmentOffPath { bookmark: String, change_id: String },
+
+    /// A change ID matches more than one commit on the selected path.
+    #[error(
+        "change {change_id} is divergent: it matches more than one commit on the selected path"
+    )]
+    #[diagnostic(
+        code(stakk::submit::divergent_change),
+        help(
+            "resolve the divergence first, e.g. `jj abandon` the copy you do not want, then re-run"
+        )
+    )]
+    DivergentChange { change_id: String },
+
+    /// Failed to create a local bookmark during execution.
+    #[error("failed to create bookmark '{bookmark}'")]
+    #[diagnostic(
+        code(stakk::submit::bookmark_create_failed),
+        help(
+            "check that the name is not already taken (`jj bookmark list`) and that the target \
+             commit still exists"
+        )
+    )]
+    BookmarkCreateFailed {
+        bookmark: String,
+        #[source]
+        source: JjError,
     },
 
     /// Failed to push a bookmark to the remote.
@@ -200,7 +240,7 @@ pub enum SubmitError {
 // ---------------------------------------------------------------------------
 
 /// Phase 1 output: the segments relevant to a submission.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SubmissionAnalysis {
     /// Segments from trunk to the target bookmark, inclusive.
     /// Ordered trunk-to-leaf (same as `BranchStack::segments`).
@@ -238,9 +278,44 @@ pub struct BookmarkPlan {
     pub needs_body_sync: bool,
 }
 
+/// A bookmark assignment for a commit in the submission stack.
+///
+/// Produced by the selection layer (the TUI, or future non-interactive
+/// selection sources) and consumed by `analysis_from_selection`; defined
+/// here so the submission engine does not depend on UI types.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BookmarkAssignment {
+    /// The jj change ID for this commit.
+    pub change_id: String,
+    /// Shortest unique change ID prefix, for display.
+    pub short_change_id: String,
+    /// The bookmark name (existing or newly generated).
+    pub bookmark_name: String,
+    /// `true` if stakk must run `jj bookmark create` for this bookmark.
+    pub is_new: bool,
+}
+
+/// A local bookmark the execute phase must create before pushing.
+///
+/// Creation is deferred to execution so that `--dry-run` never mutates the
+/// repository; the plan lists pending creations instead.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BookmarkCreation {
+    /// The bookmark name to create.
+    pub bookmark_name: String,
+    /// The jj change the bookmark points at.
+    pub change_id: String,
+    /// Shortest unique change ID prefix, for display.
+    pub short_change_id: String,
+}
+
 /// Phase 2 output: the full submission plan.
 #[derive(Debug)]
 pub struct SubmissionPlan {
+    /// Local bookmarks to create before pushing. Derived from the
+    /// selection's `is_new` assignments; empty for the positional
+    /// `stakk submit <bookmark>` path where every bookmark already exists.
+    pub bookmark_creations: Vec<BookmarkCreation>,
     /// Per-bookmark plans, ordered trunk-to-leaf.
     pub bookmark_plans: Vec<BookmarkPlan>,
     /// The remote name to push to.
@@ -361,6 +436,82 @@ pub fn analyze_submission(
     })
 }
 
+/// Build a submission analysis directly from an explicit selection.
+///
+/// `path` is the full trunk-to-tip commit chain of the selected stack and
+/// `assignments` (trunk-to-leaf) name the commits that become segment
+/// boundaries. Commits between boundaries belong to the boundary above them
+/// — the same fold semantics as `analyze_submission` with a selected subset.
+/// Commits above the last boundary are not part of the submission.
+///
+/// Unlike `analyze_submission`, no bookmark lookup happens: boundaries are
+/// matched by change ID, so bookmarks that do not exist yet (`is_new`
+/// assignments) work without creating them first or rebuilding the graph.
+/// That keeps `--dry-run` free of side effects; the execute phase performs
+/// the actual `jj bookmark create` calls.
+///
+/// Contract: every assignment's `change_id` must be present on `path`
+/// (guaranteed by the TUI, whose rows come from the selected path). An
+/// assignment whose change ID is not on the path errors with
+/// `AssignmentOffPath`; a change ID matching more than one path commit (a
+/// divergent change) errors with `DivergentChange` — silently dropping or
+/// duplicating a boundary would otherwise desync the analysis from the
+/// bookmark creations scheduled for execution.
+///
+/// Where a segment carries several bookmark names, the resulting segment
+/// keeps only the assigned name — the name the user actually chose — rather
+/// than all names like `analyze_submission` does. With several consecutive
+/// folded segments the folded commits are ordered strictly newest-first,
+/// per `BookmarkSegment::commits`' convention.
+pub fn analysis_from_selection(
+    path: &[SegmentCommit],
+    assignments: &[BookmarkAssignment],
+    default_branch: &str,
+) -> Result<SubmissionAnalysis, SubmitError> {
+    let boundaries: HashMap<&str, &BookmarkAssignment> = assignments
+        .iter()
+        .map(|a| (a.change_id.as_str(), a))
+        .collect();
+
+    let mut segments = Vec::new();
+    let mut consumed: HashSet<&str> = HashSet::new();
+    // Oldest-first buffer of commits belonging to the next boundary above.
+    let mut pending: Vec<SegmentCommit> = Vec::new();
+
+    for commit in path {
+        pending.push(commit.clone());
+        if let Some(assignment) = boundaries.get(commit.change_id.as_str()) {
+            if !consumed.insert(assignment.change_id.as_str()) {
+                return Err(SubmitError::DivergentChange {
+                    change_id: assignment.change_id.clone(),
+                });
+            }
+            // Newest-first within the segment (internal convention).
+            pending.reverse();
+            segments.push(BookmarkSegment {
+                bookmark_names: vec![assignment.bookmark_name.clone()],
+                change_id: assignment.change_id.clone(),
+                commits: std::mem::take(&mut pending),
+            });
+        }
+    }
+
+    if let Some(missed) = assignments
+        .iter()
+        .find(|a| !consumed.contains(a.change_id.as_str()))
+    {
+        return Err(SubmitError::AssignmentOffPath {
+            bookmark: missed.bookmark_name.clone(),
+            change_id: missed.change_id.clone(),
+        });
+    }
+
+    Ok(SubmissionAnalysis {
+        segments,
+        default_branch: default_branch.to_string(),
+    })
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -420,9 +571,13 @@ fn build_pr_body(commits: &[SegmentCommit], trailers: TrailerHandling) -> Option
 /// Query the forge to determine what actions are needed for each bookmark.
 ///
 /// For each segment in the analysis, checks the forge for existing PRs and
-/// determines whether to push, create, or update.
+/// determines whether to push, create, or update. `bookmark_creations` are
+/// the local bookmarks the execute phase must create first (empty for the
+/// positional path, where every bookmark already exists); taking them here
+/// keeps the returned plan complete at construction.
 pub async fn create_submission_plan<F: Forge>(
     analysis: &SubmissionAnalysis,
+    bookmark_creations: Vec<BookmarkCreation>,
     forge: &F,
     remote: &str,
     pr_mode: PrMode,
@@ -520,6 +675,7 @@ pub async fn create_submission_plan<F: Forge>(
     }
 
     Ok(SubmissionPlan {
+        bookmark_creations,
         bookmark_plans,
         remote: remote.to_string(),
         pr_mode,
@@ -545,6 +701,14 @@ impl fmt::Display for SubmissionPlan {
             self.bookmark_plans.len(),
             self.remote,
         )?;
+
+        for creation in &self.bookmark_creations {
+            write!(
+                f,
+                "\n  Create bookmark {} at {}",
+                creation.bookmark_name, creation.short_change_id,
+            )?;
+        }
 
         for bp in &self.bookmark_plans {
             write!(f, "\n  {} (base: {})", bp.bookmark_name, bp.base)?;
@@ -604,6 +768,19 @@ pub async fn execute_submission_plan<R: JjRunner, F: Forge>(
     pb.enable_steady_tick(std::time::Duration::from_millis(120));
 
     let effective = resolve_placement(placement);
+
+    // Create pending local bookmarks first — pushes below require them to
+    // exist. Creation is local-only, so the one-at-a-time interleaving rule
+    // (which concerns pushes and base updates, #35) does not apply here.
+    for creation in &plan.bookmark_creations {
+        pb.set_message(format!("Creating bookmark: {}", creation.bookmark_name));
+        jj.create_bookmark(&creation.bookmark_name, &creation.change_id)
+            .await
+            .map_err(|source| SubmitError::BookmarkCreateFailed {
+                bookmark: creation.bookmark_name.clone(),
+                source,
+            })?;
+    }
 
     let mut stack_entries = Vec::new();
 
@@ -1005,6 +1182,7 @@ mod tests {
 
     #[derive(Debug, Clone, PartialEq, Eq)]
     enum Op {
+        CreateBookmark(String),
         Push(String),
         BaseUpdate(u64),
         CreatePr(String),
@@ -1295,7 +1473,14 @@ mod tests {
             &self,
             args: &[&str],
         ) -> impl std::future::Future<Output = Result<String, JjError>> + Send {
-            // Only handle push commands.
+            if args[0] == "bookmark"
+                && args[1] == "create"
+                && let Some(ops) = &self.ops
+            {
+                ops.lock()
+                    .unwrap()
+                    .push(Op::CreateBookmark(args[2].to_string()));
+            }
             if args[0] == "git" && args[1] == "push" {
                 let bookmark = args
                     .iter()
@@ -1520,6 +1705,281 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
+    // analysis_from_selection tests
+    // -----------------------------------------------------------------------
+
+    fn make_assignment(change_id: &str, name: &str, is_new: bool) -> BookmarkAssignment {
+        BookmarkAssignment {
+            change_id: change_id.to_string(),
+            short_change_id: change_id[..4.min(change_id.len())].to_string(),
+            bookmark_name: name.to_string(),
+            is_new,
+        }
+    }
+
+    /// A segment with several commits, described newest-first like the
+    /// internal convention. Commit change ids are `<change_id>` for the
+    /// boundary and `<change_id>_<i>` for the rest.
+    fn make_segment_multi(names: &[&str], change_id: &str, descs: &[&str]) -> BookmarkSegment {
+        let mut seg = make_segment(names, change_id, descs[0]);
+        let template = seg.commits[0].clone();
+        for (i, desc) in descs.iter().enumerate().skip(1) {
+            let mut c = template.clone();
+            c.change_id = format!("{change_id}_{i}");
+            c.commit_id = format!("c_{change_id}_{i}");
+            c.short_change_id = format!("{}{i}", template.short_change_id);
+            c.description = (*desc).to_string();
+            seg.commits.push(c);
+        }
+        seg
+    }
+
+    fn path_of(stack: &BranchStack) -> Vec<SegmentCommit> {
+        stack.commits_trunk_to_tip().cloned().collect()
+    }
+
+    /// Leaf-only selection matches `analyze_submission` with the same
+    /// selected set: the folded ancestor joins the leaf PR.
+    #[test]
+    fn from_selection_parity_leaf_only() {
+        let stack = BranchStack {
+            segments: vec![
+                make_segment(&["feat-a"], "ch_a", "feature a"),
+                make_segment(&["feat-b"], "ch_b", "feature b"),
+            ],
+        };
+        let path = path_of(&stack);
+        let graph = make_graph(vec![stack]);
+
+        let selected = HashSet::from(["feat-b".to_string()]);
+        let reference = analyze_submission("feat-b", &graph, "main", Some(&selected)).unwrap();
+
+        let direct =
+            analysis_from_selection(&path, &[make_assignment("ch_b", "feat-b", false)], "main")
+                .unwrap();
+
+        assert_eq!(direct, reference);
+    }
+
+    /// Keeping a subset folds the unkept middle segment into the one above,
+    /// exactly like `analyze_submission`.
+    #[test]
+    fn from_selection_parity_subset() {
+        let stack = BranchStack {
+            segments: vec![
+                make_segment(&["feat-a"], "ch_a", "feature a"),
+                make_segment(&["feat-b"], "ch_b", "feature b"),
+                make_segment(&["feat-c"], "ch_c", "feature c"),
+            ],
+        };
+        let path = path_of(&stack);
+        let graph = make_graph(vec![stack]);
+
+        let selected = HashSet::from(["feat-a".to_string(), "feat-c".to_string()]);
+        let reference = analyze_submission("feat-c", &graph, "main", Some(&selected)).unwrap();
+
+        let direct = analysis_from_selection(
+            &path,
+            &[
+                make_assignment("ch_a", "feat-a", false),
+                make_assignment("ch_c", "feat-c", false),
+            ],
+            "main",
+        )
+        .unwrap();
+
+        assert_eq!(direct, reference);
+    }
+
+    /// Selecting every boundary matches the positional no-folding path.
+    #[test]
+    fn from_selection_parity_all_boundaries() {
+        let stack = BranchStack {
+            segments: vec![
+                make_segment(&["feat-a"], "ch_a", "feature a"),
+                make_segment(&["feat-b"], "ch_b", "feature b"),
+            ],
+        };
+        let path = path_of(&stack);
+        let graph = make_graph(vec![stack]);
+
+        let reference = analyze_submission("feat-b", &graph, "main", None).unwrap();
+
+        let direct = analysis_from_selection(
+            &path,
+            &[
+                make_assignment("ch_a", "feat-a", false),
+                make_assignment("ch_b", "feat-b", false),
+            ],
+            "main",
+        )
+        .unwrap();
+
+        assert_eq!(direct, reference);
+    }
+
+    /// A new bookmark on a mid-segment commit splits the segment — possible
+    /// without the bookmark existing anywhere, unlike `analyze_submission`.
+    #[test]
+    fn from_selection_splits_segment_at_new_bookmark() {
+        let stack = BranchStack {
+            segments: vec![make_segment_multi(
+                &["feat"],
+                "ch_f",
+                &["newest work", "older work"],
+            )],
+        };
+        let path = path_of(&stack);
+
+        let direct = analysis_from_selection(
+            &path,
+            &[
+                make_assignment("ch_f_1", "my-new-base", true),
+                make_assignment("ch_f", "feat", false),
+            ],
+            "main",
+        )
+        .unwrap();
+
+        assert_eq!(direct.segments.len(), 2);
+        assert_eq!(direct.segments[0].bookmark_names, vec!["my-new-base"]);
+        assert_eq!(direct.segments[0].change_id, "ch_f_1");
+        assert_eq!(direct.segments[0].commits.len(), 1);
+        assert_eq!(direct.segments[0].commits[0].description, "older work");
+        assert_eq!(direct.segments[1].bookmark_names, vec!["feat"]);
+        assert_eq!(direct.segments[1].commits.len(), 1);
+        assert_eq!(direct.segments[1].commits[0].description, "newest work");
+    }
+
+    /// Commits above the topmost assignment are not part of the submission
+    /// (parity with `analyze_submission`'s trunk..=target slice).
+    #[test]
+    fn from_selection_drops_commits_above_topmost_mark() {
+        let stack = BranchStack {
+            segments: vec![
+                make_segment(&["feat-a"], "ch_a", "feature a"),
+                make_segment(&["feat-b"], "ch_b", "feature b"),
+            ],
+        };
+        let path = path_of(&stack);
+
+        let direct =
+            analysis_from_selection(&path, &[make_assignment("ch_a", "feat-a", false)], "main")
+                .unwrap();
+
+        assert_eq!(direct.segments.len(), 1);
+        assert_eq!(direct.segments[0].bookmark_names, vec!["feat-a"]);
+        assert_eq!(direct.segments[0].commits.len(), 1);
+    }
+
+    /// Segment commits stay newest-first even when several folded segments
+    /// accumulate. (`analyze_submission` interleaves folded segments in
+    /// trunk-to-leaf order here — a quirk this constructor does not copy;
+    /// same commit set, stated convention for the order.)
+    #[test]
+    fn from_selection_multi_fold_orders_newest_first() {
+        let stack = BranchStack {
+            segments: vec![
+                make_segment(&["feat-a"], "ch_a", "feature a"),
+                make_segment(&["feat-b"], "ch_b", "feature b"),
+                make_segment(&["feat-c"], "ch_c", "feature c"),
+                make_segment(&["feat-d"], "ch_d", "feature d"),
+            ],
+        };
+        let path = path_of(&stack);
+        let graph = make_graph(vec![stack]);
+
+        let direct =
+            analysis_from_selection(&path, &[make_assignment("ch_d", "feat-d", false)], "main")
+                .unwrap();
+
+        assert_eq!(direct.segments.len(), 1);
+        let ids: Vec<&str> = direct.segments[0]
+            .commits
+            .iter()
+            .map(|c| c.change_id.as_str())
+            .collect();
+        assert_eq!(ids, vec!["ch_d", "ch_c", "ch_b", "ch_a"]);
+
+        // Same commit set as the analyze path, ordering aside.
+        let selected = HashSet::from(["feat-d".to_string()]);
+        let reference = analyze_submission("feat-d", &graph, "main", Some(&selected)).unwrap();
+        let mut reference_ids: Vec<String> = reference.segments[0]
+            .commits
+            .iter()
+            .map(|c| c.change_id.clone())
+            .collect();
+        let mut direct_ids: Vec<String> =
+            ids.iter().map(std::string::ToString::to_string).collect();
+        reference_ids.sort_unstable();
+        direct_ids.sort_unstable();
+        assert_eq!(direct_ids, reference_ids);
+    }
+
+    /// An assignment whose change ID is not on the path is a hard error —
+    /// silently dropping it would desync the analysis from the bookmark
+    /// creations scheduled for execution.
+    #[test]
+    fn from_selection_errors_on_off_path_assignment() {
+        let stack = BranchStack {
+            segments: vec![make_segment(&["feat-a"], "ch_a", "feature a")],
+        };
+        let path = path_of(&stack);
+
+        let err = analysis_from_selection(
+            &path,
+            &[
+                make_assignment("ch_a", "feat-a", false),
+                make_assignment("ch_elsewhere", "stray", true),
+            ],
+            "main",
+        )
+        .unwrap_err();
+
+        assert!(matches!(
+            err,
+            SubmitError::AssignmentOffPath { ref bookmark, ref change_id }
+                if bookmark == "stray" && change_id == "ch_elsewhere"
+        ));
+    }
+
+    /// A change ID matching two path commits (divergent change) is a hard
+    /// error rather than two segments claiming the same bookmark.
+    #[test]
+    fn from_selection_errors_on_divergent_change() {
+        let stack = BranchStack {
+            segments: vec![
+                make_segment(&["feat-a"], "ch_dup", "first copy"),
+                make_segment(&["feat-b"], "ch_dup", "second copy"),
+            ],
+        };
+        let path = path_of(&stack);
+
+        let err =
+            analysis_from_selection(&path, &[make_assignment("ch_dup", "feat-a", false)], "main")
+                .unwrap_err();
+
+        assert!(matches!(
+            err,
+            SubmitError::DivergentChange { ref change_id } if change_id == "ch_dup"
+        ));
+    }
+
+    /// Empty assignments produce an empty analysis (the callers guard
+    /// against submitting one, but the constructor itself must not panic).
+    #[test]
+    fn from_selection_empty_assignments() {
+        let stack = BranchStack {
+            segments: vec![make_segment(&["feat-a"], "ch_a", "feature a")],
+        };
+        let path = path_of(&stack);
+
+        let direct = analysis_from_selection(&path, &[], "main").unwrap();
+        assert!(direct.segments.is_empty());
+        assert_eq!(direct.default_branch, "main");
+    }
+
+    // -----------------------------------------------------------------------
     // Phase 2 tests
     // -----------------------------------------------------------------------
 
@@ -1537,6 +1997,7 @@ mod tests {
         let forge = MockForge::new();
         let plan = create_submission_plan(
             &analysis,
+            vec![],
             &forge,
             "origin",
             PrMode::Regular,
@@ -1569,6 +2030,7 @@ mod tests {
 
         let plan = create_submission_plan(
             &analysis,
+            vec![],
             &forge,
             "origin",
             PrMode::Regular,
@@ -1603,6 +2065,7 @@ mod tests {
 
         let plan = create_submission_plan(
             &analysis,
+            vec![],
             &forge,
             "origin",
             PrMode::Regular,
@@ -1636,6 +2099,7 @@ mod tests {
 
         let plan = create_submission_plan(
             &analysis,
+            vec![],
             &forge,
             "origin",
             PrMode::Regular,
@@ -1661,6 +2125,7 @@ mod tests {
 
         let plan = create_submission_plan(
             &analysis,
+            vec![],
             &forge,
             "origin",
             PrMode::Regular,
@@ -1686,6 +2151,7 @@ mod tests {
 
         let plan = create_submission_plan(
             &analysis,
+            vec![],
             &forge,
             "origin",
             PrMode::Regular,
@@ -1716,6 +2182,7 @@ mod tests {
 
         let plan = create_submission_plan(
             &analysis,
+            vec![],
             &forge,
             "origin",
             PrMode::Regular,
@@ -1745,6 +2212,7 @@ mod tests {
 
         let plan = create_submission_plan(
             &analysis,
+            vec![],
             &forge,
             "origin",
             PrMode::Regular,
@@ -1768,6 +2236,7 @@ mod tests {
 
         let plan = create_submission_plan(
             &analysis,
+            vec![],
             &forge,
             "origin",
             PrMode::Regular,
@@ -1792,6 +2261,7 @@ mod tests {
 
         let plan = create_submission_plan(
             &analysis,
+            vec![],
             &forge,
             "origin",
             PrMode::Regular,
@@ -1819,6 +2289,7 @@ mod tests {
 
         let plan = create_submission_plan(
             &analysis,
+            vec![],
             &forge,
             "origin",
             PrMode::Regular,
@@ -1846,6 +2317,7 @@ mod tests {
 
         let plan = create_submission_plan(
             &analysis,
+            vec![],
             &forge,
             "origin",
             PrMode::Regular,
@@ -1888,6 +2360,7 @@ mod tests {
                     needs_body_sync: false,
                 },
             ],
+            bookmark_creations: vec![],
             remote: "origin".to_string(),
             pr_mode: PrMode::Regular,
             default_branch: "main".to_string(),
@@ -1916,6 +2389,7 @@ mod tests {
                 needs_title_sync: true,
                 needs_body_sync: true,
             }],
+            bookmark_creations: vec![],
             remote: "origin".to_string(),
             pr_mode: PrMode::Regular,
             default_branch: "main".to_string(),
@@ -1927,9 +2401,90 @@ mod tests {
         assert!(!output.contains("up to date"));
     }
 
+    #[test]
+    fn plan_display_shows_pending_bookmark_creations() {
+        let plan = SubmissionPlan {
+            bookmark_creations: vec![BookmarkCreation {
+                bookmark_name: "my-feature".to_string(),
+                change_id: "ch_new_full_id".to_string(),
+                short_change_id: "ch_n".to_string(),
+            }],
+            bookmark_plans: vec![BookmarkPlan {
+                bookmark_name: "my-feature".to_string(),
+                base: "main".to_string(),
+                title: "my feature".to_string(),
+                body: None,
+                existing_pr: None,
+                needs_push: true,
+                needs_create: true,
+                needs_base_update: false,
+                needs_title_sync: false,
+                needs_body_sync: false,
+            }],
+            remote: "origin".to_string(),
+            pr_mode: PrMode::Regular,
+            default_branch: "main".to_string(),
+        };
+
+        let output = plan.to_string();
+        assert!(output.contains("Create bookmark my-feature at ch_n"));
+        // Creations are listed before the per-bookmark plans.
+        let creation_pos = output.find("Create bookmark").unwrap();
+        let plan_pos = output.find("my-feature (base: main)").unwrap();
+        assert!(creation_pos < plan_pos);
+    }
+
     // -----------------------------------------------------------------------
     // Phase 3 tests
     // -----------------------------------------------------------------------
+
+    /// Bookmark creations happen before any push or PR creation — pushes
+    /// require the bookmark to exist locally.
+    #[tokio::test]
+    async fn execute_creates_bookmarks_before_pushing() {
+        let ops: OpLog = Arc::new(Mutex::new(Vec::new()));
+        let plan = SubmissionPlan {
+            bookmark_creations: vec![BookmarkCreation {
+                bookmark_name: "feat-new".to_string(),
+                change_id: "ch_new".to_string(),
+                short_change_id: "ch_n".to_string(),
+            }],
+            bookmark_plans: vec![BookmarkPlan {
+                bookmark_name: "feat-new".to_string(),
+                base: "main".to_string(),
+                title: "new feature".to_string(),
+                body: None,
+                existing_pr: None,
+                needs_push: true,
+                needs_create: true,
+                needs_base_update: false,
+                needs_title_sync: false,
+                needs_body_sync: false,
+            }],
+            remote: "origin".to_string(),
+            pr_mode: PrMode::Regular,
+            default_branch: "main".to_string(),
+        };
+
+        let (runner, _push_calls) = MockJjRunner::new_with_ops(Arc::clone(&ops));
+        let jj = Jj::new(runner);
+        let forge = MockForge::new().with_ops(Arc::clone(&ops));
+        let env = test_comment_env();
+
+        execute_submission_plan(&plan, &jj, &forge, &env, StackPlacement::Comment)
+            .await
+            .unwrap();
+
+        let ops = ops.lock().unwrap();
+        assert_eq!(
+            *ops,
+            vec![
+                Op::CreateBookmark("feat-new".to_string()),
+                Op::Push("feat-new".to_string()),
+                Op::CreatePr("feat-new".to_string()),
+            ],
+        );
+    }
 
     #[tokio::test]
     async fn execute_creates_new_prs() {
@@ -1960,6 +2515,7 @@ mod tests {
                     needs_body_sync: false,
                 },
             ],
+            bookmark_creations: vec![],
             remote: "origin".to_string(),
             pr_mode: PrMode::Regular,
             default_branch: "main".to_string(),
@@ -1999,6 +2555,7 @@ mod tests {
                 needs_title_sync: false,
                 needs_body_sync: false,
             }],
+            bookmark_creations: vec![],
             remote: "origin".to_string(),
             pr_mode: PrMode::Regular,
             default_branch: "main".to_string(),
@@ -2047,6 +2604,7 @@ mod tests {
                     needs_body_sync: false,
                 },
             ],
+            bookmark_creations: vec![],
             remote: "origin".to_string(),
             pr_mode: PrMode::Regular,
             default_branch: "main".to_string(),
@@ -2129,6 +2687,7 @@ mod tests {
                     needs_body_sync: false,
                 },
             ],
+            bookmark_creations: vec![],
             remote: "origin".to_string(),
             pr_mode: PrMode::Regular,
             default_branch: "main".to_string(),
@@ -2187,6 +2746,7 @@ mod tests {
                     needs_body_sync: false,
                 },
             ],
+            bookmark_creations: vec![],
             remote: "my-remote".to_string(),
             pr_mode: PrMode::Regular,
             default_branch: "main".to_string(),
@@ -2222,6 +2782,7 @@ mod tests {
                 needs_title_sync: false,
                 needs_body_sync: false,
             }],
+            bookmark_creations: vec![],
             remote: "origin".to_string(),
             pr_mode: PrMode::Draft,
             default_branch: "main".to_string(),
@@ -2249,6 +2810,7 @@ mod tests {
                 needs_title_sync: false,
                 needs_body_sync: false,
             }],
+            bookmark_creations: vec![],
             remote: "origin".to_string(),
             pr_mode: PrMode::Draft,
             default_branch: "main".to_string(),
@@ -2283,6 +2845,7 @@ mod tests {
                 needs_title_sync: true,
                 needs_body_sync: true,
             }],
+            bookmark_creations: vec![],
             remote: "origin".to_string(),
             pr_mode: PrMode::Regular,
             default_branch: "main".to_string(),
@@ -2321,6 +2884,7 @@ mod tests {
                 needs_title_sync: true,
                 needs_body_sync: true,
             }],
+            bookmark_creations: vec![],
             remote: "origin".to_string(),
             pr_mode: PrMode::Regular,
             default_branch: "main".to_string(),
@@ -2358,6 +2922,7 @@ mod tests {
                 needs_title_sync: false,
                 needs_body_sync: false,
             }],
+            bookmark_creations: vec![],
             remote: "origin".to_string(),
             pr_mode: PrMode::Regular,
             default_branch: "main".to_string(),
@@ -2405,6 +2970,7 @@ mod tests {
                     needs_body_sync: true,
                 },
             ],
+            bookmark_creations: vec![],
             remote: "origin".to_string(),
             pr_mode: PrMode::Regular,
             default_branch: "main".to_string(),
@@ -2793,6 +3359,7 @@ mod tests {
                     needs_body_sync: false,
                 },
             ],
+            bookmark_creations: vec![],
             remote: "origin".to_string(),
             pr_mode: PrMode::Regular,
             default_branch: "main".to_string(),
@@ -2857,6 +3424,7 @@ mod tests {
                     needs_body_sync: false,
                 },
             ],
+            bookmark_creations: vec![],
             remote: "origin".to_string(),
             pr_mode: PrMode::Regular,
             default_branch: "main".to_string(),
@@ -2949,6 +3517,7 @@ mod tests {
                     needs_body_sync: false,
                 },
             ],
+            bookmark_creations: vec![],
             remote: "origin".to_string(),
             pr_mode: PrMode::Regular,
             default_branch: "main".to_string(),
@@ -3012,6 +3581,7 @@ mod tests {
                     needs_body_sync: false,
                 },
             ],
+            bookmark_creations: vec![],
             remote: "origin".to_string(),
             pr_mode: PrMode::Regular,
             default_branch: "main".to_string(),
@@ -3063,6 +3633,7 @@ mod tests {
                 needs_title_sync: false,
                 needs_body_sync: false,
             }],
+            bookmark_creations: vec![],
             remote: "origin".to_string(),
             pr_mode: PrMode::Regular,
             default_branch: "main".to_string(),
@@ -3138,6 +3709,7 @@ mod tests {
                 needs_title_sync: false,
                 needs_body_sync: false,
             }],
+            bookmark_creations: vec![],
             remote: "origin".to_string(),
             pr_mode: PrMode::Regular,
             default_branch: "main".to_string(),
@@ -3185,6 +3757,7 @@ mod tests {
                 needs_title_sync: false,
                 needs_body_sync: false,
             }],
+            bookmark_creations: vec![],
             remote: "origin".to_string(),
             pr_mode: PrMode::Regular,
             default_branch: "main".to_string(),
@@ -3247,6 +3820,7 @@ mod tests {
                     needs_body_sync: false,
                 },
             ],
+            bookmark_creations: vec![],
             remote: "origin".to_string(),
             pr_mode: PrMode::Regular,
             default_branch: "main".to_string(),
@@ -3345,6 +3919,7 @@ mod tests {
                     needs_body_sync: false,
                 },
             ],
+            bookmark_creations: vec![],
             remote: "origin".to_string(),
             pr_mode: PrMode::Regular,
             default_branch: "main".to_string(),
@@ -3425,6 +4000,7 @@ mod tests {
                     needs_body_sync: false,
                 },
             ],
+            bookmark_creations: vec![],
             remote: "origin".to_string(),
             pr_mode: PrMode::Regular,
             default_branch: "main".to_string(),
@@ -3474,6 +4050,7 @@ mod tests {
                 needs_title_sync: false,
                 needs_body_sync: false,
             }],
+            bookmark_creations: vec![],
             remote: "origin".to_string(),
             pr_mode: PrMode::Regular,
             default_branch: "main".to_string(),
@@ -3530,6 +4107,7 @@ mod tests {
                     needs_body_sync: false,
                 },
             ],
+            bookmark_creations: vec![],
             remote: "origin".to_string(),
             pr_mode: PrMode::Draft,
             default_branch: "main".to_string(),
@@ -3605,6 +4183,7 @@ mod tests {
                     needs_body_sync: false,
                 },
             ],
+            bookmark_creations: vec![],
             remote: "origin".to_string(),
             pr_mode: PrMode::Draft,
             default_branch: "main".to_string(),
@@ -3670,6 +4249,7 @@ mod tests {
                     needs_body_sync: false,
                 },
             ],
+            bookmark_creations: vec![],
             remote: "origin".to_string(),
             pr_mode: PrMode::Draft,
             default_branch: "main".to_string(),
