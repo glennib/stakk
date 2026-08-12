@@ -94,8 +94,8 @@ src/
 ├── select/          # Interactive TUI selection (ratatui inline viewport)
 │   ├── mod.rs       # Public API: resolve_bookmark_interactively(), SelectionResult
 │   ├── app.rs       # App state machine, event loop, terminal init
-│   ├── graph_layout.rs  # Convert ChangeGraph → 2D positioned nodes + edges
-│   ├── graph_widget.rs  # Screen 1: tree graph widget (leaf selection)
+│   ├── graph_layout.rs  # Convert ChangeGraph → jj-log-style row list (commit tree + display rows)
+│   ├── graph_widget.rs  # Screen 1: jj-log-style graph widget (leaf selection, collapsing, scrolling)
 │   ├── bookmark_widget.rs # Screen 2: bookmark toggle/assignment widget
 │   ├── bookmark_gen.rs # Bookmark validation and external command execution
 │   ├── tfidf.rs     # TF-IDF algorithm for auto-generated bookmark names
@@ -159,9 +159,24 @@ bookmarks to commits.
 
 ### Screens
 
-1. **GraphView** — Select a leaf node (branch tip) from the change graph.
-   Navigate leaves with `←`/`→` (`h`/`l`), confirm with Enter.
-   Help line: `◄►/hl navigate  Enter select  q/Esc quit`
+1. **GraphView** — Select a leaf node (branch tip) from a jj-log-style graph:
+   one row per commit, `│ `-cell edge gutter on the left, `├─╯` connector rows
+   where a sibling subtree merges into its parent's column. Every row
+   permanently carries its bookmark names and `"description"`; navigation only
+   re-colors the selected trunk→leaf path. Glyphs: `●` selected path (cyan;
+   the leaf is bold with a trailing `◀`), `○` other commits (dark gray), `◆`
+   trunk, `⋯ n commits` collapsed runs. Sibling subtrees are ordered
+   newest-first by committer timestamp (jiff-parsed, offset-aware; tiebreak on
+   the subtree root's change_id), so leaf 1 is the most recent stack.
+   Runs of consecutive unselected commits that carry no bookmark and are
+   neither leaves nor trunk collapse into `⋯ n commits`; the selected path is
+   always fully expanded. When the (collapsed) graph exceeds the viewport, it
+   scrolls to anchor the selected leaf at the top. The title row shows a
+   right-aligned `leaf i/n` indicator; the viewport is sized to the max
+   collapsed height over all leaves so leaf switches never resize it.
+   Navigate leaves with `←`/`→` (`h`/`l`) or `↑`/`↓` (`k`/`j`), wrapping;
+   confirm with Enter.
+   Help line: `←→↑↓/hjkl leaf  Enter select  q/Esc quit`
 
 2. **BookmarkAssignment** — Assign bookmark names to each commit in the
    selected path. Navigate rows with `↑`/`↓` (`j`/`k`). Rows are displayed

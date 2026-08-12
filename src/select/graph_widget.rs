@@ -1,8 +1,12 @@
-//! Screen 1: Graph view widget.
+//! Screen 1: jj-log-style graph view widget.
 //!
-//! Renders the positioned graph layout as a tree with Unicode box-drawing
-//! characters. Users navigate with arrow keys to select a leaf node.
+//! Renders the layout's display rows top-down: one row per commit with a
+//! `│ `-cell gutter on the left, `├─╯` connector rows where sibling subtrees
+//! merge, and `⋯ n commits` rows for collapsed runs of unselected commits.
+//! Every row permanently carries its bookmark names and description; leaf
+//! navigation only re-colors the selected trunk→leaf path.
 
+use std::collections::HashMap;
 use std::collections::HashSet;
 
 use ratatui::buffer::Buffer;
@@ -15,51 +19,116 @@ use ratatui::text::Span;
 use ratatui::widgets::Widget;
 
 use super::graph_layout::GraphLayout;
-use super::graph_layout::path_to_leaf;
+use super::graph_layout::GraphRow;
+use super::graph_layout::LayoutNode;
 
 /// State for the graph view widget.
 #[derive(Debug)]
 pub struct GraphViewState {
-    /// Index of the currently selected leaf node (into
-    /// `GraphLayout::leaf_nodes()`).
+    /// Index of the currently selected leaf (into `GraphLayout::leaves`).
     pub selected_leaf: usize,
-    /// Scroll offset (row from bottom that is at the top of the viewport).
-    pub scroll_offset: usize,
 }
 
 impl GraphViewState {
     pub fn new() -> Self {
-        Self {
-            selected_leaf: 0,
-            scroll_offset: 0,
+        Self { selected_leaf: 0 }
+    }
+}
+
+/// Characters used for rendering.
+const NODE_SELECTED: &str = "\u{25cf}"; // ●
+const NODE_OTHER: &str = "\u{25cb}"; // ○
+const TRUNK_CHAR: &str = "\u{25c6}"; // ◆
+const ELLIPSIS: &str = "\u{22ef}"; // ⋯
+const GUTTER_CELL: &str = "\u{2502} "; // "│ "
+const CONNECTOR_TEE: &str = "\u{251c}"; // ├
+const CONNECTOR_TAIL: &str = "\u{2500}\u{256f}"; // ─╯
+const LEAF_MARKER: &str = "\u{25c0}"; // ◀
+
+/// A row after collapsing, ready for rendering.
+enum DisplayRow<'a> {
+    /// A commit (or trunk) row.
+    Commit {
+        node_idx: usize,
+        node: &'a LayoutNode,
+        col: usize,
+    },
+    /// A collapsed run of `count` unselected commits.
+    Collapsed { count: usize, col: usize },
+    /// A connector row (`├─╯`) merging column `col` into `col - 1`.
+    Connector { col: usize },
+}
+
+/// Collapse runs of unselected commits into `⋯ n commits` rows.
+///
+/// A commit row collapses when it is not on the selected path, is neither a
+/// segment boundary (no bookmark names) nor a leaf nor trunk. Consecutive
+/// collapsible rows in the same column merge into one `Collapsed` row.
+fn collapse_rows<'a>(layout: &'a GraphLayout, path: &HashSet<usize>) -> Vec<DisplayRow<'a>> {
+    let mut out: Vec<DisplayRow<'a>> = Vec::new();
+    let mut run: Option<(usize, usize)> = None; // (col, count)
+
+    let flush = |run: &mut Option<(usize, usize)>, out: &mut Vec<DisplayRow<'a>>| {
+        if let Some((col, count)) = run.take() {
+            out.push(DisplayRow::Collapsed { count, col });
+        }
+    };
+
+    for row in &layout.rows {
+        match *row {
+            GraphRow::Commit { node, col } => {
+                let n = &layout.nodes[node];
+                let collapsible = !path.contains(&node)
+                    && !n.is_trunk
+                    && !n.is_leaf
+                    && n.bookmark_names.is_empty();
+                if collapsible {
+                    match &mut run {
+                        Some((c, count)) if *c == col => *count += 1,
+                        _ => {
+                            flush(&mut run, &mut out);
+                            run = Some((col, 1));
+                        }
+                    }
+                } else {
+                    flush(&mut run, &mut out);
+                    out.push(DisplayRow::Commit {
+                        node_idx: node,
+                        node: n,
+                        col,
+                    });
+                }
+            }
+            GraphRow::Connector { col } => {
+                flush(&mut run, &mut out);
+                out.push(DisplayRow::Connector { col });
+            }
         }
     }
+    flush(&mut run, &mut out);
+
+    out
 }
 
-/// Width of one column in characters (node char + spacing).
-const COL_WIDTH: usize = 4;
-/// Characters used for rendering.
-const NODE_CHAR: &str = "\u{25cb}"; // ○
-const TRUNK_CHAR: &str = "\u{25c6}"; // ◆
-const VERT_LINE: &str = "\u{2502}"; // │
-const BRANCH_TEE: &str = "\u{251c}"; // ├
-const BRANCH_HORIZ: &str = "\u{2500}"; // ─
-const BRANCH_CORNER: &str = "\u{256f}"; // ╯  (UP+LEFT arc — endpoint of branch)
-const BRANCH_SRC: &str = "\u{2570}"; // ╰  (UP+RIGHT arc — source with no vertical above)
-const CROSS: &str = "\u{253c}"; // ┼  (horizontal branch crossing a vertical edge)
-
-/// Number of display lines for a graph with the given number of rows.
-/// Each row produces a node line, plus a connector line between adjacent rows.
-pub fn display_line_count(total_rows: usize) -> usize {
-    if total_rows == 0 {
-        0
-    } else {
-        // node lines + connector lines between them
-        total_rows + total_rows.saturating_sub(1)
-    }
+/// Number of display rows when the given leaf is selected (its path is fully
+/// expanded; everything else collapses).
+pub fn collapsed_height(layout: &GraphLayout, leaf: usize) -> usize {
+    let path: HashSet<usize> = layout.path_node_indices(leaf).into_iter().collect();
+    collapse_rows(layout, &path).len()
 }
 
-/// Renders the graph layout with cursor highlighting.
+/// Maximum display height over all selectable leaves — sizing the viewport
+/// to this means switching leaves never needs a viewport resize.
+pub fn max_collapsed_height(layout: &GraphLayout) -> usize {
+    layout
+        .leaves
+        .iter()
+        .map(|&leaf| collapsed_height(layout, leaf))
+        .max()
+        .unwrap_or(0)
+}
+
+/// Renders the graph layout with selected-path highlighting.
 pub struct GraphWidget<'a> {
     layout: &'a GraphLayout,
     state: &'a GraphViewState,
@@ -70,238 +139,212 @@ impl<'a> GraphWidget<'a> {
         Self { layout, state }
     }
 
-    /// Build the lines for the graph, bottom-to-top (trunk at bottom).
-    /// Returns lines in display order (top of screen = highest row).
-    ///
-    /// For each graph row, renders a node line. Between adjacent rows, renders
-    /// a connector line showing │ for vertical edges and ├─╮ for branches.
-    fn build_lines(&self) -> Vec<Line<'a>> {
-        let mut lines = Vec::new();
-
-        if self.layout.nodes.is_empty() {
-            return lines;
-        }
-
-        // Compute the selected path for highlighting.
-        let leaves = self.layout.leaf_nodes();
-        let selected_leaf = leaves.get(self.state.selected_leaf);
-        let selected_path: HashSet<(usize, usize)> = if let Some(leaf) = selected_leaf {
-            path_to_leaf(self.layout, leaf.row, leaf.col)
-                .iter()
-                .map(|n| (n.row, n.col))
-                .collect()
-        } else {
-            HashSet::new()
+    /// Build the display lines (top to bottom) and the display-row index of
+    /// the selected leaf (for scrolling).
+    fn build_lines(&self) -> (Vec<Line<'a>>, usize) {
+        let Some(&leaf) = self.layout.leaves.get(self.state.selected_leaf) else {
+            return (vec![], 0);
         };
 
-        // Edges on the selected path (for connector highlighting).
-        let selected_edges: HashSet<(usize, usize, usize, usize)> = self
-            .layout
-            .edges
+        let path_indices = self.layout.path_node_indices(leaf);
+        let path: HashSet<usize> = path_indices.iter().copied().collect();
+        let rows = collapse_rows(self.layout, &path);
+
+        // Display row index per node (commit rows only).
+        let row_of: HashMap<usize, usize> = rows
             .iter()
-            .filter(|e| {
-                selected_path.contains(&(e.from_row, e.from_col))
-                    && selected_path.contains(&(e.to_row, e.to_col))
+            .enumerate()
+            .filter_map(|(i, row)| match row {
+                DisplayRow::Commit { node_idx, .. } => Some((*node_idx, i)),
+                _ => None,
             })
-            .map(|e| (e.from_row, e.from_col, e.to_row, e.to_col))
+            .collect();
+        let col_of: HashMap<usize, usize> = rows
+            .iter()
+            .filter_map(|row| match row {
+                DisplayRow::Commit { node_idx, col, .. } => Some((*node_idx, *col)),
+                _ => None,
+            })
             .collect();
 
-        let max_row = self.layout.total_rows.saturating_sub(1);
-
-        for row in (0..=max_row).rev() {
-            // Node line.
-            lines.push(self.build_node_line(row, &selected_path, selected_leaf));
-
-            // Connector line between this row and the one below.
-            if row > 0 {
-                lines.push(self.build_connector_line(row, row - 1, &selected_edges));
+        // Gutter cells and connector rows that carry the selected path.
+        // For each parent→child pair on the path (parent below, child
+        // above): a same-column child's edge runs vertically through the
+        // child's column in every row between them; a sibling child's edge
+        // passes through its connector row (directly under the child) and
+        // then continues in the parent's column.
+        let mut path_gutter: HashSet<(usize, usize)> = HashSet::new();
+        let mut path_connectors: HashSet<usize> = HashSet::new();
+        for pair in path_indices.windows(2) {
+            let (parent, child) = (pair[0], pair[1]);
+            let (Some(&pr), Some(&cr)) = (row_of.get(&parent), row_of.get(&child)) else {
+                continue;
+            };
+            let (Some(&pcol), Some(&ccol)) = (col_of.get(&parent), col_of.get(&child)) else {
+                continue;
+            };
+            if pcol == ccol {
+                for r in (cr + 1)..pr {
+                    path_gutter.insert((r, ccol));
+                }
+            } else {
+                if matches!(rows.get(cr + 1), Some(DisplayRow::Connector { col }) if *col == ccol) {
+                    path_connectors.insert(cr + 1);
+                }
+                for r in (cr + 2)..pr {
+                    path_gutter.insert((r, pcol));
+                }
             }
         }
 
-        lines
+        let leaf_row = row_of.get(&leaf).copied().unwrap_or(0);
+
+        let lines = rows
+            .iter()
+            .enumerate()
+            .map(|(r, row)| {
+                Self::build_row_line(r, row, &path, leaf, &path_gutter, &path_connectors)
+            })
+            .collect();
+
+        (lines, leaf_row)
     }
 
-    /// Render a single node line for the given row.
-    fn build_node_line(
-        &self,
-        row: usize,
-        selected_path: &HashSet<(usize, usize)>,
-        selected_leaf: Option<&&super::graph_layout::LayoutNode>,
+    fn build_row_line(
+        r: usize,
+        row: &DisplayRow<'a>,
+        path: &HashSet<usize>,
+        leaf: usize,
+        path_gutter: &HashSet<(usize, usize)>,
+        path_connectors: &HashSet<usize>,
     ) -> Line<'a> {
-        let mut spans: Vec<Span> = Vec::new();
-        let mut pending_labels: Vec<Vec<Span>> = Vec::new();
+        let on_path_style = Style::default().fg(Color::Cyan);
+        let dim_style = Style::default().fg(Color::DarkGray);
 
-        for col in 0..self.layout.total_cols {
-            let is_on_path = selected_path.contains(&(row, col));
+        let mut spans: Vec<Span> = vec![Span::raw(" ")];
 
-            if let Some(node) = self.layout.node_at(row, col) {
-                let node_char = if node.is_trunk { TRUNK_CHAR } else { NODE_CHAR };
-
-                let is_selected_leaf =
-                    selected_leaf.is_some_and(|l| l.row == node.row && l.col == node.col);
-
-                let style = if is_selected_leaf {
-                    Style::default()
-                        .fg(Color::Cyan)
-                        .add_modifier(Modifier::BOLD)
-                } else if is_on_path {
-                    Style::default().fg(Color::Cyan)
+        let gutter = |spans: &mut Vec<Span>, cols: usize| {
+            for g in 0..cols {
+                let style = if path_gutter.contains(&(r, g)) {
+                    on_path_style
                 } else {
-                    Style::default().fg(Color::DarkGray)
+                    dim_style
                 };
-
-                spans.push(Span::styled(format!("{node_char:<COL_WIDTH$}"), style));
-
-                if is_on_path || is_selected_leaf {
-                    let label_spans = Self::node_label_spans(node);
-                    if !label_spans.is_empty() {
-                        pending_labels.push(label_spans);
-                    }
-                }
-            } else {
-                // Empty column — just space.
-                spans.push(Span::raw(format!("{:<COL_WIDTH$}", " ")));
+                spans.push(Span::styled(GUTTER_CELL, style));
             }
-        }
+        };
 
-        // Append labels after all columns.
-        for (i, label_spans) in pending_labels.into_iter().enumerate() {
-            if i > 0 {
+        match row {
+            DisplayRow::Commit {
+                node_idx,
+                node,
+                col,
+            } => {
+                gutter(&mut spans, *col);
+
+                let is_on_path = path.contains(node_idx);
+                let is_selected_leaf = *node_idx == leaf;
+
+                let glyph = if node.is_trunk {
+                    TRUNK_CHAR
+                } else if is_on_path {
+                    NODE_SELECTED
+                } else {
+                    NODE_OTHER
+                };
+                let glyph_style = if is_selected_leaf {
+                    on_path_style.add_modifier(Modifier::BOLD)
+                } else if is_on_path {
+                    on_path_style
+                } else {
+                    dim_style
+                };
+                spans.push(Span::styled(glyph, glyph_style));
                 spans.push(Span::raw("  "));
-            }
-            spans.extend(label_spans);
-        }
 
-        Line::from(spans)
-    }
+                spans.extend(Self::label_spans(node, is_on_path));
 
-    /// Render the connector line between `row_above` and `row_below`.
-    ///
-    /// Shows │ for vertical edges, ├─╮ for branch forks.
-    fn build_connector_line(
-        &self,
-        row_above: usize,
-        row_below: usize,
-        selected_edges: &HashSet<(usize, usize, usize, usize)>,
-    ) -> Line<'a> {
-        // Determine what character each column gets.
-        let total_cols = self.layout.total_cols;
-        let mut col_chars: Vec<&str> = vec![" "; total_cols];
-        let mut col_on_path: Vec<bool> = vec![false; total_cols];
-
-        for edge in &self.layout.edges {
-            let is_selected =
-                selected_edges.contains(&(edge.from_row, edge.from_col, edge.to_row, edge.to_col));
-
-            if edge.from_col == edge.to_col {
-                // Vertical edge — check if it spans this connector gap.
-                let col = edge.from_col;
-                if edge.from_row <= row_below && edge.to_row >= row_above {
-                    col_chars[col] = VERT_LINE;
-                    if is_selected {
-                        col_on_path[col] = true;
-                    }
+                if is_selected_leaf {
+                    spans.push(Span::raw("  "));
+                    spans.push(Span::styled(
+                        LEAF_MARKER,
+                        on_path_style.add_modifier(Modifier::BOLD),
+                    ));
                 }
-            } else {
-                // Cross-column (branch) edge at this connector level.
-                if edge.from_row == row_below && edge.to_row == row_above {
-                    let min_col = edge.from_col.min(edge.to_col);
-                    let max_col = edge.from_col.max(edge.to_col);
-
-                    // At from_col: ├ if there's already a vertical edge (child
-                    // above in the same column), ╰ if only the branch exits here.
-                    if col_chars[edge.from_col] == VERT_LINE {
-                        col_chars[edge.from_col] = BRANCH_TEE; // ├
+            }
+            DisplayRow::Collapsed { count, col } => {
+                gutter(&mut spans, *col);
+                spans.push(Span::styled(ELLIPSIS, dim_style));
+                let noun = if *count == 1 { "commit" } else { "commits" };
+                spans.push(Span::styled(
+                    format!("  {count} {noun}"),
+                    dim_style.add_modifier(Modifier::DIM),
+                ));
+            }
+            DisplayRow::Connector { col } => {
+                gutter(&mut spans, col.saturating_sub(1));
+                // The ├ cell carries the parent column's vertical line, so
+                // it stays path-colored when the path passes through that
+                // column even if this connector itself is off-path.
+                let tee_on_path = path_connectors.contains(&r)
+                    || path_gutter.contains(&(r, col.saturating_sub(1)));
+                spans.push(Span::styled(
+                    CONNECTOR_TEE,
+                    if tee_on_path {
+                        on_path_style
                     } else {
-                        col_chars[edge.from_col] = BRANCH_SRC; // ╰
-                    }
-                    if is_selected {
-                        col_on_path[edge.from_col] = true;
-                    }
-
-                    // At to_col: ╯
-                    col_chars[edge.to_col] = BRANCH_CORNER;
-                    if is_selected {
-                        col_on_path[edge.to_col] = true;
-                    }
-
-                    // Between: ─, or ┼ where a vertical edge crosses
-                    for c in (min_col + 1)..max_col {
-                        col_chars[c] = if col_chars[c] == VERT_LINE {
-                            CROSS
-                        } else {
-                            BRANCH_HORIZ
-                        };
-                        if is_selected {
-                            col_on_path[c] = true;
-                        }
-                    }
-                }
+                        dim_style
+                    },
+                ));
+                spans.push(Span::styled(
+                    CONNECTOR_TAIL,
+                    if path_connectors.contains(&r) {
+                        on_path_style
+                    } else {
+                        dim_style
+                    },
+                ));
             }
-        }
-
-        let mut spans: Vec<Span> = Vec::new();
-        for col in 0..total_cols {
-            let style = if col_on_path[col] {
-                Style::default().fg(Color::Cyan)
-            } else if col_chars[col] != " " {
-                Style::default().fg(Color::DarkGray)
-            } else {
-                Style::default()
-            };
-
-            // For horizontal branch characters, fill the full column width with
-            // ─ to create a continuous line. Source chars (├, ╰) and crossings
-            // (┼) also extend rightward with dashes.
-            let cell = if col_chars[col] == BRANCH_HORIZ {
-                BRANCH_HORIZ.repeat(COL_WIDTH)
-            } else if col_chars[col] == BRANCH_TEE
-                || col_chars[col] == BRANCH_SRC
-                || col_chars[col] == CROSS
-            {
-                format!("{}{}", col_chars[col], BRANCH_HORIZ.repeat(COL_WIDTH - 1))
-            } else {
-                format!("{:<COL_WIDTH$}", col_chars[col])
-            };
-
-            spans.push(Span::styled(cell, style));
         }
 
         Line::from(spans)
     }
 
-    fn node_label_spans(node: &super::graph_layout::LayoutNode) -> Vec<Span<'static>> {
+    fn label_spans(node: &LayoutNode, is_on_path: bool) -> Vec<Span<'static>> {
         let mut spans = Vec::new();
 
-        if !node.bookmark_names.is_empty() {
-            spans.push(Span::styled(
-                node.bookmark_names.join(", "),
-                Style::default().fg(Color::White),
-            ));
-            spans.push(Span::styled("  ", Style::default()));
-        }
+        let name_style = if is_on_path {
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::DarkGray)
+        };
+        let text_style = if is_on_path {
+            Style::default().fg(Color::White)
+        } else {
+            Style::default().fg(Color::DarkGray)
+        };
 
         if node.is_trunk {
-            if spans.is_empty() {
-                spans.push(Span::styled("trunk", Style::default().fg(Color::White)));
-            }
-        } else {
+            spans.push(Span::styled("trunk", text_style));
+            return spans;
+        }
+
+        if !node.bookmark_names.is_empty() {
+            spans.push(Span::styled(node.bookmark_names.join(", "), name_style));
+            spans.push(Span::raw("  "));
+        }
+
+        if node.summary == "(no description)" {
             spans.push(Span::styled(
-                format!("{:<4}", node.short_change_id),
-                Style::default().fg(Color::Magenta),
+                "(no description set)",
+                Style::default()
+                    .fg(Color::DarkGray)
+                    .add_modifier(Modifier::DIM),
             ));
-            let summary = &node.summary;
-            if summary == "(no description)" {
-                spans.push(Span::styled(
-                    " (no description set)",
-                    Style::default().fg(Color::DarkGray),
-                ));
-            } else {
-                spans.push(Span::styled(
-                    format!(" \"{summary}\""),
-                    Style::default().fg(Color::White),
-                ));
-            }
+        } else {
+            spans.push(Span::styled(format!("\"{}\"", node.summary), text_style));
         }
 
         spans
@@ -310,13 +353,14 @@ impl<'a> GraphWidget<'a> {
 
 impl Widget for GraphWidget<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        let lines = self.build_lines();
+        let (lines, leaf_row) = self.build_lines();
 
-        // Apply scroll offset.
+        // Scroll so the selected leaf sits at the top of the viewport when
+        // the content overflows — its path extends downward from there.
         let visible_height = area.height as usize;
         let total = lines.len();
         let start = if total > visible_height {
-            self.state.scroll_offset.min(total - visible_height)
+            leaf_row.min(total - visible_height)
         } else {
             0
         };
@@ -335,12 +379,12 @@ impl Widget for GraphWidget<'_> {
 pub fn graph_help_line() -> Line<'static> {
     Line::from(vec![
         Span::styled(
-            " \u{2190}\u{2192}/hl",
+            " \u{2190}\u{2192}\u{2191}\u{2193}/hjkl",
             Style::default()
                 .fg(Color::Yellow)
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::raw(" navigate  "),
+        Span::raw(" leaf  "),
         Span::styled(
             "Enter",
             Style::default()
@@ -383,6 +427,15 @@ mod tests {
     }
 
     fn make_segment(names: &[&str], change_id: &str, descriptions: &[&str]) -> BookmarkSegment {
+        make_segment_at(names, change_id, descriptions, "T")
+    }
+
+    fn make_segment_at(
+        names: &[&str],
+        change_id: &str,
+        descriptions: &[&str],
+        timestamp: &str,
+    ) -> BookmarkSegment {
         BookmarkSegment {
             bookmark_names: names.iter().map(ToString::to_string).collect(),
             change_id: change_id.to_string(),
@@ -401,7 +454,7 @@ mod tests {
                     committer: crate::jj::types::Signature {
                         name: "Test".to_string(),
                         email: "test@test.com".to_string(),
-                        timestamp: "T".to_string(),
+                        timestamp: timestamp.to_string(),
                     },
                     files: vec![],
                     short_change_id: change_id[..4.min(change_id.len())].to_string(),
@@ -412,11 +465,10 @@ mod tests {
         }
     }
 
-    fn render_to_string(graph: &ChangeGraph) -> String {
+    fn render_to_string_with_state(graph: &ChangeGraph, state: &GraphViewState) -> String {
         let layout = build_layout(graph);
-        let state = GraphViewState::new();
-        let widget = GraphWidget::new(&layout, &state);
-        let lines = widget.build_lines();
+        let widget = GraphWidget::new(&layout, state);
+        let (lines, _) = widget.build_lines();
         lines
             .iter()
             .map(|line| {
@@ -424,13 +476,19 @@ mod tests {
                     .iter()
                     .map(|s| s.content.as_ref())
                     .collect::<String>()
+                    .trim_end()
+                    .to_string()
             })
             .collect::<Vec<_>>()
             .join("\n")
     }
 
+    fn render_to_string(graph: &ChangeGraph) -> String {
+        render_to_string_with_state(graph, &GraphViewState::new())
+    }
+
     #[test]
-    fn linear_stack_has_connectors() {
+    fn linear_stack_single_column() {
         let graph = make_graph(vec![BranchStack {
             segments: vec![
                 make_segment(&["base"], "ch_a", &["add base"]),
@@ -438,47 +496,170 @@ mod tests {
             ],
         }]);
 
-        let layout = build_layout(&graph);
-        let state = GraphViewState::new();
-        let widget = GraphWidget::new(&layout, &state);
-        let lines = widget.build_lines();
-
-        // 3 rows → 3 node lines + 2 connector lines = 5 display lines.
-        assert_eq!(lines.len(), 5);
-
-        let text = render_to_string(&graph);
-        // Should contain vertical connector lines.
-        assert!(text.contains('\u{2502}'), "expected │ in output: {text}");
+        insta::assert_snapshot!(render_to_string(&graph));
     }
 
     #[test]
     fn branching_shows_fork_characters() {
         let graph = make_graph(vec![
             BranchStack {
-                segments: vec![make_segment(&["alpha"], "ch_alpha", &["alpha work"])],
+                segments: vec![make_segment_at(
+                    &["alpha"],
+                    "ch_alpha",
+                    &["alpha work"],
+                    "2026-02-01T00:00:00Z",
+                )],
             },
             BranchStack {
-                segments: vec![make_segment(&["beta"], "ch_beta", &["beta work"])],
+                segments: vec![make_segment_at(
+                    &["beta"],
+                    "ch_beta",
+                    &["beta work"],
+                    "2026-01-01T00:00:00Z",
+                )],
             },
         ]);
 
-        let text = render_to_string(&graph);
-        // Should contain branch fork characters.
-        assert!(text.contains('\u{251c}'), "expected ├ in output:\n{text}");
-        assert!(text.contains('\u{256f}'), "expected ╯ in output:\n{text}");
+        insta::assert_snapshot!(render_to_string(&graph));
     }
 
     #[test]
-    fn renders_to_buffer() {
-        let graph = make_graph(vec![BranchStack {
-            segments: vec![make_segment(&["feat"], "ch_a", &["my feature"])],
-        }]);
+    fn collapses_unselected_runs() {
+        // The selected (newest) chain stays fully expanded; the unselected
+        // chain collapses its unbookmarked middle commits but keeps its leaf
+        // and boundary visible.
+        let graph = make_graph(vec![
+            BranchStack {
+                segments: vec![make_segment_at(
+                    &["feat"],
+                    "ch_feat",
+                    &["feat top", "feat mid", "feat bottom"],
+                    "2026-02-01T00:00:00Z",
+                )],
+            },
+            BranchStack {
+                segments: vec![
+                    make_segment_at(
+                        &["other-base"],
+                        "ch_ob",
+                        &["other base"],
+                        "2026-01-01T00:00:00Z",
+                    ),
+                    make_segment_at(
+                        &["other"],
+                        "ch_o",
+                        &["other top", "other mid 2", "other mid 1"],
+                        "2026-01-01T00:00:00Z",
+                    ),
+                ],
+            },
+        ]);
+
+        insta::assert_snapshot!(render_to_string(&graph));
+    }
+
+    #[test]
+    fn selecting_other_leaf_moves_highlight_not_rows() {
+        let graph = make_graph(vec![
+            BranchStack {
+                segments: vec![make_segment_at(
+                    &["alpha"],
+                    "ch_alpha",
+                    &["alpha work"],
+                    "2026-02-01T00:00:00Z",
+                )],
+            },
+            BranchStack {
+                segments: vec![make_segment_at(
+                    &["beta"],
+                    "ch_beta",
+                    &["beta work", "beta base"],
+                    "2026-01-01T00:00:00Z",
+                )],
+            },
+        ]);
+
+        // Selecting beta expands its run and moves ● + ◀ there; alpha's row
+        // text stays in place.
+        insta::assert_snapshot!(render_to_string_with_state(
+            &graph,
+            &GraphViewState { selected_leaf: 1 }
+        ));
+    }
+
+    #[test]
+    fn nested_fork_gutters() {
+        let auth = make_segment_at(&["auth"], "ch_auth", &["auth work"], "2026-01-01T00:00:00Z");
+        let api = make_segment_at(&["api"], "ch_api", &["api work"], "2026-02-01T00:00:00Z");
+        let graph = make_graph(vec![
+            BranchStack {
+                segments: vec![
+                    auth.clone(),
+                    make_segment_at(
+                        &["email"],
+                        "ch_email",
+                        &["email work"],
+                        "2026-06-01T00:00:00Z",
+                    ),
+                ],
+            },
+            BranchStack {
+                segments: vec![
+                    auth.clone(),
+                    api.clone(),
+                    make_segment_at(
+                        &["integration"],
+                        "ch_int",
+                        &["integration work"],
+                        "2026-04-01T00:00:00Z",
+                    ),
+                ],
+            },
+            BranchStack {
+                segments: vec![
+                    auth,
+                    api,
+                    make_segment_at(
+                        &["ratelimit"],
+                        "ch_rate",
+                        &["ratelimit work"],
+                        "2026-03-01T00:00:00Z",
+                    ),
+                ],
+            },
+        ]);
+
+        insta::assert_snapshot!(render_to_string(&graph));
+    }
+
+    #[test]
+    fn renders_to_buffer_with_scroll() {
+        let graph = make_graph(vec![
+            BranchStack {
+                segments: vec![make_segment_at(
+                    &["alpha"],
+                    "ch_alpha",
+                    &["alpha work"],
+                    "2026-02-01T00:00:00Z",
+                )],
+            },
+            BranchStack {
+                segments: vec![make_segment_at(
+                    &["beta"],
+                    "ch_beta",
+                    &["beta work"],
+                    "2026-01-01T00:00:00Z",
+                )],
+            },
+        ]);
 
         let layout = build_layout(&graph);
-        let state = GraphViewState::new();
-        let widget = GraphWidget::new(&layout, &state);
 
-        let area = Rect::new(0, 0, 40, 10);
+        // Viewport shorter than the content: selecting beta (display row 1)
+        // anchors it at the top.
+        let state = GraphViewState { selected_leaf: 1 };
+        let widget = GraphWidget::new(&layout, &state);
+        let area = Rect::new(0, 0, 40, 2);
         let mut buf = Buffer::empty(area);
         widget.render(area, &mut buf);
 
@@ -491,43 +672,82 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n");
 
+        assert!(content.contains("beta"), "expected beta visible: {content}");
         assert!(
-            content.contains('\u{25cb}') || content.contains('\u{25c6}'),
-            "expected node characters in rendered output"
+            !content.contains("alpha"),
+            "expected alpha scrolled out: {content}"
         );
     }
 
     #[test]
-    fn shared_root_shows_branch() {
+    fn path_styling_is_cyan_and_others_dim() {
         let graph = make_graph(vec![
             BranchStack {
-                segments: vec![
-                    make_segment(&["base"], "ch_shared", &["shared base"]),
-                    make_segment(&["feat-a"], "ch_a", &["feature a"]),
-                ],
+                segments: vec![make_segment_at(
+                    &["alpha"],
+                    "ch_alpha",
+                    &["alpha work"],
+                    "2026-02-01T00:00:00Z",
+                )],
             },
             BranchStack {
-                segments: vec![
-                    make_segment(&["base"], "ch_shared", &["shared base"]),
-                    make_segment(&["feat-b"], "ch_b", &["feature b"]),
-                ],
+                segments: vec![make_segment_at(
+                    &["beta"],
+                    "ch_beta",
+                    &["beta work"],
+                    "2026-01-01T00:00:00Z",
+                )],
             },
         ]);
 
-        let text = render_to_string(&graph);
-        // Should have both ○ nodes, ◆ trunk, │ connectors, and ├╮ branch.
-        assert!(text.contains('\u{25cb}'), "expected ○:\n{text}");
-        assert!(text.contains('\u{25c6}'), "expected ◆:\n{text}");
-        assert!(text.contains('\u{2502}'), "expected │:\n{text}");
-        assert!(text.contains('\u{251c}'), "expected ├:\n{text}");
-        assert!(text.contains('\u{256f}'), "expected ╯:\n{text}");
+        let layout = build_layout(&graph);
+        let state = GraphViewState::new();
+        let widget = GraphWidget::new(&layout, &state);
+        let (lines, leaf_row) = widget.build_lines();
+
+        assert_eq!(leaf_row, 0);
+
+        // Selected leaf row: glyph span is cyan + bold.
+        let leaf_glyph = &lines[0].spans[1];
+        assert_eq!(leaf_glyph.content.as_ref(), NODE_SELECTED);
+        assert_eq!(leaf_glyph.style.fg, Some(Color::Cyan));
+        assert!(leaf_glyph.style.add_modifier.contains(Modifier::BOLD));
+
+        // Off-path commit row: glyph is ○ and dark gray.
+        let other_glyph = &lines[1].spans[2];
+        assert_eq!(other_glyph.content.as_ref(), NODE_OTHER);
+        assert_eq!(other_glyph.style.fg, Some(Color::DarkGray));
     }
 
     #[test]
-    fn display_line_count_correct() {
-        assert_eq!(display_line_count(0), 0);
-        assert_eq!(display_line_count(1), 1);
-        assert_eq!(display_line_count(2), 3);
-        assert_eq!(display_line_count(3), 5);
+    fn collapsed_height_and_max() {
+        let graph = make_graph(vec![
+            BranchStack {
+                segments: vec![make_segment_at(
+                    &["long"],
+                    "ch_long",
+                    &["l4", "l3", "l2", "l1"],
+                    "2026-02-01T00:00:00Z",
+                )],
+            },
+            BranchStack {
+                segments: vec![make_segment_at(
+                    &["short"],
+                    "ch_short",
+                    &["s1"],
+                    "2026-01-01T00:00:00Z",
+                )],
+            },
+        ]);
+
+        let layout = build_layout(&graph);
+
+        // Selecting `long` expands its 4 commits: 4 + short leaf + connector
+        // + trunk = 7 rows.
+        assert_eq!(collapsed_height(&layout, layout.leaves[0]), 7);
+        // Selecting `short` collapses long's 3 unbookmarked commits into one
+        // ⋯ row: leaf + ⋯ + short + connector + trunk = 5 rows.
+        assert_eq!(collapsed_height(&layout, layout.leaves[1]), 5);
+        assert_eq!(max_collapsed_height(&layout), 7);
     }
 }

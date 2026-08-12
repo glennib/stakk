@@ -41,11 +41,10 @@ use super::event::map_event;
 use super::event::map_event_editing;
 use super::graph_layout::GraphLayout;
 use super::graph_layout::build_layout;
-use super::graph_layout::path_to_leaf;
 use super::graph_widget::GraphViewState;
 use super::graph_widget::GraphWidget;
-use super::graph_widget::display_line_count;
 use super::graph_widget::graph_help_line;
+use super::graph_widget::max_collapsed_height;
 use crate::error::StakkError::Interrupted;
 use crate::error::StakkError::{self};
 use crate::graph::types::ChangeGraph;
@@ -145,9 +144,10 @@ fn viewport_height_for(content_rows: usize) -> io::Result<u16> {
     Ok(u16::try_from(height).expect("viewport height fits in u16"))
 }
 
-/// Viewport height for the graph screen.
+/// Viewport height for the graph screen: sized to the tallest collapsed
+/// view over all leaves, so switching leaves never needs a viewport resize.
 fn graph_viewport_height(layout: &GraphLayout) -> io::Result<u16> {
-    viewport_height_for(display_line_count(layout.total_rows))
+    viewport_height_for(max_collapsed_height(layout))
 }
 
 /// Create an inline-viewport terminal of the given height at the current
@@ -282,26 +282,25 @@ fn run_event_loop(
             Screen::GraphView => {
                 let action = map_event(&ev);
                 match action {
-                    Action::Left => {
-                        let leaves = layout.leaf_nodes();
+                    // Leaves are ordered top-to-bottom, so Up moves to the
+                    // previous leaf and Down to the next, like Left/Right.
+                    Action::Left | Action::Up => {
                         if graph_state.selected_leaf > 0 {
                             graph_state.selected_leaf -= 1;
                         } else {
-                            graph_state.selected_leaf = leaves.len().saturating_sub(1);
+                            graph_state.selected_leaf = layout.leaves.len().saturating_sub(1);
                         }
                     }
-                    Action::Right => {
-                        let leaves = layout.leaf_nodes();
-                        if graph_state.selected_leaf < leaves.len().saturating_sub(1) {
+                    Action::Right | Action::Down => {
+                        if graph_state.selected_leaf < layout.leaves.len().saturating_sub(1) {
                             graph_state.selected_leaf += 1;
                         } else {
                             graph_state.selected_leaf = 0;
                         }
                     }
                     Action::Select => {
-                        let leaves = layout.leaf_nodes();
-                        if let Some(leaf) = leaves.get(graph_state.selected_leaf) {
-                            let path = path_to_leaf(layout, leaf.row, leaf.col);
+                        if let Some(&leaf) = layout.leaves.get(graph_state.selected_leaf) {
+                            let path = layout.path_to_leaf(leaf);
                             let state = BookmarkAssignmentState::from_path(
                                 &path,
                                 has_bookmark_command,
@@ -318,9 +317,7 @@ fn run_event_loop(
                     Action::Quit => {
                         return Err(Interrupted);
                     }
-                    Action::Up
-                    | Action::Down
-                    | Action::Toggle
+                    Action::Toggle
                     | Action::ReverseToggle
                     | Action::EnterEdit
                     | Action::Vary
@@ -737,6 +734,17 @@ fn render_graph_screen(
             .add_modifier(Modifier::BOLD),
     )]);
     frame.render_widget(title, title_area);
+
+    // Leaf position indicator, right-aligned over the same title row.
+    let leaf_count = layout.leaves.len();
+    if leaf_count > 0 {
+        let indicator = Line::from(vec![Span::styled(
+            format!("leaf {}/{leaf_count} ", state.selected_leaf + 1),
+            Style::default().fg(Color::Gray).add_modifier(Modifier::DIM),
+        )])
+        .right_aligned();
+        frame.render_widget(indicator, title_area);
+    }
 
     let subtitle = Line::from(vec![Span::styled(
         " The highlighted branch will be submitted as a stack of pull requests.",

@@ -1,0 +1,9 @@
+---
+source: src/select/graph_widget.rs
+expression: "render_to_string_with_state(&graph, &GraphViewState { selected_leaf: 1 })"
+---
+ ○  alpha  "alpha work"
+ │ ●  beta  "beta work"  ◀
+ │ ●  "beta base"
+ ├─╯
+ ◆  trunk
