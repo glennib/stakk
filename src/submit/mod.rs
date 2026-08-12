@@ -266,11 +266,17 @@ pub struct SubmissionResult {
 ///
 /// Locates the stack containing `target_bookmark` in the change graph and
 /// returns all segments from trunk to the target (inclusive).
+///
+/// `selected_bookmarks` controls which segment boundaries survive as their
+/// own PR: segments whose bookmarks are all unselected fold their commits
+/// into the next selected segment. `None` selects every boundary — the
+/// explicit `stakk submit <bookmark>` path, where the whole ancestor chain
+/// is submitted as stacked PRs.
 pub fn analyze_submission(
     target_bookmark: &str,
     change_graph: &ChangeGraph,
     default_branch: &str,
-    selected_bookmarks: &HashSet<String>,
+    selected_bookmarks: Option<&HashSet<String>>,
 ) -> Result<SubmissionAnalysis, SubmitError> {
     let stack = change_graph
         .stacks
@@ -294,10 +300,11 @@ pub fn analyze_submission(
     let mut accumulated_commits: Vec<SegmentCommit> = Vec::new();
 
     for seg in &stack.segments[..=target_index] {
-        let is_selected = seg
-            .bookmark_names
-            .iter()
-            .any(|name| selected_bookmarks.contains(name));
+        let is_selected = selected_bookmarks.is_none_or(|selected| {
+            seg.bookmark_names
+                .iter()
+                .any(|name| selected.contains(name))
+        });
 
         if is_selected {
             let mut commits = seg.commits.clone();
@@ -319,31 +326,33 @@ pub fn analyze_submission(
     // it away would submit fewer PRs than the user selected. Selected names
     // above the target are fine: they're boundaries, just not part of this
     // submission.
-    let known: HashSet<&str> = stack
-        .segments
-        .iter()
-        .flat_map(|s| &s.bookmark_names)
-        .map(String::as_str)
-        .collect();
-    let mut missing: Vec<String> = selected_bookmarks
-        .iter()
-        .filter(|name| !known.contains(name.as_str()))
-        .cloned()
-        .collect();
-    if !missing.is_empty() {
-        missing.sort_unstable();
-        let immutable: Vec<String> = missing
+    if let Some(selected) = selected_bookmarks {
+        let known: HashSet<&str> = stack
+            .segments
             .iter()
-            .filter(|name| {
-                stack
-                    .segments
-                    .iter()
-                    .flat_map(|s| &s.commits)
-                    .any(|c| c.is_immutable && c.local_bookmark_names.contains(name))
-            })
+            .flat_map(|s| &s.bookmark_names)
+            .map(String::as_str)
+            .collect();
+        let mut missing: Vec<String> = selected
+            .iter()
+            .filter(|name| !known.contains(name.as_str()))
             .cloned()
             .collect();
-        return Err(SubmitError::SelectedBookmarksExcluded { missing, immutable });
+        if !missing.is_empty() {
+            missing.sort_unstable();
+            let immutable: Vec<String> = missing
+                .iter()
+                .filter(|name| {
+                    stack
+                        .segments
+                        .iter()
+                        .flat_map(|s| &s.commits)
+                        .any(|c| c.is_immutable && c.local_bookmark_names.contains(name))
+                })
+                .cloned()
+                .collect();
+            return Err(SubmitError::SelectedBookmarksExcluded { missing, immutable });
+        }
     }
 
     Ok(SubmissionAnalysis {
@@ -1291,8 +1300,7 @@ mod tests {
             segments: vec![seg],
         }]);
 
-        let all = HashSet::from(["feat-a".to_string()]);
-        let result = analyze_submission("feat-a", &graph, "main", &all).unwrap();
+        let result = analyze_submission("feat-a", &graph, "main", None).unwrap();
         assert_eq!(result.segments.len(), 1);
         assert_eq!(result.segments[0].bookmark_names, vec!["feat-a"]);
 
@@ -1308,12 +1316,7 @@ mod tests {
             segments: vec![seg_a, seg_b, seg_c],
         }]);
 
-        let all = HashSet::from([
-            "feat-a".to_string(),
-            "feat-b".to_string(),
-            "feat-c".to_string(),
-        ]);
-        let result = analyze_submission("feat-b", &graph, "main", &all).unwrap();
+        let result = analyze_submission("feat-b", &graph, "main", None).unwrap();
         assert_eq!(result.segments.len(), 2);
         assert_eq!(result.segments[0].bookmark_names, vec!["feat-a"]);
         assert_eq!(result.segments[1].bookmark_names, vec!["feat-b"]);
@@ -1327,8 +1330,7 @@ mod tests {
             segments: vec![seg_a, seg_b],
         }]);
 
-        let all = HashSet::from(["feat-a".to_string(), "feat-b".to_string()]);
-        let result = analyze_submission("feat-b", &graph, "main", &all).unwrap();
+        let result = analyze_submission("feat-b", &graph, "main", None).unwrap();
         assert_eq!(result.segments.len(), 2);
     }
 
@@ -1339,8 +1341,7 @@ mod tests {
             segments: vec![seg],
         }]);
 
-        let all = HashSet::from(["nonexistent".to_string()]);
-        let result = analyze_submission("nonexistent", &graph, "main", &all);
+        let result = analyze_submission("nonexistent", &graph, "main", None);
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(
@@ -1362,8 +1363,7 @@ mod tests {
         };
         let graph = make_graph(vec![stack1, stack2]);
 
-        let all = HashSet::from(["beta".to_string(), "gamma".to_string()]);
-        let result = analyze_submission("gamma", &graph, "main", &all).unwrap();
+        let result = analyze_submission("gamma", &graph, "main", None).unwrap();
         assert_eq!(result.segments.len(), 2);
         assert_eq!(result.segments[0].bookmark_names, vec!["beta"]);
         assert_eq!(result.segments[1].bookmark_names, vec!["gamma"]);
@@ -1381,7 +1381,7 @@ mod tests {
         // Only select the leaf — intermediate bookmarks should be excluded,
         // but their commits fold into the next retained segment.
         let selected = HashSet::from(["feat-c".to_string()]);
-        let result = analyze_submission("feat-c", &graph, "main", &selected).unwrap();
+        let result = analyze_submission("feat-c", &graph, "main", Some(&selected)).unwrap();
         assert_eq!(result.segments.len(), 1);
         assert_eq!(result.segments[0].bookmark_names, vec!["feat-c"]);
         assert_eq!(result.segments[0].commits.len(), 3); // C's own + B's + A's
@@ -1399,7 +1399,7 @@ mod tests {
         // Select first and last — middle should be excluded,
         // and middle's commits fold into the next retained segment.
         let selected = HashSet::from(["feat-a".to_string(), "feat-c".to_string()]);
-        let result = analyze_submission("feat-c", &graph, "main", &selected).unwrap();
+        let result = analyze_submission("feat-c", &graph, "main", Some(&selected)).unwrap();
         assert_eq!(result.segments.len(), 2);
         assert_eq!(result.segments[0].bookmark_names, vec!["feat-a"]);
         assert_eq!(result.segments[0].commits.len(), 1); // A's own only
@@ -1422,7 +1422,7 @@ mod tests {
         }]);
 
         let selected = HashSet::from(["feat-b".to_string(), "ghost".to_string()]);
-        let result = analyze_submission("feat-b", &graph, "main", &selected);
+        let result = analyze_submission("feat-b", &graph, "main", Some(&selected));
         match result {
             Err(SubmitError::SelectedBookmarksExcluded { missing, immutable }) => {
                 assert_eq!(missing, vec!["ghost"]);
@@ -1442,7 +1442,7 @@ mod tests {
         }]);
 
         let selected = HashSet::from(["feat-a".to_string(), "vanished".to_string()]);
-        let result = analyze_submission("feat-a", &graph, "main", &selected);
+        let result = analyze_submission("feat-a", &graph, "main", Some(&selected));
         match result {
             Err(SubmitError::SelectedBookmarksExcluded { missing, immutable }) => {
                 assert_eq!(missing, vec!["vanished"]);
@@ -1452,10 +1452,10 @@ mod tests {
         }
     }
 
-    /// The explicit `--bookmark <name>` path (selected == {target}) can never
-    /// trigger the excluded-bookmarks guard.
+    /// An interactive selection of only the target (selected == {target})
+    /// can never trigger the excluded-bookmarks guard.
     #[test]
-    fn analyze_explicit_single_bookmark_never_triggers_guard() {
+    fn analyze_selected_single_bookmark_never_triggers_guard() {
         let seg_a = make_segment(&["feat-a"], "ch_a", "feature a");
         let seg_b = make_segment(&["feat-b"], "ch_b", "feature b");
         let graph = make_graph(vec![BranchStack {
@@ -1463,9 +1463,33 @@ mod tests {
         }]);
 
         let selected = HashSet::from(["feat-b".to_string()]);
-        let result = analyze_submission("feat-b", &graph, "main", &selected).unwrap();
+        let result = analyze_submission("feat-b", &graph, "main", Some(&selected)).unwrap();
         assert_eq!(result.segments.len(), 1);
         assert_eq!(result.segments[0].bookmark_names, vec!["feat-b"]);
+    }
+
+    /// Regression test for <https://github.com/glennib/stakk/issues/184>:
+    /// `stakk submit <leaf>` (no interactive selection) must submit the leaf
+    /// and every bookmarked ancestor as separate stacked segments, not fold
+    /// the ancestors into one cumulative leaf PR.
+    #[test]
+    fn analyze_explicit_target_submits_all_ancestors() {
+        let seg_a = make_segment(&["feat-a"], "ch_a", "feature a");
+        let seg_b = make_segment(&["feat-b"], "ch_b", "feature b");
+        let seg_c = make_segment(&["feat-c"], "ch_c", "feature c");
+        let graph = make_graph(vec![BranchStack {
+            segments: vec![seg_a, seg_b, seg_c],
+        }]);
+
+        let result = analyze_submission("feat-c", &graph, "main", None).unwrap();
+        assert_eq!(result.segments.len(), 3);
+        assert_eq!(result.segments[0].bookmark_names, vec!["feat-a"]);
+        assert_eq!(result.segments[1].bookmark_names, vec!["feat-b"]);
+        assert_eq!(result.segments[2].bookmark_names, vec!["feat-c"]);
+        // No folding: each segment keeps exactly its own commit.
+        for seg in &result.segments {
+            assert_eq!(seg.commits.len(), 1);
+        }
     }
 
     // -----------------------------------------------------------------------
