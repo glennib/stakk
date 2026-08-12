@@ -188,6 +188,8 @@ pub struct SubmitArgs {
     /// --native-stacks): when a native server-side stack is in effect
     /// they behave like none, otherwise like comment/body. If native
     /// support cannot be determined they behave like ignore for the run.
+    /// The default is auto-comment, which is identical to comment as
+    /// long as native stacks are off.
     ///
     /// Switching modes migrates automatically: moving to body mode
     /// deletes the old stack comment, and moving to comment mode strips
@@ -195,7 +197,7 @@ pub struct SubmitArgs {
     #[arg(
         long,
         env = "STAKK_STACK_PLACEMENT",
-        default_value = "comment",
+        default_value = "auto-comment",
         value_enum,
         verbatim_doc_comment
     )]
@@ -217,6 +219,9 @@ pub struct SubmitArgs {
     /// The native stack is independent of --stack-placement: stack
     /// comments or body fences are still written unless placement is
     /// none, ignore, or an auto mode that resolved to native.
+    ///
+    /// The default may change to auto once GitHub's stacked pull
+    /// requests reach general availability.
     #[arg(
         long,
         env = "STAKK_NATIVE_STACKS",

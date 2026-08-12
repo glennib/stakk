@@ -390,9 +390,12 @@ following, update `scripts/record-demo.py` in the same change:
   the server-side stack and placing stakk's stack-info text are separate
   decisions (native + comment is valid while GitHub's preview UI is not
   universally rendered). The `auto-comment`/`auto-body` placements resolve
-  the redundancy per run instead of forbidding it. The intended GA default
-  flip is `native_stacks = auto` + `stack_placement = auto-comment`, which
-  never overrides an explicit comment/body choice.
+  the redundancy per run instead of forbidding it. `stack_placement`
+  already defaults to `auto-comment` (identical to `comment` while
+  `native_stacks` is `off`), so the intended GA change is a single default
+  flip — `native_stacks` to `auto` — which never overrides an explicit
+  comment/body choice. The `--native-stacks` docs advertise that the
+  default may change.
 - **Native stacks layer on, not replace** — GitHub's native stack is
   layered on top of chained base branches, so the execute phase
   (interleaved push → base update → create) runs unchanged and the stack

@@ -208,7 +208,8 @@ pr_mode = "draft"
 template = "/path/to/my-template.md.jinja"
 
 # Where to place stack info: "comment", "body", "none", "ignore",
-# "auto-comment", or "auto-body" (default: "comment").
+# "auto-comment", or "auto-body" (default: "auto-comment", which is
+# identical to "comment" as long as native_stacks is off).
 # "none" writes nothing and removes existing stack comments/body fences on
 # the next submit; "ignore" writes nothing and leaves them untouched.
 # "auto-comment"/"auto-body" behave like "none" when a native stack is in
@@ -216,7 +217,8 @@ template = "/path/to/my-template.md.jinja"
 stack_placement = "body"
 
 # Register submitted stacks with GitHub's native stacked pull requests
-# (public preview): "off", "on", or "auto" (default: "off").
+# (public preview): "off", "on", or "auto" (default: "off"; the default
+# may change to "auto" once the feature reaches general availability).
 # "on" fails the submit if the feature is not enabled for the repository;
 # "auto" probes once per submit and skips silently where unavailable.
 native_stacks = "auto"
@@ -311,7 +313,7 @@ stack_placement = "comment"
 | `STAKK_PR_MODE` | PR creation mode: `regular` or `draft` (overridden by `--pr-mode`) |
 | `STAKK_DRAFT` | Set to `true` to always create draft PRs (overridden by `--draft`) |
 | `STAKK_TEMPLATE` | Path to a custom minijinja template for stack comments (overridden by `--template`) |
-| `STAKK_STACK_PLACEMENT` | Where to place the stack info: `comment` (default), `body`, `none`, `ignore`, `auto-comment`, or `auto-body` (overridden by `--stack-placement`) |
+| `STAKK_STACK_PLACEMENT` | Where to place the stack info: `comment`, `body`, `none`, `ignore`, `auto-comment` (default), or `auto-body` (overridden by `--stack-placement`) |
 | `STAKK_NATIVE_STACKS` | Register stacks with GitHub's native stacked PRs: `off` (default), `on`, or `auto` (overridden by `--native-stacks`) |
 | `STAKK_AUTO_PREFIX` | Prefix for auto-generated bookmark names (overridden by `--auto-prefix`) |
 | `STAKK_SYNC_PR_CONTENT` | Sync PR title/body from commits: `none` (default), `title`, `body`, or `all` (overridden by `--sync-pr-content`) |
@@ -345,7 +347,7 @@ graph view, then assign bookmarks to any unmarked commits before submitting.
 | `--draft` | `STAKK_DRAFT` | Create new PRs as drafts |
 | `--remote <name>` | `STAKK_REMOTE` | Push to a specific remote (default: `origin`) |
 | `--template <path>` | `STAKK_TEMPLATE` | Use a custom minijinja template for stack comments |
-| `--stack-placement <mode>` | `STAKK_STACK_PLACEMENT` | Place stack info as a PR `comment` (default) or in the PR `body`; write none with `none` (removes existing) or `ignore` (leaves existing); `auto-comment`/`auto-body` defer to native stacks |
+| `--stack-placement <mode>` | `STAKK_STACK_PLACEMENT` | Place stack info as a PR `comment` or in the PR `body`; write none with `none` (removes existing) or `ignore` (leaves existing); `auto-comment` (default)/`auto-body` defer to native stacks |
 | `--native-stacks <mode>` | `STAKK_NATIVE_STACKS` | Register stacks with GitHub's native stacked PRs (public preview): `off` (default), `on` (fail if unavailable), `auto` (skip if unavailable) |
 | `--auto-prefix <prefix>` | `STAKK_AUTO_PREFIX` | Prefix for `[~]auto` bookmark names (e.g. `gb-`) |
 | `--sync-pr-content <mode>` | `STAKK_SYNC_PR_CONTENT` | Sync PR title/body from commits: `none` (default), `title`, `body`, `all` |
@@ -379,7 +381,10 @@ resolve this automatically — they behave like `none` (write nothing, retire
 existing artifacts) on runs where a native stack is in effect, and like
 `comment`/`body` otherwise, so `native_stacks = "auto"` +
 `stack_placement = "auto-comment"` gives native rendering where available
-and stack comments everywhere else, never both. If native support cannot be
+and stack comments everywhere else, never both. `auto-comment` is already
+the default placement (identical to `comment` while `native_stacks` is
+`off`), and the `native_stacks` default may change to `auto` once the
+GitHub feature reaches general availability. If native support cannot be
 determined (e.g. a transient network error), auto placements behave like
 `ignore` for that run — nothing is written or removed.
 
