@@ -102,6 +102,9 @@ fn apply_submit_defaults(config: &Config, mut cmd: Command) -> Command {
     if let Some(sp) = config.stack_placement {
         cmd = set_default(cmd, "stack_placement", &sp.to_string());
     }
+    if let Some(ns) = config.native_stacks {
+        cmd = set_default(cmd, "native_stacks", &ns.to_string());
+    }
     if let Some(spc) = config.sync_pr_content {
         cmd = set_default(cmd, "sync_pr_content", &spc.to_string());
     }
@@ -272,7 +275,10 @@ mod tests {
     #[test]
     fn stack_placement_default_no_config() {
         let cli = parse_with_config(Config::default(), &["stakk", "submit", "bm"]);
-        assert_eq!(submit_args(&cli).stack_placement, StackPlacement::Comment);
+        assert_eq!(
+            submit_args(&cli).stack_placement,
+            StackPlacement::AutoComment
+        );
     }
 
     #[test]
@@ -319,6 +325,36 @@ mod tests {
             &["stakk", "submit", "--stack-placement", "none", "bm"],
         );
         assert_eq!(submit_args(&cli).stack_placement, StackPlacement::None);
+    }
+
+    // -- native_stacks tests --
+
+    use crate::cli::submit::NativeStacks;
+
+    #[test]
+    fn native_stacks_default_no_config() {
+        let cli = parse_with_config(Config::default(), &["stakk", "submit", "bm"]);
+        assert_eq!(submit_args(&cli).native_stacks, NativeStacks::Off);
+    }
+
+    #[test]
+    fn native_stacks_config_on() {
+        let config = Config {
+            native_stacks: Some(NativeStacks::On),
+            ..Default::default()
+        };
+        let cli = parse_with_config(config, &["stakk", "submit", "bm"]);
+        assert_eq!(submit_args(&cli).native_stacks, NativeStacks::On);
+    }
+
+    #[test]
+    fn native_stacks_cli_overrides_config() {
+        let config = Config {
+            native_stacks: Some(NativeStacks::On),
+            ..Default::default()
+        };
+        let cli = parse_with_config(config, &["stakk", "submit", "--native-stacks", "off", "bm"]);
+        assert_eq!(submit_args(&cli).native_stacks, NativeStacks::Off);
     }
 
     // -- sync_pr_content tests --
@@ -500,6 +536,7 @@ remote = "upstream"
 pr_mode = "draft"
 template = "/path/to/template.jinja"
 stack_placement = "body"
+native_stacks = "on"
 sync_pr_content = "all"
 trailers = "strip"
 auto_prefix = "gb-"
@@ -512,6 +549,7 @@ heads_revset = "heads(all())"
         assert_eq!(config.pr_mode, Some(PrMode::Draft));
         assert_eq!(config.template.as_deref(), Some("/path/to/template.jinja"));
         assert_eq!(config.stack_placement, Some(StackPlacement::Body));
+        assert_eq!(config.native_stacks, Some(NativeStacks::On));
         assert_eq!(
             config.sync_pr_content,
             Some(crate::cli::submit::SyncPrContent::All),
@@ -556,6 +594,30 @@ heads_revset = "heads(all())"
     fn toml_stack_placement_none() {
         let config: Config = toml::from_str(r#"stack_placement = "none""#).unwrap();
         assert_eq!(config.stack_placement, Some(StackPlacement::None));
+    }
+
+    #[test]
+    fn toml_native_stacks_on() {
+        let config: Config = toml::from_str(r#"native_stacks = "on""#).unwrap();
+        assert_eq!(config.native_stacks, Some(NativeStacks::On));
+    }
+
+    #[test]
+    fn toml_native_stacks_auto() {
+        let config: Config = toml::from_str(r#"native_stacks = "auto""#).unwrap();
+        assert_eq!(config.native_stacks, Some(NativeStacks::Auto));
+    }
+
+    #[test]
+    fn toml_stack_placement_auto_comment() {
+        let config: Config = toml::from_str(r#"stack_placement = "auto-comment""#).unwrap();
+        assert_eq!(config.stack_placement, Some(StackPlacement::AutoComment));
+    }
+
+    #[test]
+    fn toml_stack_placement_auto_body() {
+        let config: Config = toml::from_str(r#"stack_placement = "auto-body""#).unwrap();
+        assert_eq!(config.stack_placement, Some(StackPlacement::AutoBody));
     }
 
     #[test]

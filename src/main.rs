@@ -260,9 +260,16 @@ async fn submit_bookmark(args: &SubmitArgs) -> Result<(), StakkError> {
 
     // Load template. In `none`/`ignore` placement no stack content is ever
     // rendered, so a custom template is neither read nor compiled — a broken
-    // or missing one must not fail a submission that will not use it.
+    // or missing one must not fail a submission that will not use it. Auto
+    // placements may render, so their template is always loaded.
     let template_source = match (&args.template, args.stack_placement) {
-        (Some(path), StackPlacement::Comment | StackPlacement::Body) => Some(
+        (
+            Some(path),
+            StackPlacement::Comment
+            | StackPlacement::Body
+            | StackPlacement::AutoComment
+            | StackPlacement::AutoBody,
+        ) => Some(
             std::fs::read_to_string(path).map_err(|e| StakkError::TemplateLoadFailed {
                 path: path.clone(),
                 reason: e.to_string(),
@@ -275,9 +282,15 @@ async fn submit_bookmark(args: &SubmitArgs) -> Result<(), StakkError> {
     // Phase 3: Execute. The header separates the plan from the result lines
     // printed during execution.
     println!("\nExecuting:");
-    let result =
-        submit::execute_submission_plan(&plan, &jj, &forge, &comment_env, args.stack_placement)
-            .await?;
+    let result = submit::execute_submission_plan(
+        &plan,
+        &jj,
+        &forge,
+        &comment_env,
+        args.stack_placement,
+        args.native_stacks,
+    )
+    .await?;
 
     println!("\nSubmitted {} bookmark(s).", result.stack_entries.len());
 
