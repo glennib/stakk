@@ -603,6 +603,8 @@ pub async fn execute_submission_plan<R: JjRunner, F: Forge>(
     let pb = indicatif::ProgressBar::new_spinner();
     pb.enable_steady_tick(std::time::Duration::from_millis(120));
 
+    let effective = resolve_placement(placement);
+
     let mut stack_entries = Vec::new();
 
     // Returns the body that is currently live on GitHub for this bookmark:
@@ -661,7 +663,7 @@ pub async fn execute_submission_plan<R: JjRunner, F: Forge>(
         // body-mode stack phase will splice the fence onto bp.body,
         // combining both updates into a single API call.
         if bp.needs_body_sync
-            && placement != StackPlacement::Body
+            && effective != EffectivePlacement::Body
             && let Some(pr) = &bp.existing_pr
         {
             let new_body = bp.body.as_deref().unwrap_or("");
@@ -710,13 +712,16 @@ pub async fn execute_submission_plan<R: JjRunner, F: Forge>(
 
     // Step 3: Concurrently create/update stack comments on all PRs.
     //
-    // Two cases write no stack info and instead retire any artifacts left on
-    // the PRs: `none` placement, and single-bookmark submissions, which are
-    // not a stack at all (the artifacts are stale leftovers from when the PR
-    // belonged to a larger stack).
-    let cleanup_only = placement == StackPlacement::None || stack_entries.len() == 1;
+    // Cleanup-resolved placements write no stack info and instead retire any
+    // artifacts left on the PRs; single-bookmark submissions take the same
+    // path because they are not a stack at all (the artifacts are stale
+    // leftovers from when the PR belonged to a larger stack). Ignore-resolved
+    // placements manage no artifacts at all: nothing is written, and existing
+    // stack comments and body fences are left untouched.
+    let cleanup_only = effective == EffectivePlacement::Cleanup || stack_entries.len() == 1;
 
-    if cleanup_only {
+    if effective == EffectivePlacement::Ignore {
+    } else if cleanup_only {
         pb.set_message("Cleaning up stack artifacts...");
         let cleanup_futures: Vec<_> = stack_entries
             .iter()
@@ -778,8 +783,8 @@ pub async fn execute_submission_plan<R: JjRunner, F: Forge>(
             })
             .collect();
 
-        match placement {
-            StackPlacement::Comment => {
+        match effective {
+            EffectivePlacement::Comment => {
                 let comment_futures: Vec<_> = stack_entries
                     .iter()
                     .enumerate()
@@ -843,7 +848,7 @@ pub async fn execute_submission_plan<R: JjRunner, F: Forge>(
                     stack_entries.len()
                 ));
             }
-            StackPlacement::Body => {
+            EffectivePlacement::Body => {
                 let body_futures: Vec<_> =
                     stack_entries
                         .iter()
@@ -903,13 +908,35 @@ pub async fn execute_submission_plan<R: JjRunner, F: Forge>(
             }
             // Handled by the cleanup branch above, which runs before any of
             // the rendering setup this arm would not use.
-            StackPlacement::None => {}
+            EffectivePlacement::Cleanup | EffectivePlacement::Ignore => {}
         }
     }
 
     pb.finish_and_clear();
 
     Ok(SubmissionResult { stack_entries })
+}
+
+/// The artifact behavior a `StackPlacement` resolves to for one run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EffectivePlacement {
+    /// Write/update a stack comment on each PR.
+    Comment,
+    /// Splice the stack into a fenced section of each PR body.
+    Body,
+    /// Write nothing; retire existing stack comments and body fences.
+    Cleanup,
+    /// Write nothing and leave existing artifacts untouched.
+    Ignore,
+}
+
+fn resolve_placement(placement: StackPlacement) -> EffectivePlacement {
+    match placement {
+        StackPlacement::Comment => EffectivePlacement::Comment,
+        StackPlacement::Body => EffectivePlacement::Body,
+        StackPlacement::None => EffectivePlacement::Cleanup,
+        StackPlacement::Ignore => EffectivePlacement::Ignore,
+    }
 }
 
 /// Remove any stack artifacts (stack comment and body fence) from a single PR.
@@ -3360,6 +3387,115 @@ mod tests {
         // run and is skipped.
         let listed = forge.listed_comments.lock().unwrap();
         assert_eq!(*listed, vec![50]);
+    }
+
+    // -- ignore placement --
+
+    #[tokio::test]
+    async fn execute_ignore_placement_touches_no_artifacts() {
+        use crate::forge::comment::splice_stack_into_body;
+
+        // PR #50 carries both an old stack comment and a body fence; ignore
+        // must neither update nor remove them.
+        let body_with_fence = splice_stack_into_body("Original PR body", "old stack content");
+        let plan = SubmissionPlan {
+            bookmark_plans: vec![
+                BookmarkPlan {
+                    bookmark_name: "feat-a".to_string(),
+                    base: "main".to_string(),
+                    title: "feature a".to_string(),
+                    body: None,
+                    existing_pr: Some(make_pr_with_body(50, "feat-a", "main", &body_with_fence)),
+                    needs_push: true,
+                    needs_create: false,
+                    needs_base_update: false,
+                    needs_title_sync: false,
+                    needs_body_sync: false,
+                },
+                BookmarkPlan {
+                    bookmark_name: "feat-b".to_string(),
+                    base: "feat-a".to_string(),
+                    title: "feature b".to_string(),
+                    body: None,
+                    existing_pr: None,
+                    needs_push: true,
+                    needs_create: true,
+                    needs_base_update: false,
+                    needs_title_sync: false,
+                    needs_body_sync: false,
+                },
+            ],
+            remote: "origin".to_string(),
+            pr_mode: PrMode::Regular,
+            default_branch: "main".to_string(),
+        };
+
+        let (runner, _push_calls) = MockJjRunner::new();
+        let jj = Jj::new(runner);
+        let forge = MockForge::new().with_existing_comments(
+            50,
+            vec![Comment {
+                id: 999,
+                body: "<!--- STAKK_STACK: e30= --->\nold stack comment".to_string(),
+            }],
+        );
+        let env = test_comment_env();
+
+        let result = execute_submission_plan(&plan, &jj, &forge, &env, StackPlacement::Ignore)
+            .await
+            .unwrap();
+
+        // The submission itself runs normally...
+        assert_eq!(result.stack_entries.len(), 2);
+        assert_eq!(forge.created_prs.lock().unwrap().len(), 1);
+        // ...but no artifact is written, updated, or removed — not even a
+        // comment lookup.
+        assert!(forge.created_comments.lock().unwrap().is_empty());
+        assert!(forge.updated_comments.lock().unwrap().is_empty());
+        assert!(forge.updated_bodies.lock().unwrap().is_empty());
+        assert!(forge.deleted_comments.lock().unwrap().is_empty());
+        assert!(forge.listed_comments.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn execute_ignore_single_bookmark_skips_cleanup() {
+        // Unlike other placements, a single-bookmark submission with ignore
+        // does not retire stale artifacts.
+        let plan = SubmissionPlan {
+            bookmark_plans: vec![BookmarkPlan {
+                bookmark_name: "feat-a".to_string(),
+                base: "main".to_string(),
+                title: "feature a".to_string(),
+                body: None,
+                existing_pr: Some(make_pr(50, "feat-a", "main")),
+                needs_push: true,
+                needs_create: false,
+                needs_base_update: false,
+                needs_title_sync: false,
+                needs_body_sync: false,
+            }],
+            remote: "origin".to_string(),
+            pr_mode: PrMode::Regular,
+            default_branch: "main".to_string(),
+        };
+
+        let (runner, _push_calls) = MockJjRunner::new();
+        let jj = Jj::new(runner);
+        let forge = MockForge::new().with_existing_comments(
+            50,
+            vec![Comment {
+                id: 999,
+                body: "<!--- STAKK_STACK: e30= --->\nold stack comment".to_string(),
+            }],
+        );
+        let env = test_comment_env();
+
+        execute_submission_plan(&plan, &jj, &forge, &env, StackPlacement::Ignore)
+            .await
+            .unwrap();
+
+        assert!(forge.deleted_comments.lock().unwrap().is_empty());
+        assert!(forge.listed_comments.lock().unwrap().is_empty());
     }
 
     #[tokio::test]
