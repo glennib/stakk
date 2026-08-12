@@ -25,6 +25,9 @@ pub enum StackPlacement {
     /// Write no stack info at all. Existing stack comments and body
     /// fences are removed on submit.
     None,
+    /// Write no stack info and leave existing stack comments and body
+    /// fences untouched.
+    Ignore,
 }
 
 impl std::fmt::Display for StackPlacement {

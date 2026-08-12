@@ -559,6 +559,12 @@ heads_revset = "heads(all())"
     }
 
     #[test]
+    fn toml_stack_placement_ignore() {
+        let config: Config = toml::from_str(r#"stack_placement = "ignore""#).unwrap();
+        assert_eq!(config.stack_placement, Some(StackPlacement::Ignore));
+    }
+
+    #[test]
     fn toml_stack_placement_invalid() {
         let result: Result<Config, _> = toml::from_str(r#"stack_placement = "invalid""#);
         assert!(result.is_err());
