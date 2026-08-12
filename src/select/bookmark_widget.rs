@@ -16,8 +16,8 @@ use ratatui::widgets::Widget;
 
 use super::BookmarkAssignment;
 use super::bookmark_gen;
-use super::graph_layout::LayoutNode;
 use super::tfidf;
+use crate::graph::layout::LayoutNode;
 use crate::jj::types::Signature;
 
 /// Whether the user-input row is in normal mode or edit (typing) mode.
@@ -1065,7 +1065,7 @@ pub fn bookmark_help_line(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::select::graph_layout::LayoutNode;
+    use crate::graph::layout::LayoutNode;
 
     fn make_node(
         change_id: &str,

@@ -18,9 +18,9 @@ use ratatui::text::Line;
 use ratatui::text::Span;
 use ratatui::widgets::Widget;
 
-use super::graph_layout::GraphLayout;
-use super::graph_layout::GraphRow;
-use super::graph_layout::LayoutNode;
+use crate::graph::layout::GraphLayout;
+use crate::graph::layout::GraphRow;
+use crate::graph::layout::LayoutNode;
 
 /// State for the graph view widget.
 #[derive(Debug)]
@@ -408,11 +408,11 @@ mod tests {
     use std::collections::HashSet;
 
     use super::*;
+    use crate::graph::layout::build_layout;
     use crate::graph::types::BookmarkSegment;
     use crate::graph::types::BranchStack;
     use crate::graph::types::ChangeGraph;
     use crate::graph::types::SegmentCommit;
-    use crate::select::graph_layout::build_layout;
 
     fn make_graph(stacks: Vec<BranchStack>) -> ChangeGraph {
         ChangeGraph {
