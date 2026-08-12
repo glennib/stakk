@@ -1,0 +1,12 @@
+---
+source: src/select/graph_widget.rs
+expression: render_to_string(&graph)
+---
+ ●  email  "email work"  ◀
+ │ ○  integration  "integration work"
+ │ │ ○  ratelimit  "ratelimit work"
+ │ ├─╯
+ │ ○  api  "api work"
+ ├─╯
+ ●  auth  "auth work"
+ ◆  trunk

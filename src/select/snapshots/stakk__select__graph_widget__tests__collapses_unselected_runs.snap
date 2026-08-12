@@ -1,0 +1,12 @@
+---
+source: src/select/graph_widget.rs
+expression: render_to_string(&graph)
+---
+ ●  feat  "feat top"  ◀
+ ●  "feat mid"
+ ●  "feat bottom"
+ │ ○  other  "other top"
+ │ ⋯  2 commits
+ │ ○  other-base  "other base"
+ ├─╯
+ ◆  trunk

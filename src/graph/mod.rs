@@ -383,7 +383,15 @@ fn group_segments_into_stacks(
         let ts_a = collect_timestamps_desc(a);
         let ts_b = collect_timestamps_desc(b);
         // Reverse comparison: largest (newest) timestamps first.
-        ts_b.cmp(&ts_a)
+        ts_b.cmp(&ts_a).then_with(|| {
+            fn leaf_change_id(s: &BranchStack) -> &str {
+                s.segments
+                    .last()
+                    .map(|seg| seg.change_id.as_str())
+                    .unwrap_or_default()
+            }
+            leaf_change_id(a).cmp(leaf_change_id(b))
+        })
     });
 
     stacks

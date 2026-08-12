@@ -1075,8 +1075,6 @@ mod tests {
         is_leaf: bool,
     ) -> LayoutNode {
         LayoutNode {
-            row: 0,
-            col: 0,
             change_id: change_id.to_string(),
             commit_id: format!("commit_{change_id}"),
             summary: summary.to_string(),
@@ -1086,7 +1084,7 @@ mod tests {
             is_immutable: false,
             is_trunk,
             is_leaf,
-            stack_index: 0,
+            parent: None,
             short_change_id: change_id[..4.min(change_id.len())].to_string(),
             author: crate::jj::types::Signature {
                 name: "Test".to_string(),
