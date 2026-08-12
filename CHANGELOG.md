@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.21.0](https://github.com/glennib/stakk/compare/v1.20.0...v1.21.0) - 2026-08-12
+
+### Added
+
+- *(submit)* add `ignore` stack placement
+
+### Fixed
+
+- submit all bookmarked ancestors when a bookmark is passed explicitly
+
+### Other
+
+- *(deps)* update rust crate minijinja to v2.24.0 ([#187](https://github.com/glennib/stakk/pull/187))
+- update gif
+
 ## [1.20.0](https://github.com/glennib/stakk/compare/v1.19.0...v1.20.0) - 2026-08-12
 
 ### Added
