@@ -100,6 +100,7 @@ src/
 │   ├── bookmark_gen.rs # Bookmark validation and external command execution
 │   ├── tfidf.rs     # TF-IDF algorithm for auto-generated bookmark names
 │   └── event.rs     # crossterm key event mapping to app actions
+├── show/            # `stakk show` rendering: pretty graph + schema-versioned JSON (offline, pure jj)
 ├── submit/          # Three-phase submission (analyze → plan → execute)
 └── error.rs         # Error types (thiserror)
 ```

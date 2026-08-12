@@ -18,9 +18,17 @@ use ratatui::text::Line;
 use ratatui::text::Span;
 use ratatui::widgets::Widget;
 
+use crate::graph::layout::CONNECTOR_TAIL;
+use crate::graph::layout::CONNECTOR_TEE;
+use crate::graph::layout::ELLIPSIS;
+use crate::graph::layout::GUTTER_CELL;
 use crate::graph::layout::GraphLayout;
 use crate::graph::layout::GraphRow;
+use crate::graph::layout::LEAF_MARKER;
 use crate::graph::layout::LayoutNode;
+use crate::graph::layout::NODE_OTHER;
+use crate::graph::layout::NODE_SELECTED;
+use crate::graph::layout::TRUNK_CHAR;
 
 /// State for the graph view widget.
 #[derive(Debug)]
@@ -34,16 +42,6 @@ impl GraphViewState {
         Self { selected_leaf: 0 }
     }
 }
-
-/// Characters used for rendering.
-const NODE_SELECTED: &str = "\u{25cf}"; // ●
-const NODE_OTHER: &str = "\u{25cb}"; // ○
-const TRUNK_CHAR: &str = "\u{25c6}"; // ◆
-const ELLIPSIS: &str = "\u{22ef}"; // ⋯
-const GUTTER_CELL: &str = "\u{2502} "; // "│ "
-const CONNECTOR_TEE: &str = "\u{251c}"; // ├
-const CONNECTOR_TAIL: &str = "\u{2500}\u{256f}"; // ─╯
-const LEAF_MARKER: &str = "\u{25c0}"; // ◀
 
 /// A row after collapsing, ready for rendering.
 enum DisplayRow<'a> {

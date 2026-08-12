@@ -346,24 +346,50 @@ are updated.
 
 ### `stakk show`
 
-Display repository status and all bookmark stacks without submitting.
+Display repository status and all bookmark stacks without submitting. Fully
+offline: only `jj` is queried, never GitHub — PR state is `stakk submit
+--dry-run`'s job.
 
-Shows the default branch, remotes, and all bookmark stacks with their commit
-summaries and PR counts:
+| Flag | Env var | Description |
+|------|--------|-------------|
+| `--format <format>` | | Output format: `pretty` (default) or `json` |
+
+The default `pretty` format renders a jj-log-style graph of all stacks,
+always fully expanded. Every commit row carries its short change id,
+bookmarks, and description summary; immutable commits and bookmarks excluded
+by the bookmarks revset are annotated:
 
 ```
 Default branch: main
 Remote: origin git@github.com:you/repo.git (you/repo)
 
-Stacks (3 found):
-  Stack 1:
-    feature-auth (1 commit(s)): feat: add authentication
-    feature-api (2 commit(s)): feat: add API endpoints
-  Stack 2:
-    feature-ui (1 commit(s)): feat: add UI layer
-  Stack 3:
-    feature-tests (1 commit(s)): test: add integration tests
+ ○  wmtk  feat-a  (no description set)
+ ○  wmtl  "feat a work"
+ │ ○  rlkv  feat-b  "feat b work"  (immutable — bookmark old-mark excluded by --bookmarks-revset)
+ ├─╯
+ ○  qzvs  base  "extend base"
+ ○  qzvt  "add base"
+ ◆  trunk
 ```
+
+`--format=json` emits a schema-versioned JSON document for machine
+consumption (scripts, agents). Identifiers in the document — change id
+prefixes and bookmark names — can be passed directly to `stakk submit`.
+
+- `schema_version` — currently `1`; bumped on breaking schema changes
+- `default_branch`
+- `remotes[]` — `name`, `url`, `github` (`owner/repo`, or `null` for
+  non-GitHub remotes)
+- `excluded_bookmark_count` — bookmarks excluded due to merge commits
+- `stacks[]` — one per leaf, trunk-to-leaf; shared ancestor segments are
+  repeated in every stack that contains them
+  - `segments[]` — `bookmark_names[]` and `commits[]` (oldest first)
+    - each commit: `change_id`, `short_change_id`, `commit_id`,
+      `description` (full), `author` (`name`, `email`, `timestamp`),
+      `files[]`, `is_immutable`, `local_bookmark_names[]` (unfiltered —
+      includes bookmarks the bookmarks revset excluded), `is_boundary`
+      (the commit its segment's bookmarks point at), `is_leaf` (the tip
+      of its stack)
 
 ### `stakk completions <shell>`
 
