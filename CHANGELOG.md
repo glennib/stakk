@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.20.0](https://github.com/glennib/stakk/compare/v1.19.0...v1.20.0) - 2026-08-12
+
+### Added
+
+- *(select)* redesign branch-stack screen as jj-log-style single graph
+
+### Fixed
+
+- *(deps)* cargo update
+
+### Other
+
+- *(media)* remove the blank gap and clear-flash from the demo gif
+- *(media)* automate README demo-gif recording
+
 ## [1.19.0](https://github.com/glennib/stakk/compare/v1.18.0...v1.19.0) - 2026-08-11
 
 ### Added
