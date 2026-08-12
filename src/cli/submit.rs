@@ -73,6 +73,33 @@ impl std::fmt::Display for TrailerHandling {
     }
 }
 
+/// Whether to register submitted stacks with the forge's native
+/// server-side stack feature (GitHub's stacked pull requests, public
+/// preview).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Deserialize, clap::ValueEnum)]
+#[serde(rename_all = "kebab-case")]
+pub enum NativeStacks {
+    /// Never touch the forge's stack API.
+    #[default]
+    Off,
+    /// Register/update the server-side stack on every submit; fail the
+    /// submit if the feature is not available on the repository.
+    On,
+    /// Probe the repository once per submit and register/update the
+    /// server-side stack when the feature is available; silently skip
+    /// it otherwise.
+    Auto,
+}
+
+impl std::fmt::Display for NativeStacks {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let pv = self
+            .to_possible_value()
+            .expect("all variants have possible values");
+        f.write_str(pv.get_name())
+    }
+}
+
 /// Arguments for the submit subcommand.
 #[derive(Debug, Args)]
 pub struct SubmitArgs {
@@ -153,7 +180,14 @@ pub struct SubmitArgs {
     ///
     /// In none mode no stack info is written at all. Existing stack
     /// comments and body fences are removed from each PR on submit, so
-    /// the feature can be retired cleanly.
+    /// the feature can be retired cleanly. Ignore mode also writes
+    /// nothing but leaves existing stack comments and body fences
+    /// untouched.
+    ///
+    /// The auto-comment and auto-body modes defer to native stacks (see
+    /// --native-stacks): when a native server-side stack is in effect
+    /// they behave like none, otherwise like comment/body. If native
+    /// support cannot be determined they behave like ignore for the run.
     ///
     /// Switching modes migrates automatically: moving to body mode
     /// deletes the old stack comment, and moving to comment mode strips
@@ -166,6 +200,31 @@ pub struct SubmitArgs {
         verbatim_doc_comment
     )]
     pub stack_placement: StackPlacement,
+
+    /// Whether to register submitted stacks with GitHub's native
+    /// stacked-pull-requests feature (public preview).
+    ///
+    /// When on, the server-side stack is created or updated after every
+    /// submit, and the submit fails with guidance if the feature is not
+    /// enabled for the repository (branches and PRs are still submitted
+    /// normally first). GitHub then renders the stack natively and
+    /// retargets the remaining PRs as the stack merges bottom-up.
+    ///
+    /// When auto, the repository is probed once per submit and the
+    /// server-side stack is registered only where the feature is
+    /// available — repositories without it are skipped silently.
+    ///
+    /// The native stack is independent of --stack-placement: stack
+    /// comments or body fences are still written unless placement is
+    /// none, ignore, or an auto mode that resolved to native.
+    #[arg(
+        long,
+        env = "STAKK_NATIVE_STACKS",
+        default_value = "off",
+        value_enum,
+        verbatim_doc_comment
+    )]
+    pub native_stacks: NativeStacks,
 
     /// Controls whether existing PR titles and/or bodies are updated
     /// from jj commit descriptions on every submit.

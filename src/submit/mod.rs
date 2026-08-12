@@ -12,12 +12,14 @@ use std::fmt;
 use miette::Diagnostic;
 use thiserror::Error;
 
+use crate::cli::submit::NativeStacks;
 use crate::cli::submit::PrMode;
 use crate::cli::submit::SyncPrContent;
 use crate::cli::submit::TrailerHandling;
 use crate::forge::CreatePrParams;
 use crate::forge::Forge;
 use crate::forge::ForgeError;
+use crate::forge::ForgeStack;
 use crate::forge::PullRequest;
 use crate::forge::comment::STAKK_REPO_URL;
 use crate::forge::comment::StackCommentContext;
@@ -193,6 +195,46 @@ pub enum SubmitError {
         #[source]
         source: ForgeError,
     },
+
+    /// Native stacks were requested but the forge does not offer them here.
+    #[error("native stacked pull requests are not enabled for this repository")]
+    #[diagnostic(
+        code(stakk::submit::stacks_unavailable),
+        help(
+            "your branches were pushed and PRs were created/updated normally — only the \
+             server-side stack linkage was skipped. GitHub's stacked pull requests are a preview \
+             feature that must be enabled per repository; set `--native-stacks auto` to use the \
+             feature only where available, or `off` (env: STAKK_NATIVE_STACKS)"
+        )
+    )]
+    StacksUnavailable {
+        #[source]
+        source: ForgeError,
+    },
+
+    /// Failed to reconcile the server-side stack after PRs were submitted.
+    #[error("failed to reconcile the server-side stack")]
+    #[diagnostic(
+        code(stakk::submit::stack_reconcile_failed),
+        help(
+            "your branches were pushed and PRs were created/updated normally — only the \
+             server-side stack linkage failed. Re-running `stakk submit` retries the \
+             reconciliation from scratch"
+        )
+    )]
+    StackReconcileFailed {
+        #[source]
+        source: ForgeError,
+    },
+}
+
+/// Wrap a stack-API error, routing the not-enabled case to its dedicated
+/// variant so miette renders the switch-placement guidance.
+fn wrap_stack_err(source: ForgeError) -> SubmitError {
+    match source {
+        ForgeError::StacksUnavailable { .. } => SubmitError::StacksUnavailable { source },
+        _ => SubmitError::StackReconcileFailed { source },
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -590,11 +632,42 @@ pub async fn execute_submission_plan<R: JjRunner, F: Forge>(
     forge: &F,
     comment_env: &minijinja::Environment<'_>,
     placement: StackPlacement,
+    native: NativeStacks,
 ) -> Result<SubmissionResult, SubmitError> {
     let pb = indicatif::ProgressBar::new_spinner();
     pb.enable_steady_tick(std::time::Duration::from_millis(120));
 
-    let effective = resolve_placement(placement);
+    // Resolve whether a native server-side stack is in effect for this run.
+    // The probe only runs for `auto`, and only when its answer is actually
+    // consulted: by an auto placement, or by the reconcile step (which needs
+    // more than one bookmark to form a stack).
+    let native_state = match native {
+        NativeStacks::Off => NativeState::Inactive,
+        NativeStacks::On => NativeState::Active,
+        NativeStacks::Auto => {
+            let consulted = matches!(
+                placement,
+                StackPlacement::AutoComment | StackPlacement::AutoBody
+            ) || plan.bookmark_plans.len() > 1;
+            if consulted {
+                match forge.supports_native_stacks().await {
+                    Ok(true) => NativeState::Active,
+                    Ok(false) => NativeState::Inactive,
+                    Err(e) => {
+                        pb.println(format!(
+                            "  Warning: could not determine whether native stacked PRs are \
+                             available: {e}. Stack reconciliation is skipped and auto placements \
+                             behave like `ignore` this run."
+                        ));
+                        NativeState::Unknown
+                    }
+                }
+            } else {
+                NativeState::Unknown
+            }
+        }
+    };
+    let effective = resolve_placement(placement, native_state);
 
     let mut stack_entries = Vec::new();
 
@@ -903,9 +976,30 @@ pub async fn execute_submission_plan<R: JjRunner, F: Forge>(
         }
     }
 
+    // Step 4: When native stacks are in effect, converge the forge's
+    // server-side stack with the submitted PRs. A single PR is not a stack,
+    // so single-bookmark submissions skip the stack API entirely (a stale
+    // server-side stack containing that PR is left alone).
+    if native_state == NativeState::Active && stack_entries.len() > 1 {
+        pb.set_message("Reconciling server-side stack...");
+        let desired: Vec<u64> = stack_entries.iter().map(|e| e.pr_number).collect();
+        reconcile_native_stack(forge, &desired, &pb).await?;
+    }
+
     pb.finish_and_clear();
 
     Ok(SubmissionResult { stack_entries })
+}
+
+/// Whether a native server-side stack is in effect for one run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NativeState {
+    /// The server-side stack will be reconciled.
+    Active,
+    /// Native stacks are off or definitively unavailable.
+    Inactive,
+    /// Availability could not be determined; avoid destructive decisions.
+    Unknown,
 }
 
 /// The artifact behavior a `StackPlacement` resolves to for one run.
@@ -921,13 +1015,108 @@ enum EffectivePlacement {
     Ignore,
 }
 
-fn resolve_placement(placement: StackPlacement) -> EffectivePlacement {
+fn resolve_placement(placement: StackPlacement, native: NativeState) -> EffectivePlacement {
     match placement {
         StackPlacement::Comment => EffectivePlacement::Comment,
         StackPlacement::Body => EffectivePlacement::Body,
         StackPlacement::None => EffectivePlacement::Cleanup,
         StackPlacement::Ignore => EffectivePlacement::Ignore,
+        StackPlacement::AutoComment => match native {
+            NativeState::Active => EffectivePlacement::Cleanup,
+            NativeState::Inactive => EffectivePlacement::Comment,
+            NativeState::Unknown => EffectivePlacement::Ignore,
+        },
+        StackPlacement::AutoBody => match native {
+            NativeState::Active => EffectivePlacement::Cleanup,
+            NativeState::Inactive => EffectivePlacement::Body,
+            NativeState::Unknown => EffectivePlacement::Ignore,
+        },
     }
+}
+
+/// Converge the forge's server-side stack with the submitted PRs.
+///
+/// `desired` holds the PR numbers bottom-to-top; the caller guarantees at
+/// least two entries. Idempotent: every failure point leaves the server in
+/// a state from which a re-run converges.
+async fn reconcile_native_stack<F: Forge>(
+    forge: &F,
+    desired: &[u64],
+    pb: &indicatif::ProgressBar,
+) -> Result<(), SubmitError> {
+    // Query every desired PR, not just the bottom one — an upper PR held by
+    // a foreign stack would otherwise make create/add fail opaquely.
+    let lookups = futures::future::join_all(desired.iter().map(|&n| forge.get_stacks_for_pr(n)));
+    let mut stacks: Vec<ForgeStack> = Vec::new();
+    for result in lookups.await {
+        for stack in result.map_err(wrap_stack_err)? {
+            if !stacks.iter().any(|s| s.number == stack.number) {
+                stacks.push(stack);
+            }
+        }
+    }
+
+    match stacks.as_slice() {
+        [] => {
+            let created = forge.create_stack(desired).await.map_err(wrap_stack_err)?;
+            pb.println(format!(
+                "  Created server-side stack #{} ({} PRs).",
+                created.number,
+                desired.len()
+            ));
+        }
+        [stack] if stack.open_pr_numbers == desired => {
+            pb.println(format!(
+                "  Server-side stack #{} is up to date.",
+                stack.number
+            ));
+        }
+        [stack]
+            if !stack.open_pr_numbers.is_empty() && desired.starts_with(&stack.open_pr_numbers) =>
+        {
+            let suffix = &desired[stack.open_pr_numbers.len()..];
+            match forge.add_to_stack(stack.number, suffix).await {
+                Ok(_) => {
+                    pb.println(format!(
+                        "  Added {} PR(s) to server-side stack #{}.",
+                        suffix.len(),
+                        stack.number
+                    ));
+                }
+                // The preview API's add semantics are not fully specified;
+                // if the server rejects the append, converge via the
+                // universal dissolve-and-recreate path instead.
+                Err(ForgeError::StackConflict { .. }) => {
+                    forge.unstack(stack.number).await.map_err(wrap_stack_err)?;
+                    let created = forge.create_stack(desired).await.map_err(wrap_stack_err)?;
+                    pb.println(format!(
+                        "  Recreated server-side stack #{} ({} PRs).",
+                        created.number,
+                        desired.len()
+                    ));
+                }
+                Err(e) => return Err(wrap_stack_err(e)),
+            }
+        }
+        _ => {
+            // Reorder, foreign members, multiple stacks, or a stack whose
+            // open PRs all merged away: dissolve everything and rebuild.
+            // `unstack` removes unmerged PRs wholesale (the preview API has
+            // no per-PR removal); merged leftovers cannot conflict with the
+            // new stack.
+            for stack in &stacks {
+                forge.unstack(stack.number).await.map_err(wrap_stack_err)?;
+            }
+            let created = forge.create_stack(desired).await.map_err(wrap_stack_err)?;
+            pb.println(format!(
+                "  Recreated server-side stack #{} ({} PRs).",
+                created.number,
+                desired.len()
+            ));
+        }
+    }
+
+    Ok(())
 }
 
 /// Remove any stack artifacts (stack comment and body fence) from a single PR.
@@ -984,6 +1173,7 @@ mod tests {
     use super::*;
     use crate::forge::Comment;
     use crate::forge::ForgeError;
+    use crate::forge::ForgeStack;
     use crate::forge::PrState;
     use crate::forge::comment::build_comment_env;
     use crate::graph::types::BranchStack;
@@ -1086,6 +1276,22 @@ mod tests {
         listed_comments: Mutex<Vec<u64>>,
         next_pr_number: Mutex<u64>,
         ops: Option<OpLog>,
+        existing_stacks: Vec<ForgeStack>,
+        /// When set, `get_stacks_for_pr` fails with `StacksUnavailable`.
+        stacks_unavailable: bool,
+        /// When set, `add_to_stack` fails with `StackConflict`.
+        add_conflicts: bool,
+        /// What `supports_native_stacks` reports: `Some(bool)` is a
+        /// definitive answer, `None` a transient failure.
+        probe_supported: Option<bool>,
+        /// Number of `supports_native_stacks` calls.
+        probe_calls: Mutex<usize>,
+        /// PR numbers `get_stacks_for_pr` was called for.
+        stack_lookups: Mutex<Vec<u64>>,
+        created_stacks: Mutex<Vec<Vec<u64>>>,
+        added_to_stacks: Mutex<Vec<(u64, Vec<u64>)>>,
+        unstacked: Mutex<Vec<u64>>,
+        next_stack_number: Mutex<u64>,
     }
 
     impl MockForge {
@@ -1103,6 +1309,16 @@ mod tests {
                 listed_comments: Mutex::new(Vec::new()),
                 next_pr_number: Mutex::new(100),
                 ops: None,
+                existing_stacks: Vec::new(),
+                stacks_unavailable: false,
+                add_conflicts: false,
+                probe_supported: Some(true),
+                probe_calls: Mutex::new(0),
+                stack_lookups: Mutex::new(Vec::new()),
+                created_stacks: Mutex::new(Vec::new()),
+                added_to_stacks: Mutex::new(Vec::new()),
+                unstacked: Mutex::new(Vec::new()),
+                next_stack_number: Mutex::new(500),
             }
         }
 
@@ -1118,6 +1334,34 @@ mod tests {
 
         fn with_existing_comments(mut self, pr_number: u64, comments: Vec<Comment>) -> Self {
             self.existing_comments.insert(pr_number, comments);
+            self
+        }
+
+        fn with_existing_stack(mut self, number: u64, open_prs: &[u64]) -> Self {
+            self.existing_stacks.push(ForgeStack {
+                number,
+                open_pr_numbers: open_prs.to_vec(),
+            });
+            self
+        }
+
+        fn with_stacks_unavailable(mut self) -> Self {
+            self.stacks_unavailable = true;
+            self
+        }
+
+        fn with_add_conflict(mut self) -> Self {
+            self.add_conflicts = true;
+            self
+        }
+
+        fn with_probe_unsupported(mut self) -> Self {
+            self.probe_supported = Some(false);
+            self
+        }
+
+        fn with_probe_error(mut self) -> Self {
+            self.probe_supported = None;
             self
         }
     }
@@ -1245,6 +1489,93 @@ mod tests {
         ) -> impl std::future::Future<Output = Result<(), ForgeError>> + Send {
             self.deleted_comments.lock().unwrap().push(comment_id);
             async { Ok(()) }
+        }
+
+        fn get_stacks_for_pr(
+            &self,
+            pr_number: u64,
+        ) -> impl std::future::Future<Output = Result<Vec<ForgeStack>, ForgeError>> + Send {
+            self.stack_lookups.lock().unwrap().push(pr_number);
+            let result = if self.stacks_unavailable {
+                Err(ForgeError::StacksUnavailable {
+                    message: "not enabled".to_string(),
+                    source: "test".to_string().into(),
+                })
+            } else {
+                // Snapshot semantics: the reconcile queries before mutating,
+                // so fixture stacks need not reflect later mutations.
+                Ok(self
+                    .existing_stacks
+                    .iter()
+                    .filter(|s| s.open_pr_numbers.contains(&pr_number))
+                    .cloned()
+                    .collect())
+            };
+            async move { result }
+        }
+
+        fn create_stack(
+            &self,
+            pr_numbers: &[u64],
+        ) -> impl std::future::Future<Output = Result<ForgeStack, ForgeError>> + Send {
+            let mut counter = self.next_stack_number.lock().unwrap();
+            let number = *counter;
+            *counter += 1;
+            drop(counter);
+            let stack = ForgeStack {
+                number,
+                open_pr_numbers: pr_numbers.to_vec(),
+            };
+            self.created_stacks
+                .lock()
+                .unwrap()
+                .push(pr_numbers.to_vec());
+            async move { Ok(stack) }
+        }
+
+        fn add_to_stack(
+            &self,
+            stack_number: u64,
+            pr_numbers: &[u64],
+        ) -> impl std::future::Future<Output = Result<ForgeStack, ForgeError>> + Send {
+            let result = if self.add_conflicts {
+                Err(ForgeError::StackConflict {
+                    message: "conflict".to_string(),
+                    source: "test".to_string().into(),
+                })
+            } else {
+                self.added_to_stacks
+                    .lock()
+                    .unwrap()
+                    .push((stack_number, pr_numbers.to_vec()));
+                Ok(ForgeStack {
+                    number: stack_number,
+                    open_pr_numbers: pr_numbers.to_vec(),
+                })
+            };
+            async move { result }
+        }
+
+        fn unstack(
+            &self,
+            stack_number: u64,
+        ) -> impl std::future::Future<Output = Result<(), ForgeError>> + Send {
+            self.unstacked.lock().unwrap().push(stack_number);
+            async { Ok(()) }
+        }
+
+        fn supports_native_stacks(
+            &self,
+        ) -> impl std::future::Future<Output = Result<bool, ForgeError>> + Send {
+            *self.probe_calls.lock().unwrap() += 1;
+            let result = match self.probe_supported {
+                Some(supported) => Ok(supported),
+                None => Err(ForgeError::Api {
+                    message: "probe failed".to_string(),
+                    source: "test".to_string().into(),
+                }),
+            };
+            async move { result }
         }
     }
 
@@ -1946,9 +2277,16 @@ mod tests {
         let forge = MockForge::new();
         let env = test_comment_env();
 
-        let result = execute_submission_plan(&plan, &jj, &forge, &env, StackPlacement::Comment)
-            .await
-            .unwrap();
+        let result = execute_submission_plan(
+            &plan,
+            &jj,
+            &forge,
+            &env,
+            StackPlacement::Comment,
+            NativeStacks::Off,
+        )
+        .await
+        .unwrap();
 
         assert_eq!(result.stack_entries.len(), 2);
 
@@ -1985,9 +2323,16 @@ mod tests {
         let forge = MockForge::new();
         let env = test_comment_env();
 
-        execute_submission_plan(&plan, &jj, &forge, &env, StackPlacement::Comment)
-            .await
-            .unwrap();
+        execute_submission_plan(
+            &plan,
+            &jj,
+            &forge,
+            &env,
+            StackPlacement::Comment,
+            NativeStacks::Off,
+        )
+        .await
+        .unwrap();
 
         let updated = forge.updated_bases.lock().unwrap();
         assert_eq!(updated.len(), 1);
@@ -2033,9 +2378,16 @@ mod tests {
         let forge = MockForge::new();
         let env = test_comment_env();
 
-        execute_submission_plan(&plan, &jj, &forge, &env, StackPlacement::Comment)
-            .await
-            .unwrap();
+        execute_submission_plan(
+            &plan,
+            &jj,
+            &forge,
+            &env,
+            StackPlacement::Comment,
+            NativeStacks::Off,
+        )
+        .await
+        .unwrap();
 
         let comments = forge.created_comments.lock().unwrap();
         // One stack comment per PR.
@@ -2120,9 +2472,16 @@ mod tests {
             }],
         );
 
-        execute_submission_plan(&plan, &jj, &forge, &env, StackPlacement::Comment)
-            .await
-            .unwrap();
+        execute_submission_plan(
+            &plan,
+            &jj,
+            &forge,
+            &env,
+            StackPlacement::Comment,
+            NativeStacks::Off,
+        )
+        .await
+        .unwrap();
 
         // Should have updated the existing comment on PR #50, not created a
         // new one. A new comment is created for the second PR.
@@ -2173,9 +2532,16 @@ mod tests {
         let forge = MockForge::new();
         let env = test_comment_env();
 
-        execute_submission_plan(&plan, &jj, &forge, &env, StackPlacement::Comment)
-            .await
-            .unwrap();
+        execute_submission_plan(
+            &plan,
+            &jj,
+            &forge,
+            &env,
+            StackPlacement::Comment,
+            NativeStacks::Off,
+        )
+        .await
+        .unwrap();
 
         let calls = push_calls.lock().unwrap();
         assert_eq!(calls.len(), 2);
@@ -2235,9 +2601,16 @@ mod tests {
         let forge = MockForge::new();
         let env = test_comment_env();
 
-        execute_submission_plan(&plan, &jj, &forge, &env, StackPlacement::Comment)
-            .await
-            .unwrap();
+        execute_submission_plan(
+            &plan,
+            &jj,
+            &forge,
+            &env,
+            StackPlacement::Comment,
+            NativeStacks::Off,
+        )
+        .await
+        .unwrap();
 
         let created = forge.created_prs.lock().unwrap();
         assert_eq!(created.len(), 1);
@@ -2269,9 +2642,16 @@ mod tests {
         let forge = MockForge::new();
         let env = test_comment_env();
 
-        execute_submission_plan(&plan, &jj, &forge, &env, StackPlacement::Comment)
-            .await
-            .unwrap();
+        execute_submission_plan(
+            &plan,
+            &jj,
+            &forge,
+            &env,
+            StackPlacement::Comment,
+            NativeStacks::Off,
+        )
+        .await
+        .unwrap();
 
         let updated_titles = forge.updated_titles.lock().unwrap();
         assert_eq!(updated_titles.len(), 1);
@@ -2307,9 +2687,16 @@ mod tests {
         let forge = MockForge::new();
         let env = test_comment_env();
 
-        execute_submission_plan(&plan, &jj, &forge, &env, StackPlacement::Comment)
-            .await
-            .unwrap();
+        execute_submission_plan(
+            &plan,
+            &jj,
+            &forge,
+            &env,
+            StackPlacement::Comment,
+            NativeStacks::Off,
+        )
+        .await
+        .unwrap();
 
         let updated_titles = forge.updated_titles.lock().unwrap();
         assert_eq!(updated_titles[0], (42, "title only".to_string()));
@@ -2344,9 +2731,16 @@ mod tests {
         let forge = MockForge::new();
         let env = test_comment_env();
 
-        execute_submission_plan(&plan, &jj, &forge, &env, StackPlacement::Comment)
-            .await
-            .unwrap();
+        execute_submission_plan(
+            &plan,
+            &jj,
+            &forge,
+            &env,
+            StackPlacement::Comment,
+            NativeStacks::Off,
+        )
+        .await
+        .unwrap();
 
         let updated_titles = forge.updated_titles.lock().unwrap();
         assert!(updated_titles.is_empty());
@@ -2391,9 +2785,16 @@ mod tests {
         let forge = MockForge::new();
         let env = test_comment_env();
 
-        execute_submission_plan(&plan, &jj, &forge, &env, StackPlacement::Body)
-            .await
-            .unwrap();
+        execute_submission_plan(
+            &plan,
+            &jj,
+            &forge,
+            &env,
+            StackPlacement::Body,
+            NativeStacks::Off,
+        )
+        .await
+        .unwrap();
 
         // Body sync is skipped in the per-bookmark loop when body-mode is
         // active — the fence-splicing phase handles it in a single API call.
@@ -2779,9 +3180,16 @@ mod tests {
         let forge = MockForge::new();
         let env = test_comment_env();
 
-        execute_submission_plan(&plan, &jj, &forge, &env, StackPlacement::Body)
-            .await
-            .unwrap();
+        execute_submission_plan(
+            &plan,
+            &jj,
+            &forge,
+            &env,
+            StackPlacement::Body,
+            NativeStacks::Off,
+        )
+        .await
+        .unwrap();
 
         let updated_bodies = forge.updated_bodies.lock().unwrap();
         assert_eq!(updated_bodies.len(), 2);
@@ -2843,9 +3251,16 @@ mod tests {
         let forge = MockForge::new();
         let env = test_comment_env();
 
-        execute_submission_plan(&plan, &jj, &forge, &env, StackPlacement::Body)
-            .await
-            .unwrap();
+        execute_submission_plan(
+            &plan,
+            &jj,
+            &forge,
+            &env,
+            StackPlacement::Body,
+            NativeStacks::Off,
+        )
+        .await
+        .unwrap();
 
         let updated_bodies = forge.updated_bodies.lock().unwrap();
         assert_eq!(updated_bodies.len(), 2);
@@ -2940,9 +3355,16 @@ mod tests {
             }],
         );
 
-        execute_submission_plan(&plan, &jj, &forge, &env, StackPlacement::Body)
-            .await
-            .unwrap();
+        execute_submission_plan(
+            &plan,
+            &jj,
+            &forge,
+            &env,
+            StackPlacement::Body,
+            NativeStacks::Off,
+        )
+        .await
+        .unwrap();
 
         // Should have written body for both PRs.
         let updated_bodies = forge.updated_bodies.lock().unwrap();
@@ -3000,9 +3422,16 @@ mod tests {
         let forge = MockForge::new();
         let env = test_comment_env();
 
-        execute_submission_plan(&plan, &jj, &forge, &env, StackPlacement::Comment)
-            .await
-            .unwrap();
+        execute_submission_plan(
+            &plan,
+            &jj,
+            &forge,
+            &env,
+            StackPlacement::Comment,
+            NativeStacks::Off,
+        )
+        .await
+        .unwrap();
 
         // Should have created comments for both PRs.
         let created_comments = forge.created_comments.lock().unwrap();
@@ -3049,9 +3478,16 @@ mod tests {
         let forge = MockForge::new();
         let env = test_comment_env();
 
-        let result = execute_submission_plan(&plan, &jj, &forge, &env, StackPlacement::Comment)
-            .await
-            .unwrap();
+        let result = execute_submission_plan(
+            &plan,
+            &jj,
+            &forge,
+            &env,
+            StackPlacement::Comment,
+            NativeStacks::Off,
+        )
+        .await
+        .unwrap();
 
         assert_eq!(result.stack_entries.len(), 1);
 
@@ -3129,9 +3565,16 @@ mod tests {
             }],
         );
 
-        execute_submission_plan(&plan, &jj, &forge, &env, StackPlacement::Comment)
-            .await
-            .unwrap();
+        execute_submission_plan(
+            &plan,
+            &jj,
+            &forge,
+            &env,
+            StackPlacement::Comment,
+            NativeStacks::Off,
+        )
+        .await
+        .unwrap();
 
         // Old stack comment should be deleted.
         let deleted = forge.deleted_comments.lock().unwrap();
@@ -3171,9 +3614,16 @@ mod tests {
         let forge = MockForge::new();
         let env = test_comment_env();
 
-        execute_submission_plan(&plan, &jj, &forge, &env, StackPlacement::Body)
-            .await
-            .unwrap();
+        execute_submission_plan(
+            &plan,
+            &jj,
+            &forge,
+            &env,
+            StackPlacement::Body,
+            NativeStacks::Off,
+        )
+        .await
+        .unwrap();
 
         // Body fence should be stripped.
         let updated_bodies = forge.updated_bodies.lock().unwrap();
@@ -3233,9 +3683,16 @@ mod tests {
         let forge = MockForge::new();
         let env = test_comment_env();
 
-        let result = execute_submission_plan(&plan, &jj, &forge, &env, StackPlacement::None)
-            .await
-            .unwrap();
+        let result = execute_submission_plan(
+            &plan,
+            &jj,
+            &forge,
+            &env,
+            StackPlacement::None,
+            NativeStacks::Off,
+        )
+        .await
+        .unwrap();
 
         assert_eq!(result.stack_entries.len(), 2);
 
@@ -3336,9 +3793,16 @@ mod tests {
             }],
         );
 
-        execute_submission_plan(&plan, &jj, &forge, &env, StackPlacement::None)
-            .await
-            .unwrap();
+        execute_submission_plan(
+            &plan,
+            &jj,
+            &forge,
+            &env,
+            StackPlacement::None,
+            NativeStacks::Off,
+        )
+        .await
+        .unwrap();
 
         // Old stack comment on PR #50 should be deleted.
         let deleted = forge.deleted_comments.lock().unwrap();
@@ -3417,9 +3881,16 @@ mod tests {
         );
         let env = test_comment_env();
 
-        let result = execute_submission_plan(&plan, &jj, &forge, &env, StackPlacement::Ignore)
-            .await
-            .unwrap();
+        let result = execute_submission_plan(
+            &plan,
+            &jj,
+            &forge,
+            &env,
+            StackPlacement::Ignore,
+            NativeStacks::Off,
+        )
+        .await
+        .unwrap();
 
         // The submission itself runs normally...
         assert_eq!(result.stack_entries.len(), 2);
@@ -3466,12 +3937,592 @@ mod tests {
         );
         let env = test_comment_env();
 
-        execute_submission_plan(&plan, &jj, &forge, &env, StackPlacement::Ignore)
-            .await
-            .unwrap();
+        execute_submission_plan(
+            &plan,
+            &jj,
+            &forge,
+            &env,
+            StackPlacement::Ignore,
+            NativeStacks::Off,
+        )
+        .await
+        .unwrap();
 
         assert!(forge.deleted_comments.lock().unwrap().is_empty());
         assert!(forge.listed_comments.lock().unwrap().is_empty());
+    }
+
+    // -- auto placements & native_stacks auto --
+
+    async fn run_with(
+        plan: &SubmissionPlan,
+        forge: &MockForge,
+        placement: StackPlacement,
+        native: NativeStacks,
+    ) -> SubmissionResult {
+        let (runner, _push_calls) = MockJjRunner::new();
+        let jj = Jj::new(runner);
+        let env = test_comment_env();
+        execute_submission_plan(plan, &jj, forge, &env, placement, native)
+            .await
+            .unwrap()
+    }
+
+    /// Two-bookmark all-create plan shared by the auto tests.
+    fn two_create_plan() -> SubmissionPlan {
+        SubmissionPlan {
+            bookmark_plans: vec![
+                BookmarkPlan {
+                    bookmark_name: "feat-a".to_string(),
+                    base: "main".to_string(),
+                    title: "feature a".to_string(),
+                    body: None,
+                    existing_pr: None,
+                    needs_push: true,
+                    needs_create: true,
+                    needs_base_update: false,
+                    needs_title_sync: false,
+                    needs_body_sync: false,
+                },
+                BookmarkPlan {
+                    bookmark_name: "feat-b".to_string(),
+                    base: "feat-a".to_string(),
+                    title: "feature b".to_string(),
+                    body: None,
+                    existing_pr: None,
+                    needs_push: true,
+                    needs_create: true,
+                    needs_base_update: false,
+                    needs_title_sync: false,
+                    needs_body_sync: false,
+                },
+            ],
+            remote: "origin".to_string(),
+            pr_mode: PrMode::Regular,
+            default_branch: "main".to_string(),
+        }
+    }
+
+    #[tokio::test]
+    async fn execute_auto_comment_native_off_writes_comments_without_probe() {
+        let plan = two_create_plan();
+        let forge = MockForge::new();
+
+        run_with(
+            &plan,
+            &forge,
+            StackPlacement::AutoComment,
+            NativeStacks::Off,
+        )
+        .await;
+
+        assert_eq!(forge.created_comments.lock().unwrap().len(), 2);
+        assert_eq!(*forge.probe_calls.lock().unwrap(), 0);
+        assert!(forge.created_stacks.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn execute_auto_comment_native_auto_supported_cleans_up_and_reconciles() {
+        let plan = two_create_plan();
+        let forge = MockForge::new(); // probe: supported by default
+
+        run_with(
+            &plan,
+            &forge,
+            StackPlacement::AutoComment,
+            NativeStacks::Auto,
+        )
+        .await;
+
+        // Native in effect: no comments, stack reconciled.
+        assert!(forge.created_comments.lock().unwrap().is_empty());
+        assert_eq!(*forge.created_stacks.lock().unwrap(), vec![vec![100, 101]]);
+        assert_eq!(*forge.probe_calls.lock().unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn execute_auto_comment_native_auto_unsupported_writes_comments() {
+        let plan = two_create_plan();
+        let forge = MockForge::new().with_probe_unsupported();
+
+        run_with(
+            &plan,
+            &forge,
+            StackPlacement::AutoComment,
+            NativeStacks::Auto,
+        )
+        .await;
+
+        // Fallback rendering: comments written, no stack API traffic beyond
+        // the probe.
+        assert_eq!(forge.created_comments.lock().unwrap().len(), 2);
+        assert_eq!(*forge.probe_calls.lock().unwrap(), 1);
+        assert!(forge.stack_lookups.lock().unwrap().is_empty());
+        assert!(forge.created_stacks.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn execute_auto_comment_probe_error_behaves_like_ignore() {
+        // PR #50 carries a stale stack comment; an indeterminate probe must
+        // neither write nor remove anything, and must not fail the submit.
+        let plan = SubmissionPlan {
+            bookmark_plans: vec![
+                BookmarkPlan {
+                    bookmark_name: "feat-a".to_string(),
+                    base: "main".to_string(),
+                    title: "feature a".to_string(),
+                    body: None,
+                    existing_pr: Some(make_pr(50, "feat-a", "main")),
+                    needs_push: true,
+                    needs_create: false,
+                    needs_base_update: false,
+                    needs_title_sync: false,
+                    needs_body_sync: false,
+                },
+                BookmarkPlan {
+                    bookmark_name: "feat-b".to_string(),
+                    base: "feat-a".to_string(),
+                    title: "feature b".to_string(),
+                    body: None,
+                    existing_pr: None,
+                    needs_push: true,
+                    needs_create: true,
+                    needs_base_update: false,
+                    needs_title_sync: false,
+                    needs_body_sync: false,
+                },
+            ],
+            remote: "origin".to_string(),
+            pr_mode: PrMode::Regular,
+            default_branch: "main".to_string(),
+        };
+        let forge = MockForge::new().with_probe_error().with_existing_comments(
+            50,
+            vec![Comment {
+                id: 999,
+                body: "<!--- STAKK_STACK: e30= --->\nold stack comment".to_string(),
+            }],
+        );
+
+        let result = run_with(
+            &plan,
+            &forge,
+            StackPlacement::AutoComment,
+            NativeStacks::Auto,
+        )
+        .await;
+
+        assert_eq!(result.stack_entries.len(), 2);
+        assert!(forge.created_comments.lock().unwrap().is_empty());
+        assert!(forge.deleted_comments.lock().unwrap().is_empty());
+        assert!(forge.updated_bodies.lock().unwrap().is_empty());
+        assert!(forge.listed_comments.lock().unwrap().is_empty());
+        assert!(forge.created_stacks.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn execute_auto_body_native_off_splices_fence() {
+        let plan = two_create_plan();
+        let forge = MockForge::new();
+
+        run_with(&plan, &forge, StackPlacement::AutoBody, NativeStacks::Off).await;
+
+        // Resolves to body mode: fences spliced into both PR bodies.
+        let updated_bodies = forge.updated_bodies.lock().unwrap();
+        assert_eq!(updated_bodies.len(), 2);
+        assert!(updated_bodies[0].1.contains("STAKK_BODY_START"));
+        assert!(forge.created_comments.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn execute_auto_body_native_on_syncs_body_in_loop() {
+        // Native in effect resolves auto-body to cleanup, so a pending body
+        // sync must not be deferred to the (never-running) splice phase.
+        let mut plan = two_create_plan();
+        plan.bookmark_plans[0].existing_pr = Some(make_pr(50, "feat-a", "main"));
+        plan.bookmark_plans[0].needs_create = false;
+        plan.bookmark_plans[0].needs_body_sync = true;
+        plan.bookmark_plans[0].body = Some("new body".to_string());
+        let forge = MockForge::new();
+
+        run_with(&plan, &forge, StackPlacement::AutoBody, NativeStacks::On).await;
+
+        let updated_bodies = forge.updated_bodies.lock().unwrap();
+        assert_eq!(*updated_bodies, vec![(50, "new body".to_string())]);
+    }
+
+    #[tokio::test]
+    async fn execute_native_auto_unsupported_skips_reconcile() {
+        let plan = two_create_plan();
+        let forge = MockForge::new().with_probe_unsupported();
+
+        run_with(&plan, &forge, StackPlacement::Comment, NativeStacks::Auto).await;
+
+        // Fixed placement unaffected; reconcile silently skipped.
+        assert_eq!(forge.created_comments.lock().unwrap().len(), 2);
+        assert!(forge.stack_lookups.lock().unwrap().is_empty());
+        assert!(forge.created_stacks.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn execute_native_auto_supported_reconciles() {
+        let plan = two_create_plan();
+        let forge = MockForge::new();
+
+        run_with(&plan, &forge, StackPlacement::Comment, NativeStacks::Auto).await;
+
+        assert_eq!(forge.created_comments.lock().unwrap().len(), 2);
+        assert_eq!(*forge.created_stacks.lock().unwrap(), vec![vec![100, 101]]);
+    }
+
+    #[tokio::test]
+    async fn execute_native_auto_single_bookmark_fixed_placement_skips_probe() {
+        let plan = SubmissionPlan {
+            bookmark_plans: vec![BookmarkPlan {
+                bookmark_name: "feat-a".to_string(),
+                base: "main".to_string(),
+                title: "feature a".to_string(),
+                body: None,
+                existing_pr: None,
+                needs_push: true,
+                needs_create: true,
+                needs_base_update: false,
+                needs_title_sync: false,
+                needs_body_sync: false,
+            }],
+            remote: "origin".to_string(),
+            pr_mode: PrMode::Regular,
+            default_branch: "main".to_string(),
+        };
+        let forge = MockForge::new();
+
+        run_with(&plan, &forge, StackPlacement::Comment, NativeStacks::Auto).await;
+
+        // The probe's answer would never be consulted — no wasted API call.
+        assert_eq!(*forge.probe_calls.lock().unwrap(), 0);
+    }
+
+    // -- native stacks --
+
+    /// A bookmark plan that pushes and either reuses `existing` or creates.
+    fn make_native_bookmark_plan(
+        name: &str,
+        base: &str,
+        existing: Option<PullRequest>,
+    ) -> BookmarkPlan {
+        BookmarkPlan {
+            bookmark_name: name.to_string(),
+            base: base.to_string(),
+            title: format!("title {name}"),
+            body: None,
+            needs_create: existing.is_none(),
+            existing_pr: existing,
+            needs_push: true,
+            needs_base_update: false,
+            needs_title_sync: false,
+            needs_body_sync: false,
+        }
+    }
+
+    fn make_native_plan(bookmark_plans: Vec<BookmarkPlan>) -> SubmissionPlan {
+        SubmissionPlan {
+            bookmark_plans,
+            remote: "origin".to_string(),
+            pr_mode: PrMode::Regular,
+            default_branch: "main".to_string(),
+        }
+    }
+
+    /// Run with native stacks on and `none` placement (the closest analog
+    /// to the typical native configuration).
+    async fn run_native(plan: &SubmissionPlan, forge: &MockForge) -> SubmissionResult {
+        let (runner, _push_calls) = MockJjRunner::new();
+        let jj = Jj::new(runner);
+        let env = test_comment_env();
+        execute_submission_plan(
+            plan,
+            &jj,
+            forge,
+            &env,
+            StackPlacement::None,
+            NativeStacks::On,
+        )
+        .await
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn execute_native_on_is_independent_of_comment_placement() {
+        // native_stacks is orthogonal to stack placement: with comment
+        // placement, both the stack comments and the server-side stack are
+        // written.
+        let plan = make_native_plan(vec![
+            make_native_bookmark_plan("feat-a", "main", None),
+            make_native_bookmark_plan("feat-b", "feat-a", None),
+        ]);
+        let forge = MockForge::new();
+        let (runner, _push_calls) = MockJjRunner::new();
+        let jj = Jj::new(runner);
+        let env = test_comment_env();
+
+        execute_submission_plan(
+            &plan,
+            &jj,
+            &forge,
+            &env,
+            StackPlacement::Comment,
+            NativeStacks::On,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(forge.created_comments.lock().unwrap().len(), 2);
+        assert_eq!(*forge.created_stacks.lock().unwrap(), vec![vec![100, 101]]);
+    }
+
+    #[tokio::test]
+    async fn execute_native_creates_stack_when_none_exists() {
+        let plan = make_native_plan(vec![
+            make_native_bookmark_plan("feat-a", "main", None),
+            make_native_bookmark_plan("feat-b", "feat-a", None),
+            make_native_bookmark_plan("feat-c", "feat-b", None),
+        ]);
+        let forge = MockForge::new();
+
+        let result = run_native(&plan, &forge).await;
+
+        assert_eq!(result.stack_entries.len(), 3);
+        // Mock-created PRs number from 100; the stack is created from the
+        // submitted PRs bottom-to-top.
+        let created_stacks = forge.created_stacks.lock().unwrap();
+        assert_eq!(*created_stacks, vec![vec![100, 101, 102]]);
+        // Every desired PR is queried for existing stack membership.
+        let lookups = forge.stack_lookups.lock().unwrap();
+        assert_eq!(*lookups, vec![100, 101, 102]);
+        assert!(forge.added_to_stacks.lock().unwrap().is_empty());
+        assert!(forge.unstacked.lock().unwrap().is_empty());
+        assert!(forge.created_comments.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn execute_native_noop_when_stack_matches() {
+        let plan = make_native_plan(vec![
+            make_native_bookmark_plan("feat-a", "main", Some(make_pr(50, "feat-a", "main"))),
+            make_native_bookmark_plan("feat-b", "feat-a", Some(make_pr(51, "feat-b", "feat-a"))),
+        ]);
+        let forge = MockForge::new().with_existing_stack(500, &[50, 51]);
+
+        run_native(&plan, &forge).await;
+
+        assert!(forge.created_stacks.lock().unwrap().is_empty());
+        assert!(forge.added_to_stacks.lock().unwrap().is_empty());
+        assert!(forge.unstacked.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn execute_native_adds_suffix_when_existing_stack_is_prefix() {
+        let plan = make_native_plan(vec![
+            make_native_bookmark_plan("feat-a", "main", Some(make_pr(50, "feat-a", "main"))),
+            make_native_bookmark_plan("feat-b", "feat-a", Some(make_pr(51, "feat-b", "feat-a"))),
+            make_native_bookmark_plan("feat-c", "feat-b", None),
+        ]);
+        let forge = MockForge::new().with_existing_stack(500, &[50, 51]);
+
+        run_native(&plan, &forge).await;
+
+        // The new PR (100) is appended on top of the existing stack.
+        let added = forge.added_to_stacks.lock().unwrap();
+        assert_eq!(*added, vec![(500, vec![100])]);
+        assert!(forge.created_stacks.lock().unwrap().is_empty());
+        assert!(forge.unstacked.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn execute_native_recreates_stack_on_membership_mismatch() {
+        // Server has the same PRs in the opposite order (a stack reorder).
+        let plan = make_native_plan(vec![
+            make_native_bookmark_plan("feat-a", "main", Some(make_pr(50, "feat-a", "main"))),
+            make_native_bookmark_plan("feat-b", "feat-a", Some(make_pr(51, "feat-b", "feat-a"))),
+        ]);
+        let forge = MockForge::new().with_existing_stack(500, &[51, 50]);
+
+        run_native(&plan, &forge).await;
+
+        assert_eq!(*forge.unstacked.lock().unwrap(), vec![500]);
+        assert_eq!(*forge.created_stacks.lock().unwrap(), vec![vec![50, 51]]);
+        assert!(forge.added_to_stacks.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn execute_native_recreates_stack_when_multiple_stacks_found() {
+        let plan = make_native_plan(vec![
+            make_native_bookmark_plan("feat-a", "main", Some(make_pr(50, "feat-a", "main"))),
+            make_native_bookmark_plan("feat-b", "feat-a", Some(make_pr(51, "feat-b", "feat-a"))),
+        ]);
+        let forge = MockForge::new()
+            .with_existing_stack(500, &[50])
+            .with_existing_stack(501, &[51]);
+
+        run_native(&plan, &forge).await;
+
+        assert_eq!(*forge.unstacked.lock().unwrap(), vec![500, 501]);
+        assert_eq!(*forge.created_stacks.lock().unwrap(), vec![vec![50, 51]]);
+    }
+
+    #[tokio::test]
+    async fn reconcile_recreates_stack_with_foreign_member() {
+        // The existing stack holds a PR that is not part of the submission;
+        // desired is not a prefix-extension of it, so it is rebuilt.
+        let forge = MockForge::new().with_existing_stack(500, &[999, 50, 51]);
+        let pb = indicatif::ProgressBar::hidden();
+
+        reconcile_native_stack(&forge, &[50, 51], &pb)
+            .await
+            .unwrap();
+
+        assert_eq!(*forge.unstacked.lock().unwrap(), vec![500]);
+        assert_eq!(*forge.created_stacks.lock().unwrap(), vec![vec![50, 51]]);
+    }
+
+    #[tokio::test]
+    async fn execute_native_add_conflict_falls_back_to_recreate() {
+        let plan = make_native_plan(vec![
+            make_native_bookmark_plan("feat-a", "main", Some(make_pr(50, "feat-a", "main"))),
+            make_native_bookmark_plan("feat-b", "feat-a", None),
+        ]);
+        let forge = MockForge::new()
+            .with_existing_stack(500, &[50])
+            .with_add_conflict();
+
+        run_native(&plan, &forge).await;
+
+        assert_eq!(*forge.unstacked.lock().unwrap(), vec![500]);
+        assert_eq!(*forge.created_stacks.lock().unwrap(), vec![vec![50, 100]]);
+    }
+
+    #[tokio::test]
+    async fn execute_native_cleans_up_existing_artifacts() {
+        use crate::forge::comment::splice_stack_into_body;
+
+        // PR #50 carries both an old stack comment and a body fence from a
+        // previous comment/body-mode submit.
+        let body_with_fence = splice_stack_into_body("Original PR body", "old stack content");
+        let old_comment_body = "<!--- STAKK_STACK: e30= --->\nold stack comment".to_string();
+
+        let plan = make_native_plan(vec![
+            make_native_bookmark_plan(
+                "feat-a",
+                "main",
+                Some(make_pr_with_body(50, "feat-a", "main", &body_with_fence)),
+            ),
+            make_native_bookmark_plan("feat-b", "feat-a", None),
+        ]);
+        let forge = MockForge::new()
+            .with_existing_comments(
+                50,
+                vec![Comment {
+                    id: 999,
+                    body: old_comment_body,
+                }],
+            )
+            .with_existing_stack(500, &[50, 100]);
+
+        run_native(&plan, &forge).await;
+
+        // Old stack comment deleted and body fence stripped, like `none`.
+        assert_eq!(*forge.deleted_comments.lock().unwrap(), vec![999]);
+        let updated_bodies = forge.updated_bodies.lock().unwrap();
+        assert_eq!(updated_bodies.len(), 1);
+        assert!(!updated_bodies[0].1.contains("STAKK_BODY_START"));
+        // The server-side stack already matches — no mutation.
+        assert!(forge.created_stacks.lock().unwrap().is_empty());
+        assert!(forge.unstacked.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn execute_native_writes_no_comments_or_bodies() {
+        let plan = make_native_plan(vec![
+            make_native_bookmark_plan("feat-a", "main", None),
+            make_native_bookmark_plan("feat-b", "feat-a", None),
+        ]);
+        let forge = MockForge::new();
+
+        run_native(&plan, &forge).await;
+
+        assert!(forge.created_comments.lock().unwrap().is_empty());
+        assert!(forge.updated_comments.lock().unwrap().is_empty());
+        assert!(forge.updated_bodies.lock().unwrap().is_empty());
+        // Freshly created PRs carry no artifacts — no lookups either.
+        assert!(forge.listed_comments.lock().unwrap().is_empty());
+        // But the stack is reconciled.
+        assert_eq!(*forge.created_stacks.lock().unwrap(), vec![vec![100, 101]]);
+    }
+
+    #[tokio::test]
+    async fn execute_native_single_bookmark_skips_stack_api() {
+        let plan = make_native_plan(vec![make_native_bookmark_plan(
+            "feat-a",
+            "main",
+            Some(make_pr(50, "feat-a", "main")),
+        )]);
+        let forge = MockForge::new().with_existing_stack(500, &[50, 51]);
+
+        run_native(&plan, &forge).await;
+
+        // A single PR is not a stack: no stack API traffic at all, even
+        // though the server holds a stale stack containing the PR.
+        assert!(forge.stack_lookups.lock().unwrap().is_empty());
+        assert!(forge.created_stacks.lock().unwrap().is_empty());
+        assert!(forge.unstacked.lock().unwrap().is_empty());
+        // Artifact cleanup still runs on the pre-existing PR.
+        assert_eq!(*forge.listed_comments.lock().unwrap(), vec![50]);
+    }
+
+    #[tokio::test]
+    async fn execute_native_stacks_unavailable_surfaces_diagnostic() {
+        let plan = make_native_plan(vec![
+            make_native_bookmark_plan("feat-a", "main", None),
+            make_native_bookmark_plan("feat-b", "feat-a", None),
+        ]);
+        let forge = MockForge::new().with_stacks_unavailable();
+        let (runner, push_calls) = MockJjRunner::new();
+        let jj = Jj::new(runner);
+        let env = test_comment_env();
+
+        let result = execute_submission_plan(
+            &plan,
+            &jj,
+            &forge,
+            &env,
+            StackPlacement::None,
+            NativeStacks::On,
+        )
+        .await;
+
+        assert!(matches!(result, Err(SubmitError::StacksUnavailable { .. })));
+        // The submission itself completed before the reconcile failed.
+        assert_eq!(forge.created_prs.lock().unwrap().len(), 2);
+        assert_eq!(push_calls.lock().unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn execute_native_body_sync_not_deferred() {
+        // Unlike body mode, native placement has no fence-splicing phase to
+        // fold the body sync into — it must happen in the per-bookmark loop.
+        let mut bp =
+            make_native_bookmark_plan("feat-a", "main", Some(make_pr(50, "feat-a", "main")));
+        bp.needs_body_sync = true;
+        bp.body = Some("new body".to_string());
+        let plan = make_native_plan(vec![
+            bp,
+            make_native_bookmark_plan("feat-b", "feat-a", None),
+        ]);
+        let forge = MockForge::new().with_existing_stack(500, &[50, 100]);
+
+        run_native(&plan, &forge).await;
+
+        let updated_bodies = forge.updated_bodies.lock().unwrap();
+        assert_eq!(*updated_bodies, vec![(50, "new body".to_string())]);
     }
 
     #[tokio::test]
@@ -3519,9 +4570,16 @@ mod tests {
             .with_ops(Arc::clone(&ops));
         let env = test_comment_env();
 
-        execute_submission_plan(&plan, &jj, &forge, &env, StackPlacement::Comment)
-            .await
-            .unwrap();
+        execute_submission_plan(
+            &plan,
+            &jj,
+            &forge,
+            &env,
+            StackPlacement::Comment,
+            NativeStacks::Off,
+        )
+        .await
+        .unwrap();
 
         let ops = ops.lock().unwrap();
         assert_eq!(
@@ -3595,9 +4653,16 @@ mod tests {
             .with_ops(Arc::clone(&ops));
         let env = test_comment_env();
 
-        execute_submission_plan(&plan, &jj, &forge, &env, StackPlacement::Comment)
-            .await
-            .unwrap();
+        execute_submission_plan(
+            &plan,
+            &jj,
+            &forge,
+            &env,
+            StackPlacement::Comment,
+            NativeStacks::Off,
+        )
+        .await
+        .unwrap();
 
         let ops = ops.lock().unwrap();
         assert_eq!(
@@ -3658,9 +4723,16 @@ mod tests {
             .with_ops(Arc::clone(&ops));
         let env = test_comment_env();
 
-        execute_submission_plan(&plan, &jj, &forge, &env, StackPlacement::Comment)
-            .await
-            .unwrap();
+        execute_submission_plan(
+            &plan,
+            &jj,
+            &forge,
+            &env,
+            StackPlacement::Comment,
+            NativeStacks::Off,
+        )
+        .await
+        .unwrap();
 
         let ops = ops.lock().unwrap();
         assert_eq!(
