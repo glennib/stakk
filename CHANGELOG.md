@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.22.0](https://github.com/glennib/stakk/compare/v1.21.0...v1.22.0) - 2026-08-12
+
+### Added
+
+- *(show)* jj-log-style graph output and `--format=pretty|json`
+
+### Other
+
+- move graph layout out of select/ into graph/layout
+
 ## [1.21.0](https://github.com/glennib/stakk/compare/v1.20.0...v1.21.0) - 2026-08-12
 
 ### Added
