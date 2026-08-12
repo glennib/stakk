@@ -257,9 +257,9 @@ async fn submit_bookmark(args: &SubmitArgs) -> Result<(), StakkError> {
         return Ok(());
     }
 
-    // Load template. In `none` placement no stack content is ever rendered,
-    // so a custom template is neither read nor compiled — a broken or missing
-    // one must not fail a submission that will not use it.
+    // Load template. In `none`/`ignore` placement no stack content is ever
+    // rendered, so a custom template is neither read nor compiled — a broken
+    // or missing one must not fail a submission that will not use it.
     let template_source = match (&args.template, args.stack_placement) {
         (Some(path), StackPlacement::Comment | StackPlacement::Body) => Some(
             std::fs::read_to_string(path).map_err(|e| StakkError::TemplateLoadFailed {
