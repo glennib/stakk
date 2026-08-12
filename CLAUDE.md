@@ -97,6 +97,7 @@ src/
 │   ├── app.rs       # App state machine, event loop, terminal init
 │   ├── graph_widget.rs  # Screen 1: jj-log-style graph widget (leaf selection, collapsing, scrolling)
 │   ├── bookmark_widget.rs # Screen 2: bookmark toggle/assignment widget
+│   ├── explicit.rs  # Non-interactive selection via --keep/--keep-all/--new/--new-auto/--new-command
 │   ├── bookmark_gen.rs # Bookmark validation and external command execution
 │   ├── tfidf.rs     # TF-IDF algorithm for auto-generated bookmark names
 │   └── event.rs     # crossterm key event mapping to app actions
@@ -337,10 +338,24 @@ following, update `scripts/record-demo.py` in the same change:
 - Two phase-1 constructors: the positional `stakk submit <bookmark>` path
   uses `analyze_submission(..., None)` — every boundary from trunk through
   the target is its own stacked PR, no folding (issue #184). Selection-based
-  paths (the TUI) use `analysis_from_selection(path, assignments, ...)`:
+  paths (the TUI and the explicit flags via `select::explicit`) use
+  `analysis_from_selection(path, assignments, ...)`:
   boundaries are matched by change ID on the selected trunk→tip path, so new
   bookmarks need not exist yet and no graph rebuild happens; commits between
   boundaries fold into the boundary above.
+- Explicit selection (`select/explicit.rs`): `--keep`/`--keep-all`/`--new
+  REV[=NAME]`/`--new-auto REV`/`--new-command REV` marks fully determine the
+  PR set — nothing implicit. Revs prefix-match change/commit ids on the
+  graph (deduped by commit_id: shared segments cloned into several stacks
+  are one commit, not ambiguous); colinearity is validated by intersecting
+  per-mark containing-stack sets; the topmost mark is the tip. Bare
+  `--keep-all` needs the stacks to agree on their bookmarks; anchored, it
+  expands on the marked path, skipping commits with explicit marks
+  (explicit beats bulk). Errors are `stakk::selection::*` diagnostics
+  pointing at `stakk show`. Known limitation: the `name_exists` pre-check
+  sees only bookmarks on submittable stacks — a collision with any other
+  bookmark (e.g. trunk's `main`) surfaces at execution as
+  `stakk::submit::bookmark_create_failed`.
 - `analyze_submission`'s `Option<&HashSet<String>>` folding arm and its
   `stakk::submit::selected_bookmarks_excluded` guard are exercised only by
   tests now — production selection flows go through
@@ -373,6 +388,11 @@ following, update `scripts/record-demo.py` in the same change:
   be turned off cleanly. Deletion is not previewed by `--dry-run`, which
   returns before the execute phase.
 - **`--dry-run` not in env vars** — one-off decision, surprising as a default.
+- **Selection flags not in env vars/config** — `--keep`, `--keep-all`,
+  `--new`, `--new-auto`, `--new-command` are per-invocation decisions like
+  `--dry-run`; a persisted default would silently change what gets
+  submitted. CLI + README touchpoints only (deliberate exception to the
+  four-touchpoint rule).
 - **Generic `Jj<R: JjRunner>`** — zero-cost dispatch, edition 2024 async traits.
 - **Three-phase submission** — analyze (pure) → plan (queries forge) →
   execute. All repo mutations (bookmark creation, pushes) live in execute,

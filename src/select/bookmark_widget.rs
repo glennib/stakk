@@ -186,22 +186,7 @@ fn compute_tfidf_for_segment(
         })
         .collect();
 
-    // Reserve space for the prefix in the max length budget.
-    let prefix_len = auto_prefix.map_or(0, str::len);
-    let max_length = bookmark_gen::MAX_BOOKMARK_LENGTH.saturating_sub(prefix_len);
-
-    let name = tfidf::tfidf_bookmark_name(
-        &commit_data,
-        3,
-        variation,
-        max_length,
-        bookmark_gen::DISALLOWED_CHARS,
-    )?;
-
-    match auto_prefix {
-        Some(prefix) => Some(format!("{prefix}{name}")),
-        None => Some(name),
-    }
+    bookmark_gen::tfidf_prefixed_name(&commit_data, variation, auto_prefix)
 }
 
 /// State for the bookmark assignment widget.

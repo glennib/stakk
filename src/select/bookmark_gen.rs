@@ -13,6 +13,8 @@ use serde::Serialize;
 use thiserror::Error;
 
 use super::bookmark_widget::BookmarkRow;
+use super::tfidf;
+use crate::graph::types::SegmentCommit;
 
 /// Errors from the bookmark name generation command.
 #[derive(Debug, Error, Diagnostic)]
@@ -248,28 +250,79 @@ pub async fn generate_custom_name(
 /// Build the JSON input struct from bookmark rows. Exposed for `app.rs` to
 /// serialize before spawning a background task.
 pub(super) fn build_segment_input(rows: &[&BookmarkRow]) -> SegmentInput {
+    segment_input(rows.iter().map(|r| CommitInput::from(*r)).collect())
+}
+
+/// Build the JSON input struct from graph commits, ordered trunk-to-tip
+/// (oldest first). Used by the non-interactive selection path
+/// (`select::explicit`), which works on `SegmentCommit`s instead of TUI
+/// rows. Same wire format as [`build_segment_input`].
+pub(super) fn build_segment_input_from_commits(commits: &[&SegmentCommit]) -> SegmentInput {
+    segment_input(commits.iter().map(|c| CommitInput::from(*c)).collect())
+}
+
+/// The single owner of the wire format's envelope: `schema_version` and the
+/// validation rules. Both segment-input builders go through here so the
+/// TUI and `--new-command` paths cannot drift apart.
+fn segment_input(commits: Vec<CommitInput>) -> SegmentInput {
     SegmentInput {
         schema_version: 1,
         rules: RulesInput {
             max_length: MAX_BOOKMARK_LENGTH,
             disallowed_chars: DISALLOWED_CHARS.to_string(),
         },
-        commits: rows
-            .iter()
-            .map(|row| CommitInput {
-                commit_id: row.commit_id.clone(),
-                change_id: row.change_id.clone(),
-                short_change_id: row.short_change_id.clone(),
-                description: row.description.clone(),
-                author: AuthorInput {
-                    name: row.author.name.clone(),
-                    email: row.author.email.clone(),
-                    timestamp: row.author.timestamp.clone(),
-                },
-                files: row.files.clone(),
-            })
-            .collect(),
+        commits,
     }
+}
+
+impl From<&BookmarkRow> for CommitInput {
+    fn from(row: &BookmarkRow) -> Self {
+        Self {
+            commit_id: row.commit_id.clone(),
+            change_id: row.change_id.clone(),
+            short_change_id: row.short_change_id.clone(),
+            description: row.description.clone(),
+            author: AuthorInput {
+                name: row.author.name.clone(),
+                email: row.author.email.clone(),
+                timestamp: row.author.timestamp.clone(),
+            },
+            files: row.files.clone(),
+        }
+    }
+}
+
+impl From<&SegmentCommit> for CommitInput {
+    fn from(c: &SegmentCommit) -> Self {
+        Self {
+            commit_id: c.commit_id.clone(),
+            change_id: c.change_id.clone(),
+            short_change_id: c.short_change_id.clone(),
+            description: c.description.clone(),
+            author: AuthorInput {
+                name: c.author.name.clone(),
+                email: c.author.email.clone(),
+                timestamp: c.author.timestamp.clone(),
+            },
+            files: c.files.clone(),
+        }
+    }
+}
+
+/// TF-IDF bookmark name for a segment's commits with the auto prefix
+/// applied and the length budget reserved for it. `None` when no name can
+/// be derived. The single owner of the naming policy (term count, length
+/// budget, disallowed characters) shared by the TUI's `[~]auto` state and
+/// `--new-auto`.
+pub(super) fn tfidf_prefixed_name(
+    data: &[tfidf::CommitData<'_>],
+    variation: usize,
+    auto_prefix: Option<&str>,
+) -> Option<String> {
+    let prefix = auto_prefix.unwrap_or("");
+    let max_length = MAX_BOOKMARK_LENGTH.saturating_sub(prefix.len());
+    tfidf::tfidf_bookmark_name(data, 3, variation, max_length, DISALLOWED_CHARS)
+        .map(|name| format!("{prefix}{name}"))
 }
 
 /// Run the shell command with the given JSON on stdin. Exposed for `app.rs`

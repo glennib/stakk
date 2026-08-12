@@ -160,20 +160,34 @@ async fn submit_bookmark(args: &SubmitArgs) -> Result<(), StakkError> {
 
     // Phase 1: Analyze. A positional bookmark argument submits the target
     // and all its bookmarked ancestors as stacked PRs (no folding). The
-    // interactive TUI instead yields explicit assignments on a selected
-    // path; the analysis is built directly from those, so new bookmarks
-    // need not exist yet — they are created in the execute phase, which
-    // keeps --dry-run free of side effects.
-    let (analysis, bookmark_creations) = match &args.bookmark {
-        Some(name) => {
-            let analysis = submit::analyze_submission(name, &change_graph, &default_branch, None)?;
-            (analysis, Vec::new())
-        }
-        None => match select::resolve_bookmark_interactively(
-            &change_graph,
-            args.bookmark_command.as_deref(),
-            args.auto_prefix.as_deref(),
-        )? {
+    // selection flags (--keep/--new/...) and the interactive TUI instead
+    // yield explicit assignments on a selected path; the analysis is built
+    // directly from those, so new bookmarks need not exist yet — they are
+    // created in the execute phase, which keeps --dry-run free of side
+    // effects.
+    let (analysis, bookmark_creations) = if let Some(name) = &args.bookmark {
+        let analysis = submit::analyze_submission(name, &change_graph, &default_branch, None)?;
+        (analysis, Vec::new())
+    } else {
+        let spec = select::explicit::SelectionSpec::from_args(args)?;
+        let selection = if spec.is_empty() {
+            select::resolve_bookmark_interactively(
+                &change_graph,
+                args.bookmark_command.as_deref(),
+                args.auto_prefix.as_deref(),
+            )?
+        } else {
+            Some(
+                select::explicit::resolve_bookmarks_explicitly(
+                    &change_graph,
+                    &spec,
+                    args.auto_prefix.as_deref(),
+                    args.bookmark_command.as_deref(),
+                )
+                .await?,
+            )
+        };
+        match selection {
             Some(result) => {
                 let analysis = submit::analysis_from_selection(
                     &result.path,
@@ -193,7 +207,7 @@ async fn submit_bookmark(args: &SubmitArgs) -> Result<(), StakkError> {
                 (analysis, creations)
             }
             None => return Ok(()),
-        },
+        }
     };
 
     // Phase 2: Plan.

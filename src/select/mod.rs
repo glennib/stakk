@@ -7,6 +7,7 @@ mod app;
 pub(crate) mod bookmark_gen;
 mod bookmark_widget;
 mod event;
+pub(crate) mod explicit;
 mod graph_widget;
 mod tfidf;
 
