@@ -332,6 +332,11 @@ following, update `scripts/record-demo.py` in the same change:
   bookmark names from jj log — unlike `BookmarkSegment::bookmark_names`,
   it includes bookmarks the bookmarks revset excluded (e.g. on immutable
   commits). Used to diagnose excluded selections and label locked TUI rows.
+- `analyze_submission` takes `Option<&HashSet<String>>` for the selection.
+  `None` is the explicit `stakk submit <bookmark>` path: every boundary from
+  trunk through the target is submitted as its own stacked PR — no folding
+  (issue #184). Only the interactive TUI passes `Some(...)`, where unselected
+  segments fold into the next selected one.
 - `analyze_submission` errors (`stakk::submit::selected_bookmarks_excluded`)
   when a selected bookmark is a boundary in no segment of the target stack,
   instead of silently folding it away. The intentional fold for

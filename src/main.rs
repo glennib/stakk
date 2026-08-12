@@ -158,11 +158,12 @@ async fn submit_bookmark(args: &SubmitArgs) -> Result<(), StakkError> {
     // Resolve bookmark: explicit argument or interactive selection.
     pb.finish_and_clear();
 
+    // `selected_bookmarks` is `None` for an explicit bookmark argument: the
+    // target and all its bookmarked ancestors are submitted as stacked PRs.
+    // The interactive TUI yields an explicit set so deliberately unchecked
+    // bookmarks fold into the next selected segment.
     let (bookmark, change_graph, selected_bookmarks) = match &args.bookmark {
-        Some(name) => {
-            let selected = HashSet::from([name.clone()]);
-            (name.clone(), change_graph, selected)
-        }
+        Some(name) => (name.clone(), change_graph, None),
         None => match select::resolve_bookmark_interactively(
             &change_graph,
             args.bookmark_command.as_deref(),
@@ -216,7 +217,7 @@ async fn submit_bookmark(args: &SubmitArgs) -> Result<(), StakkError> {
                     change_graph
                 };
 
-                (leaf_bookmark, graph, selected)
+                (leaf_bookmark, graph, Some(selected))
             }
             None => return Ok(()),
         },
@@ -230,7 +231,7 @@ async fn submit_bookmark(args: &SubmitArgs) -> Result<(), StakkError> {
         &bookmark,
         &change_graph,
         &default_branch,
-        &selected_bookmarks,
+        selected_bookmarks.as_ref(),
     )?;
 
     // Phase 2: Plan.
