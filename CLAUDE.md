@@ -249,6 +249,24 @@ UseCustom spawns a background task per row. Uses `BookmarkNameCache`
 entries time out after 60s. The event loop polls at 80ms while commands
 are in-flight to animate the spinner (10-frame animation).
 
+## Demo recording (scripts/record-demo.py)
+
+`mise run record-demo` regenerates the README's `media/stakk.gif` (and
+`media/stakk.asciinema`): it resets the playground repo (closes PRs, deletes
+branches, reseeds a demo graph), records a scripted TUI session via
+asciinema-in-tmux, and converts with agg.
+
+**The script is coupled to the user interface.** Its choreography sends raw
+keys and polls for literal screen strings. If you change any of the
+following, update `scripts/record-demo.py` in the same change:
+
+- shortcut keys or navigation directions (Space/`b` cycle, `r`/`R`, `i`,
+  `j`/`k`, arrow keys, Enter/Esc semantics),
+- the state-cycle order or which states get skipped,
+- screen titles / final output strings (`" Select branch stack"`,
+  `" Assign bookmarks to commits"`, `"Submitted {n} bookmark(s)."`),
+- initial row states, cursor start position, or leaf ordering on screen 1.
+
 ## Patterns & Gotchas
 
 - `#[cfg_attr(not(test), expect(dead_code, reason = "..."))]` for fields used

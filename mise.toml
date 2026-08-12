@@ -1,4 +1,7 @@
 [tools]
+uv = "0.12.3"
+"github:asciinema/asciinema" = "3.2.1"
+"github:asciinema/agg" = "1.9.0"
 cargo-binstall = "1.21.1"
 "cargo:cargo-dist" = "0.32.0"
 "cargo:cargo-edit" = "0.13.13"
@@ -40,3 +43,7 @@ run = "cargo build"
 [tasks.ci]
 description = "Run all CI checks"
 depends = ["fmt:check", "clippy", "test", "build:debug"]
+
+[tasks.record-demo]
+description = "Re-record the README demo gif (resets the playground repo!)"
+run = "scripts/record-demo.py"
