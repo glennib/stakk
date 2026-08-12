@@ -307,15 +307,46 @@ following, update `scripts/record-demo.py` in the same change:
 - `format_stack_comment` returns `Result` because user templates can fail.
 - Body-mode fences (`STAKK_BODY_START`/`STAKK_BODY_END`) are HTML comments,
   invisible on GitHub. Migration between placement modes is automatic.
-- `--stack-placement none` writes no stack info and instead runs
-  `cleanup_stack_artifacts` on every PR, deleting the stack comment and
-  stripping the body fence. Single-bookmark submissions take the same
-  cleanup path (one PR is not a stack), so the two share one branch that
-  runs *before* the template and context setup that only `comment`/`body`
-  need. PRs created in the same run are skipped — they cannot yet carry a
-  stack comment. In `none` mode the custom `--template` is never read or
+- `execute_submission_plan` resolves `StackPlacement` + `NativeStacks` to
+  an `EffectivePlacement` (comment/body/cleanup/ignore) up front; step 3
+  and the body-sync deferral branch on that, never on the raw enums.
+  Cleanup-resolved placements (`none`, auto-\* with native in effect) run
+  `cleanup_stack_artifacts` on every PR — deleting the stack comment and
+  stripping the body fence — as do single-bookmark submissions (one PR is
+  not a stack). This shared branch runs *before* the template and context
+  setup that only comment/body rendering needs. PRs created in the same
+  run are skipped — they cannot yet carry a stack comment. Ignore-resolved
+  placements (`ignore`, auto-\* with native support indeterminate) touch
+  no artifacts at all, not even on single-bookmark submissions. In
+  `none`/`ignore` placement the custom `--template` is never read or
   compiled, so a broken template does not fail a submission that will not
-  render it.
+  render it; auto-\* placements may render, so theirs is always loaded.
+- `--native-stacks on|auto` reconciles GitHub's server-side stack *after*
+  the artifact step: query every submitted PR's stack membership, then
+  no-op on exact match, `/add` when the existing stack is a bottom-prefix
+  of the desired list, otherwise unstack-and-recreate (`unstack` removes
+  all unmerged PRs wholesale — the preview API has no per-PR removal).
+  Comparison uses open PRs only, so merged bottoms drop out naturally.
+  Reconcile failures hard-fail the submit (same precedent as
+  `CommentFailed`); the diagnostics state that branches/PRs were submitted
+  normally and re-running is safe. Single-bookmark submissions never touch
+  the stacks API.
+- `--native-stacks auto` probes via `Forge::supports_native_stacks`
+  (`GET /stacks?per_page=1`; 200 = supported, 404 = not enabled, other
+  errors = indeterminate). The probe is skipped when its answer would
+  never be consulted (single bookmark with a fixed placement). Only a
+  definitive answer may flip auto-\* placements into the destructive
+  cleanup direction; indeterminate resolves them to ignore for the run.
+- The stacks endpoints need `x-github-api-version: 2026-03-10`; octocrab
+  sends no version header by default, so `GitHubForge` holds a second
+  `Octocrab` (`stacks_client`) solely to carry it. Stack calls use
+  octocrab's generic typed `get`/`post` (which run `map_github_error`
+  internally) with stakk-defined DTOs — never raw `_get`/`_post`, which
+  skip GitHub-error mapping so 401/403 would not become `AuthFailed`. The
+  one exception is `unstack` (204 has no body): it uses `_post` and
+  reinstates `octocrab::map_github_error` manually. A 404 on a stack route
+  maps to `ForgeError::StacksUnavailable` (preview not enabled for the
+  repo), 409/422 to `ForgeError::StackConflict`.
 - ratatui inline viewport: `enable_raw_mode()` before, `disable_raw_mode()` after.
 - The inline viewport is sized per screen (graph vs bookmark rows). ratatui
   cannot resize an inline viewport in place, so screen transitions erase the
@@ -360,6 +391,20 @@ following, update `scripts/record-demo.py` in the same change:
   the existing artifacts rather than leaving them stale, so the feature can
   be turned off cleanly. Deletion is not previewed by `--dry-run`, which
   returns before the execute phase.
+- **`--native-stacks` is orthogonal to `--stack-placement`** — registering
+  the server-side stack and placing stakk's stack-info text are separate
+  decisions (native + comment is valid while GitHub's preview UI is not
+  universally rendered). The `auto-comment`/`auto-body` placements resolve
+  the redundancy per run instead of forbidding it. The intended GA default
+  flip is `native_stacks = auto` + `stack_placement = auto-comment`, which
+  never overrides an explicit comment/body choice.
+- **Native stacks layer on, not replace** — GitHub's native stack is
+  layered on top of chained base branches, so the execute phase
+  (interleaved push → base update → create) runs unchanged and the stack
+  object is reconciled afterwards. The reconcile is idempotent; it is not
+  previewed by `--dry-run` (same as `none`-mode deletion). Once octocrab
+  ships typed stacks support (XAMPPRocky/octocrab#934), the hand-rolled
+  DTOs in `forge/github.rs` should migrate to it.
 - **`--dry-run` not in env vars** — one-off decision, surprising as a default.
 - **Generic `Jj<R: JjRunner>`** — zero-cost dispatch, edition 2024 async traits.
 - **Three-phase submission** — analyze (pure) → plan (queries forge) → execute.

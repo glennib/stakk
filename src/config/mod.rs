@@ -3,6 +3,7 @@ use std::path::PathBuf;
 
 use serde::Deserialize;
 
+use crate::cli::submit::NativeStacks;
 use crate::cli::submit::PrMode;
 use crate::cli::submit::SyncPrContent;
 use crate::cli::submit::TrailerHandling;
@@ -51,6 +52,7 @@ pub struct Config {
     pub pr_mode: Option<PrMode>,
     pub template: Option<String>,
     pub stack_placement: Option<StackPlacement>,
+    pub native_stacks: Option<NativeStacks>,
     pub sync_pr_content: Option<SyncPrContent>,
     pub trailers: Option<TrailerHandling>,
     pub auto_prefix: Option<String>,
@@ -67,6 +69,7 @@ impl Default for Config {
             pr_mode: None,
             template: None,
             stack_placement: None,
+            native_stacks: None,
             sync_pr_content: None,
             trailers: None,
             auto_prefix: None,
@@ -135,6 +138,7 @@ impl Config {
             pr_mode: self.pr_mode.or(fallback.pr_mode),
             template: self.template.or(fallback.template),
             stack_placement: self.stack_placement.or(fallback.stack_placement),
+            native_stacks: self.native_stacks.or(fallback.native_stacks),
             sync_pr_content: self.sync_pr_content.or(fallback.sync_pr_content),
             trailers: self.trailers.or(fallback.trailers),
             auto_prefix: self.auto_prefix.or(fallback.auto_prefix),

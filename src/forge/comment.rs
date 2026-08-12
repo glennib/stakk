@@ -28,6 +28,14 @@ pub enum StackPlacement {
     /// Write no stack info and leave existing stack comments and body
     /// fences untouched.
     Ignore,
+    /// Behave like `none` when a native server-side stack is in effect
+    /// for this run, like `comment` otherwise. If native support cannot
+    /// be determined, behaves like `ignore`.
+    AutoComment,
+    /// Behave like `none` when a native server-side stack is in effect
+    /// for this run, like `body` otherwise. If native support cannot
+    /// be determined, behaves like `ignore`.
+    AutoBody,
 }
 
 impl std::fmt::Display for StackPlacement {

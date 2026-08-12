@@ -30,6 +30,28 @@ pub enum ForgeError {
         #[source]
         source: Box<dyn std::error::Error + Send + Sync>,
     },
+
+    #[error("native stacked pull requests are not available on this repository: {message}")]
+    #[diagnostic(
+        code(stakk::forge::stacks_unavailable),
+        help(
+            "GitHub's stacked pull requests are a preview feature that must be enabled for the \
+             repository — set `--native-stacks auto` to use it only where available, or `off`"
+        )
+    )]
+    StacksUnavailable {
+        message: String,
+        #[source]
+        source: Box<dyn std::error::Error + Send + Sync>,
+    },
+
+    #[error("stack operation conflicted with current server state: {message}")]
+    #[diagnostic(code(stakk::forge::stack_conflict))]
+    StackConflict {
+        message: String,
+        #[source]
+        source: Box<dyn std::error::Error + Send + Sync>,
+    },
 }
 
 /// State of a pull request.
@@ -59,6 +81,16 @@ pub struct PullRequest {
     pub state: PrState,
     /// The PR body/description text.
     pub body: Option<String>,
+}
+
+/// A server-side stack of pull requests, forge-agnostic.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ForgeStack {
+    /// Stack number, used to address the stack in later calls.
+    pub number: u64,
+    /// Numbers of the stack's *open* PRs, bottom-to-top. Merged and closed
+    /// members are filtered out by the implementation.
+    pub open_pr_numbers: Vec<u64>,
 }
 
 /// A comment on a pull request.
@@ -146,4 +178,37 @@ pub trait Forge: Send + Sync {
         &self,
         comment_id: u64,
     ) -> impl std::future::Future<Output = Result<(), ForgeError>> + Send;
+
+    /// List the server-side stacks containing the given PR (empty if none).
+    fn get_stacks_for_pr(
+        &self,
+        pr_number: u64,
+    ) -> impl std::future::Future<Output = Result<Vec<ForgeStack>, ForgeError>> + Send;
+
+    /// Create a server-side stack from PR numbers ordered bottom-to-top.
+    fn create_stack(
+        &self,
+        pr_numbers: &[u64],
+    ) -> impl std::future::Future<Output = Result<ForgeStack, ForgeError>> + Send;
+
+    /// Append PRs (ordered bottom-to-top) on top of an existing stack.
+    fn add_to_stack(
+        &self,
+        stack_number: u64,
+        pr_numbers: &[u64],
+    ) -> impl std::future::Future<Output = Result<ForgeStack, ForgeError>> + Send;
+
+    /// Remove all unmerged PRs from a stack, dissolving it if it empties.
+    fn unstack(
+        &self,
+        stack_number: u64,
+    ) -> impl std::future::Future<Output = Result<(), ForgeError>> + Send;
+
+    /// Probe whether the forge offers native server-side stacks on this
+    /// repository. `Ok(true)`/`Ok(false)` are definitive answers; `Err`
+    /// means the answer could not be determined (e.g. a transient network
+    /// failure) and callers should avoid destructive decisions based on it.
+    fn supports_native_stacks(
+        &self,
+    ) -> impl std::future::Future<Output = Result<bool, ForgeError>> + Send;
 }

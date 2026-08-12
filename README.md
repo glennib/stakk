@@ -26,11 +26,16 @@ idempotent updates.
   branches so each PR shows only its own diff.
 - **Stack-awareness comments** — adds a comment to every PR listing the full
   stack with links, updated in place on re-runs. Optionally, the stack info
-  can be placed in the PR body instead (`--stack-placement body`) or disabled
+  can be placed in the PR body instead (`--stack-placement body`), disabled
   entirely (`--stack-placement none`, which also removes existing stack
-  comments and body fences). Comments are rendered with
+  comments and body fences), or resolved automatically against native stacks
+  (`--stack-placement auto-comment`/`auto-body`). Comments are rendered with
   [minijinja](https://github.com/mitsuhiko/minijinja) templates and can be
   customized with `--template` or the `STAKK_TEMPLATE` environment variable.
+- **Native GitHub stacks** — `--native-stacks on` (or `auto`) registers every
+  submitted stack as a first-class
+  [GitHub stack](https://docs.github.com/en/pull-requests/how-tos/stacked-pull-requests)
+  (public preview), independent of where stakk writes its own stack info.
 - **Idempotent** — re-running `stakk submit` is always safe. Existing PRs are
   updated, never duplicated.
 - **Dry-run mode** — `--dry-run` shows exactly what would happen without
@@ -202,10 +207,19 @@ pr_mode = "draft"
 # Path to a custom minijinja template for stack comments
 template = "/path/to/my-template.md.jinja"
 
-# Where to place stack info: "comment", "body", or "none" (default: "comment")
-# "none" writes no stack info and removes existing stack comments/body fences
-# on the next submit (e.g. if you rely on GitHub's native stacked PRs).
+# Where to place stack info: "comment", "body", "none", "ignore",
+# "auto-comment", or "auto-body" (default: "comment").
+# "none" writes nothing and removes existing stack comments/body fences on
+# the next submit; "ignore" writes nothing and leaves them untouched.
+# "auto-comment"/"auto-body" behave like "none" when a native stack is in
+# effect (see native_stacks) and like "comment"/"body" otherwise.
 stack_placement = "body"
+
+# Register submitted stacks with GitHub's native stacked pull requests
+# (public preview): "off", "on", or "auto" (default: "off").
+# "on" fails the submit if the feature is not enabled for the repository;
+# "auto" probes once per submit and skips silently where unavailable.
+native_stacks = "auto"
 
 # Prefix for auto-generated bookmark names (default: none)
 auto_prefix = "gb-"
@@ -297,7 +311,8 @@ stack_placement = "comment"
 | `STAKK_PR_MODE` | PR creation mode: `regular` or `draft` (overridden by `--pr-mode`) |
 | `STAKK_DRAFT` | Set to `true` to always create draft PRs (overridden by `--draft`) |
 | `STAKK_TEMPLATE` | Path to a custom minijinja template for stack comments (overridden by `--template`) |
-| `STAKK_STACK_PLACEMENT` | Where to place the stack info: `comment` (default), `body`, or `none` (overridden by `--stack-placement`) |
+| `STAKK_STACK_PLACEMENT` | Where to place the stack info: `comment` (default), `body`, `none`, `ignore`, `auto-comment`, or `auto-body` (overridden by `--stack-placement`) |
+| `STAKK_NATIVE_STACKS` | Register stacks with GitHub's native stacked PRs: `off` (default), `on`, or `auto` (overridden by `--native-stacks`) |
 | `STAKK_AUTO_PREFIX` | Prefix for auto-generated bookmark names (overridden by `--auto-prefix`) |
 | `STAKK_SYNC_PR_CONTENT` | Sync PR title/body from commits: `none` (default), `title`, `body`, or `all` (overridden by `--sync-pr-content`) |
 | `STAKK_TRAILERS` | Whether to keep or strip git commit trailers in PR bodies: `keep` (default) or `strip` (overridden by `--trailers`) |
@@ -330,7 +345,8 @@ graph view, then assign bookmarks to any unmarked commits before submitting.
 | `--draft` | `STAKK_DRAFT` | Create new PRs as drafts |
 | `--remote <name>` | `STAKK_REMOTE` | Push to a specific remote (default: `origin`) |
 | `--template <path>` | `STAKK_TEMPLATE` | Use a custom minijinja template for stack comments |
-| `--stack-placement <mode>` | `STAKK_STACK_PLACEMENT` | Place stack info as a PR `comment` (default), in the PR `body`, or write none at all with `none` |
+| `--stack-placement <mode>` | `STAKK_STACK_PLACEMENT` | Place stack info as a PR `comment` (default) or in the PR `body`; write none with `none` (removes existing) or `ignore` (leaves existing); `auto-comment`/`auto-body` defer to native stacks |
+| `--native-stacks <mode>` | `STAKK_NATIVE_STACKS` | Register stacks with GitHub's native stacked PRs (public preview): `off` (default), `on` (fail if unavailable), `auto` (skip if unavailable) |
 | `--auto-prefix <prefix>` | `STAKK_AUTO_PREFIX` | Prefix for `[~]auto` bookmark names (e.g. `gb-`) |
 | `--sync-pr-content <mode>` | `STAKK_SYNC_PR_CONTENT` | Sync PR title/body from commits: `none` (default), `title`, `body`, `all` |
 | `--trailers <mode>` | `STAKK_TRAILERS` | Keep or strip git commit trailers in PR bodies: `keep` (default), `strip` |
@@ -343,6 +359,29 @@ manually edited PR descriptions are never overwritten. Use
 `--sync-pr-content` to update existing PRs: `title` syncs only the title,
 `body` only the body, or `all` for both. Only fields that actually changed
 are updated.
+
+With `--native-stacks on` or `auto`, stakk additionally registers the stack
+on GitHub itself via the
+[stacked pull requests](https://docs.github.com/en/pull-requests/how-tos/stacked-pull-requests)
+API — GitHub then renders the stack natively (stack icon, merge-box stack
+map) and takes over retargeting the remaining PRs as the stack merges
+bottom-up. The feature is in public preview and must be enabled for the
+repository. With `on`, a repository without it fails the submit with
+guidance *after* branches and PRs have been submitted normally (re-running
+is safe); with `auto`, stakk probes once per submit and skips silently
+where unavailable. A single-bookmark submission is not a stack, so it never
+touches the stacks API.
+
+Native stacks are independent of `--stack-placement`: GitHub's own stack
+rendering makes stakk's stack comment redundant, but it is still written
+unless placement says otherwise. The `auto-comment`/`auto-body` placements
+resolve this automatically — they behave like `none` (write nothing, retire
+existing artifacts) on runs where a native stack is in effect, and like
+`comment`/`body` otherwise, so `native_stacks = "auto"` +
+`stack_placement = "auto-comment"` gives native rendering where available
+and stack comments everywhere else, never both. If native support cannot be
+determined (e.g. a transient network error), auto placements behave like
+`ignore` for that run — nothing is written or removed.
 
 ### `stakk show`
 
