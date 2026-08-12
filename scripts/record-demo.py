@@ -363,6 +363,18 @@ class Demo:
             f"(needle: {needle!r}); pane content:\n{self.pane_text()}"
         )
 
+    def wait_for_gone(self, needle: str, timeout: float, what: str) -> None:
+        """Poll the pane until `needle` no longer appears (literal match)."""
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if needle not in self.pane_text():
+                return
+            time.sleep(0.1)
+        raise TimeoutError(
+            f"timed out after {timeout}s waiting for {what} "
+            f"(needle still present: {needle!r}); pane content:\n{self.pane_text()}"
+        )
+
     def wait_for_prompt(self, timeout: float) -> None:
         """Wait until the last non-empty pane line is a shell prompt."""
         deadline = time.monotonic() + timeout
@@ -510,6 +522,22 @@ def record(
             "asciinema session started", timeout=10, what="asciinema to start"
         )
         demo.wait_for_prompt(timeout=15)
+
+        # Clear the recorded screen before typing the command. ratatui's
+        # inline viewport positions itself with absolute rows from a
+        # cursor-position query that is answered by the outer tmux pane,
+        # whose cursor sits below the asciinema banner and the
+        # pre-recording prompt. `clear` homes both the pane and the cast's
+        # virtual screen, so the recorded coordinates match on replay and
+        # the TUI opens directly under the prompt instead of leaving a
+        # blank gap. The typed `clear` and everything before it are cut
+        # from the cast afterwards by `trim_preamble`.
+        demo.send_literal("clear")
+        demo.send_key("Enter")
+        demo.wait_for_gone(
+            "asciinema session started", timeout=10, what="the screen to clear"
+        )
+        demo.wait_for_prompt(timeout=15)
         demo.beat(0.7)
 
         # Screen 0: type the command.
@@ -570,6 +598,46 @@ def record(
         for line in demo.pane_text().splitlines():
             if "Created PR" in line or "Existing PR" in line:
                 log(line.strip())
+
+
+def trim_preamble(cast: Path) -> None:
+    """Drop cast events that precede the recorded `clear`.
+
+    The choreography runs `clear` before typing the stakk command (see
+    `record()`), so the cast opens with the initial prompt and a typed
+    `clear` that flash by in the replay. Everything before the
+    clear-screen sequence is removed; the replay then starts on the
+    cleared screen. The clear event itself is kept — it is a no-op on
+    the player's fresh screen. Idempotent: a trimmed cast starts with
+    the clear event, so nothing further is dropped.
+    """
+    lines = cast.read_text().splitlines(keepends=True)
+    events = [json.loads(line) for line in lines[1:]]
+    start = next(
+        (
+            i
+            for i, ev in enumerate(events)
+            if ev[1] == "o" and "\x1b[H\x1b[J" in ev[2]
+        ),
+        None,
+    )
+    if start is None:
+        raise RuntimeError(
+            f"no clear-screen event found in {cast}; expected the "
+            "choreography to run `clear` before invoking stakk"
+        )
+    if start == 0:
+        return
+    kept = events[start:]
+    # Intervals are relative to the previous event, so dropping the preamble
+    # already shifts the timeline; zeroing the first interval removes the
+    # remaining initial delay.
+    kept[0][0] = 0.0
+    cast.write_text(
+        lines[0]
+        + "".join(json.dumps(ev, separators=(",", ":")) + "\n" for ev in kept)
+    )
+    log(f"Trimmed {start} pre-clear event(s) from cast.")
 
 
 def inject_theme(cast: Path) -> None:
@@ -651,6 +719,7 @@ def main(
                     f"tmux session kept: tmux -S {tmux_socket} attach -t stakk-demo"
                 )
 
+    trim_preamble(cast)
     inject_theme(cast)
 
     if not skip_convert:
