@@ -75,15 +75,23 @@ A segment is a run of commits ending at a PR boundary.
 
 | Value | Meaning |
 |-------|---------|
-| `unpushed` | No remote counterpart. A push creates it |
-| `diverged` | A remote counterpart exists but sits on another commit — the usual state after a rebase or an amend. A push moves it |
-| `synced` | The remote is on the same commit. A push is a no-op |
+| `unpushed` | No remote bookmark of this name on this commit, on any remote. A push creates it |
+| `diverged` | A tracked remote disagrees with the local bookmark — the usual state after a rebase or an amend. A push moves it |
+| `synced` | A remote bookmark of this name sits on this commit, on *some* remote. See the caveat below |
 
 Two `jj` facts produce this, and neither is sufficient alone.
 `jj`'s own `synced()` is false only when a *tracked* remote disagrees with the local bookmark,
 so a never-pushed bookmark reports `synced = true` exactly like an up-to-date one.
 What separates them is whether a remote bookmark of the same name sits on the boundary commit. jj's internal `name@git`
 remote does not count — it tracks the colocated git repository, not a push target.
+
+**`remote_state` does not know which remote you push to.** `stakk show` takes no `--remote`,
+so any remote but `name@git` satisfies the match.
+In a repository with more than one remote,
+a bookmark that exists on `mirror` but was never pushed to `origin` reports `synced`,
+and `stakk submit --remote origin` then pushes it for the first time.
+With a single remote — the ordinary case — `synced` does mean a push would be a no-op.
+Read `remotes[]` when the distinction matters.
 
 A commit can carry several bookmarks, so `bookmarks[]` can have more than one entry.
 They are one boundary, not several: two `--keep`s naming two bookmarks on the same commit are two marks on one boundary,

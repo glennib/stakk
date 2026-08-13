@@ -140,6 +140,9 @@ def submit(flags: list, dry_run: bool) -> None:
     argv = ["stakk", "submit", *flags]
     if dry_run:
         argv.append("--dry-run")
+    # The child inherits this stdout. Python block-buffers when stdout is
+    # a pipe, so without the flush our own lines land after stakk's.
+    sys.stdout.flush()
     proc = subprocess.run(argv)
     if proc.returncode != 0:
         sys.exit(proc.returncode)

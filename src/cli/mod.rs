@@ -113,7 +113,8 @@ pub struct ShowArgs {
     /// agents. Its identifiers (short_change_id, bookmark names) can be
     /// passed directly to `stakk submit`. It is a sparse projection:
     /// per commit it carries change_id, short_change_id, title,
-    /// is_immutable, local_bookmark_names, is_boundary and is_leaf.
+    /// committer_timestamp, is_immutable, local_bookmark_names,
+    /// is_boundary and is_leaf.
     ///
     /// json-full is the same document with commit_id, description,
     /// author and files added back. Every json field is present in

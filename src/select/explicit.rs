@@ -4,8 +4,13 @@
 //! `--new-command REV` fully determine the PR boundary set — nothing is
 //! implicit. The marks themselves define the stack: all must lie on one
 //! trunk-to-tip path (colinearity is validated), and the topmost mark is
-//! the tip of the submission. Bookmarks on the path that are not kept fold
-//! into the PR above them, exactly like unchecked rows in the TUI.
+//! the tip of the submission.
+//!
+//! Unmarked commits below the topmost mark fold into the PR above them,
+//! bookmarked or not, exactly like unchecked rows in the TUI. Commits above
+//! it are dropped from the submission entirely: the full path is handed to
+//! `analysis_from_selection`, which never flushes `pending` past the last
+//! boundary.
 //!
 //! The resolver is pure with respect to the repository: it reads the
 //! already-built [`ChangeGraph`] and produces a [`SelectionResult`]; all

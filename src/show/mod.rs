@@ -295,15 +295,17 @@ fn render_pretty(data: &ShowData, colors: bool) -> String {
     }
     out.push('\n');
 
+    // The exclusion footers below run in both cases. When every bookmark's
+    // history contains a merge, all of them are excluded and no stack
+    // survives — the one state where the footer is the whole answer.
     if data.graph.stacks.is_empty() {
         out.push_str("No bookmark stacks found.\n");
-        return out;
-    }
-
-    let layout = build_layout(data.graph);
-    for row in &layout.rows {
-        out.push_str(&render_row(row, &layout.nodes, colors));
-        out.push('\n');
+    } else {
+        let layout = build_layout(data.graph);
+        for row in &layout.rows {
+            out.push_str(&render_row(row, &layout.nodes, colors));
+            out.push('\n');
+        }
     }
 
     if !data.graph.excluded_bookmarks.is_empty() {
@@ -577,6 +579,27 @@ mod tests {
         let out = render_pretty(&data, false);
         assert!(out.contains("No bookmark stacks found."));
         assert!(out.starts_with("Default branch: main\n"));
+    }
+
+    /// Excluding every bookmark leaves no stack, and that is exactly when the
+    /// exclusion footers carry the whole answer: without them `stakk show`
+    /// reports "no stacks" and never says the merge commits are why.
+    #[test]
+    fn pretty_reports_exclusions_when_no_stack_survives() {
+        let mut graph = make_graph(vec![]);
+        graph.excluded_bookmarks = vec!["bm_merge".to_string()];
+        graph.excluded_head_count = 1;
+        let remotes = sample_remotes();
+        let data = ShowData {
+            default_branch: "main",
+            remotes: &remotes,
+            graph: &graph,
+            github_host: None,
+        };
+        let out = render_pretty(&data, false);
+        assert!(out.contains("No bookmark stacks found."));
+        assert!(out.contains("(bm_merge excluded due to merge commits)"));
+        assert!(out.contains("(1 unbookmarked head(s) excluded due to merge commits)"));
     }
 
     fn sample_json(projection: JsonProjection) -> serde_json::Value {

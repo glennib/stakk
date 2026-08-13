@@ -89,8 +89,12 @@ pub struct SubmitArgs {
     /// Non-interactive selection: the --keep/--new/--new-auto/--new-command
     /// marks fully determine the PR set — nothing is implicit. All marks
     /// must lie on one trunk-to-tip path; the topmost is the tip of the
-    /// submission. Bookmarks on the path that are not kept fold into the PR
-    /// above them.
+    /// submission.
+    ///
+    /// Unmarked commits *below* the topmost mark fold into the PR above
+    /// them, bookmarked or not. Commits *above* it are not submitted at
+    /// all — an unbookmarked work-in-progress head is left out unless it
+    /// is marked.
     ///
     /// `stakk show [--format=json]` lists stacks, bookmarks and change
     /// ids.

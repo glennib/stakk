@@ -16,13 +16,17 @@ so the document already distinguishes new work from an update:
 
 | `remote_state` | Meaning | What a submission does |
 |----------------|---------|------------------------|
-| `unpushed` | No remote counterpart | Pushes it for the first time |
-| `diverged` | A remote counterpart exists but sits elsewhere | Moves the remote to your commit |
-| `synced` | The remote is on the same commit | Nothing to push |
+| `unpushed` | No remote counterpart on any remote | Pushes it for the first time |
+| `diverged` | A tracked remote sits elsewhere | Moves the remote to your commit |
+| `synced` | Some remote is on the same commit | Nothing to push, given one remote |
 
 This is derived from `jj` alone, so it describes what a *push* would do.
 It says nothing about whether a pull request exists; stakk learns that during `stakk submit`'s plan phase,
 which does query GitHub.
+
+One caveat: `stakk show` takes no `--remote`, so `synced` means "on some remote", not "on the one you push to".
+In a repository with several remotes, check `remotes[]` before reading `synced` as "nothing to do" —
+see `stakk docs show`.
 
 ## Naming boundaries
 
