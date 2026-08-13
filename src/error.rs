@@ -36,6 +36,11 @@ pub enum StakkError {
     #[diagnostic(transparent)]
     BookmarkGen(#[from] BookmarkGenError),
 
+    /// An error from the non-interactive selection flags.
+    #[error(transparent)]
+    #[diagnostic(transparent)]
+    ExplicitSelection(#[from] crate::select::explicit::ExplicitSelectionError),
+
     /// A configuration error.
     #[error(transparent)]
     #[diagnostic(transparent)]

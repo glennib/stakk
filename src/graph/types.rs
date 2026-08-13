@@ -7,7 +7,7 @@ use crate::jj::types::Signature;
 
 /// A commit within a bookmark segment, carrying metadata needed for display
 /// and later PR creation.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SegmentCommit {
     pub commit_id: String,
     pub change_id: String,
@@ -30,7 +30,7 @@ pub struct SegmentCommit {
 ///
 /// When multiple bookmarks point at the same change, they share one segment.
 /// Commits are ordered newest-first (the bookmarked commit is first).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BookmarkSegment {
     /// Bookmark names pointing at this segment's change.
     pub bookmark_names: Vec<String>,
@@ -48,6 +48,23 @@ pub struct BookmarkSegment {
 #[derive(Debug, Clone)]
 pub struct BranchStack {
     pub segments: Vec<BookmarkSegment>,
+}
+
+impl BranchStack {
+    /// All commits of the stack in trunk-to-tip order (oldest first).
+    ///
+    /// Segments are stored trunk-to-leaf but each segment's commits are
+    /// newest-first, so commits are reversed per segment.
+    pub fn commits_trunk_to_tip(&self) -> impl Iterator<Item = &SegmentCommit> {
+        self.segments
+            .iter()
+            .flat_map(|seg| seg.commits.iter().rev())
+    }
+
+    /// The newest commit of the stack (the leaf segment's boundary commit).
+    pub fn tip_commit(&self) -> Option<&SegmentCommit> {
+        self.segments.last().and_then(|seg| seg.commits.first())
+    }
 }
 
 /// The complete change graph: all bookmarked segments, their relationships,

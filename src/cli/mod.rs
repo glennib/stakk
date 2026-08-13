@@ -43,7 +43,9 @@ pub struct Cli {
 pub enum Commands {
     /// Submit bookmarks as GitHub pull requests (default when no command
     /// given).
-    Submit(SubmitArgs),
+    // Boxed: SubmitArgs is by far the largest payload (clippy
+    // large_enum_variant).
+    Submit(Box<SubmitArgs>),
     /// Manage authentication.
     Auth(AuthArgs),
     /// Show repository status and bookmark stacks.
@@ -495,6 +497,85 @@ mod tests {
             }
             other => panic!("expected Show, got {other:?}"),
         }
+    }
+
+    // -- explicit selection flags --
+
+    #[test]
+    fn selection_flags_parse_and_accumulate() {
+        let cli = parse_with_config(
+            Config::default(),
+            &[
+                "stakk",
+                "submit",
+                "--keep",
+                "a",
+                "--keep",
+                "b",
+                "--keep-all",
+                "--new",
+                "r1=name1",
+                "--new",
+                "r2",
+                "--new-auto",
+                "r3",
+                "--new-command",
+                "r4",
+            ],
+        );
+        let args = submit_args(&cli);
+        assert_eq!(args.keep, vec!["a", "b"]);
+        assert!(args.keep_all);
+        assert_eq!(args.new, vec!["r1=name1", "r2"]);
+        assert_eq!(args.new_auto, vec!["r3"]);
+        assert_eq!(args.new_command, vec!["r4"]);
+    }
+
+    #[test]
+    fn selection_flags_conflict_with_positional_bookmark() {
+        use clap::error::ErrorKind;
+
+        for flag_args in [
+            vec!["--keep", "a"],
+            vec!["--keep-all"],
+            vec!["--new", "r"],
+            vec!["--new-auto", "r"],
+            vec!["--new-command", "r"],
+        ] {
+            let mut argv = vec!["stakk", "submit", "my-bookmark"];
+            argv.extend(&flag_args);
+            let cmd = apply_config_defaults(Config::default(), Cli::command());
+            let err = cmd.try_get_matches_from(argv).unwrap_err();
+            assert_eq!(
+                err.kind(),
+                ErrorKind::ArgumentConflict,
+                "flags {flag_args:?} must conflict with the positional bookmark",
+            );
+        }
+    }
+
+    #[test]
+    fn selection_flags_parse_at_top_level() {
+        // The flattened no-subcommand form must accept the flags too.
+        let cli = parse_with_config(
+            Config::default(),
+            &["stakk", "--keep", "a", "--new", "r=n", "--keep-all"],
+        );
+        assert!(cli.command.is_none());
+        assert_eq!(cli.submit_args.keep, vec!["a"]);
+        assert_eq!(cli.submit_args.new, vec!["r=n"]);
+        assert!(cli.submit_args.keep_all);
+    }
+
+    #[test]
+    fn selection_flags_conflict_at_top_level() {
+        use clap::error::ErrorKind;
+
+        let cmd = apply_config_defaults(Config::default(), Cli::command());
+        let err = cmd
+            .try_get_matches_from(["stakk", "my-bookmark", "--keep", "a"])
+            .unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::ArgumentConflict);
     }
 
     // -- env var interaction --

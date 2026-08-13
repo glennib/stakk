@@ -327,6 +327,11 @@ graph view, then assign bookmarks to any unmarked commits before submitting.
 | Flag | Env var | Description |
 |------|--------|-------------|
 | `--dry-run` | | Show the submission plan without executing |
+| `--keep <bookmark>` | | Non-interactive: keep an existing bookmark as a PR boundary (repeatable) |
+| `--keep-all` | | Non-interactive: keep every existing bookmark on the selected path |
+| `--new <rev>[=<name>]` | | Non-interactive: new bookmark at `rev` — `stakk-<change_id>` by default, or `name` (repeatable) |
+| `--new-auto <rev>` | | Non-interactive: new TF-IDF-named bookmark at `rev`, honoring `--auto-prefix`; falls back to `stakk-<change_id>` when nothing can be derived or the name is taken (repeatable) |
+| `--new-command <rev>` | | Non-interactive: new bookmark at `rev` named by `--bookmark-command` (repeatable) |
 | `--draft` | `STAKK_DRAFT` | Create new PRs as drafts |
 | `--remote <name>` | `STAKK_REMOTE` | Push to a specific remote (default: `origin`) |
 | `--template <path>` | `STAKK_TEMPLATE` | Use a custom minijinja template for stack comments |
@@ -334,6 +339,38 @@ graph view, then assign bookmarks to any unmarked commits before submitting.
 | `--auto-prefix <prefix>` | `STAKK_AUTO_PREFIX` | Prefix for `[~]auto` bookmark names (e.g. `gb-`) |
 | `--sync-pr-content <mode>` | `STAKK_SYNC_PR_CONTENT` | Sync PR title/body from commits: `none` (default), `title`, `body`, `all` |
 | `--trailers <mode>` | `STAKK_TRAILERS` | Keep or strip git commit trailers in PR bodies: `keep` (default), `strip` |
+
+The selection flags (`--keep`, `--keep-all`, `--new`, `--new-auto`,
+`--new-command`) replace the TUI with a fully explicit, scriptable
+selection; they conflict with the positional bookmark argument and are
+deliberately CLI-only (no env vars, no config keys — like `--dry-run`,
+per-invocation decisions make surprising defaults). The marks fully
+determine the PR set: nothing is implicit. All marks must lie on one
+trunk-to-tip path, the topmost mark is the tip of the submission, and
+bookmarks on the path that are not kept fold into the PR above them.
+`rev` is a change id or commit id prefix as printed by `stakk show`.
+Bare `--keep-all` requires the choice of stack to be unambiguous — a
+single stack, or several that agree on their bookmarks (e.g. differing
+only in unbookmarked heads such as the working copy); anchor it with
+`--keep`/`--new` otherwise. Commits already carrying an explicit mark
+are skipped by `--keep-all` (explicit beats bulk).
+
+#### Agent / scripting usage
+
+Non-interactive submission is a two-command loop — discover, then submit.
+Everything `stakk submit` needs (change id prefixes, bookmark names) is in
+`stakk show`'s output:
+
+```console
+$ stakk show --format=json | jq '.stacks[0].segments[].commits[] | {short_change_id, description, local_bookmark_names}'
+$ stakk submit --keep base --new qzvs=my-feature --new-auto wmtk --dry-run
+$ stakk submit --keep base --new qzvs=my-feature --new-auto wmtk
+```
+
+`--dry-run` is fully inert: it prints the planned bookmark creations and
+PR actions without creating, pushing, or changing anything — safe for
+validation before the real run. Selection errors carry machine-readable
+diagnostic codes (`stakk::selection::*`) and point back at `stakk show`.
 
 PR titles come from the first line of the jj change description. PR bodies
 are populated from the full description (everything after the title line).

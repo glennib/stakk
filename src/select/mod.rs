@@ -7,30 +7,29 @@ mod app;
 pub(crate) mod bookmark_gen;
 mod bookmark_widget;
 mod event;
+pub(crate) mod explicit;
 mod graph_widget;
 mod tfidf;
 
+use std::collections::HashSet;
 use std::io::IsTerminal;
 
 use crate::error::StakkError;
 use crate::graph::types::ChangeGraph;
-
-/// A bookmark assignment for a commit in the submission stack.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct BookmarkAssignment {
-    /// The jj change ID for this commit.
-    pub change_id: String,
-    /// The bookmark name (existing or newly generated).
-    pub bookmark_name: String,
-    /// `true` if stakk must run `jj bookmark create` for this bookmark.
-    pub is_new: bool,
-}
+// The assignment type lives in `submit` (the consumer); re-exported here so
+// selection code can construct it without importing across layers.
+pub use crate::submit::BookmarkAssignment;
 
 /// Result of the interactive selection.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SelectionResult {
     /// Ordered trunk-to-leaf bookmark assignments.
     pub assignments: Vec<BookmarkAssignment>,
+    /// The full trunk-to-tip commit chain of the selected stack (oldest
+    /// first). Every assignment's `change_id` is on this path. Feeds
+    /// `submit::analysis_from_selection`, which needs the commits between
+    /// and above the boundaries.
+    pub path: Vec<crate::graph::types::SegmentCommit>,
 }
 
 /// Resolve bookmarks interactively from the change graph using a TUI.
@@ -40,10 +39,15 @@ pub struct SelectionResult {
 ///
 /// Returns `StakkError::NotInteractive` if stdin is not a terminal.
 /// Returns `StakkError::PromptCancelled` if the user presses Escape/q.
+///
+/// `reserved` is every local bookmark name in the repo
+/// ([`crate::jj::Jj::get_local_bookmark_names`]); new names are rejected
+/// against it.
 pub fn resolve_bookmark_interactively(
     graph: &ChangeGraph,
     bookmark_command: Option<&str>,
     auto_prefix: Option<&str>,
+    reserved: &HashSet<String>,
 ) -> Result<Option<SelectionResult>, StakkError> {
     if graph.stacks.is_empty() {
         eprintln!("No bookmark stacks found.");
@@ -54,7 +58,7 @@ pub fn resolve_bookmark_interactively(
         return Err(StakkError::NotInteractive);
     }
 
-    app::run_tui(graph, bookmark_command, auto_prefix)
+    app::run_tui(graph, bookmark_command, auto_prefix, reserved)
 }
 
 // ---------------------------------------------------------------------------
@@ -84,7 +88,7 @@ mod tests {
     #[test]
     fn resolve_no_stacks() {
         let graph = make_graph_empty();
-        let result = resolve_bookmark_interactively(&graph, None, None).unwrap();
+        let result = resolve_bookmark_interactively(&graph, None, None, &HashSet::new()).unwrap();
         assert_eq!(result, None);
     }
 
@@ -92,6 +96,7 @@ mod tests {
     fn bookmark_assignment_new_flag() {
         let existing = BookmarkAssignment {
             change_id: "abc123".to_string(),
+            short_change_id: "abc".to_string(),
             bookmark_name: "my-feature".to_string(),
             is_new: false,
         };
@@ -99,6 +104,7 @@ mod tests {
 
         let generated = BookmarkAssignment {
             change_id: "def456".to_string(),
+            short_change_id: "def".to_string(),
             bookmark_name: "stakk-def456abcdef".to_string(),
             is_new: true,
         };
@@ -108,14 +114,17 @@ mod tests {
     #[test]
     fn selection_result_ordering() {
         let result = SelectionResult {
+            path: vec![],
             assignments: vec![
                 BookmarkAssignment {
                     change_id: "base".to_string(),
+                    short_change_id: "base".to_string(),
                     bookmark_name: "base-bm".to_string(),
                     is_new: false,
                 },
                 BookmarkAssignment {
                     change_id: "leaf".to_string(),
+                    short_change_id: "leaf".to_string(),
                     bookmark_name: "leaf-bm".to_string(),
                     is_new: true,
                 },

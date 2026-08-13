@@ -141,6 +141,8 @@ impl BookmarkRow {
 pub enum SelectionError {
     /// Two included rows resolved to the same bookmark name.
     DuplicateName(String),
+    /// A new bookmark name is already taken by a local bookmark.
+    NameExists(String),
     /// A custom name is still being computed.
     StillLoading,
     /// A user-typed bookmark name failed validation.
@@ -186,22 +188,7 @@ fn compute_tfidf_for_segment(
         })
         .collect();
 
-    // Reserve space for the prefix in the max length budget.
-    let prefix_len = auto_prefix.map_or(0, str::len);
-    let max_length = bookmark_gen::MAX_BOOKMARK_LENGTH.saturating_sub(prefix_len);
-
-    let name = tfidf::tfidf_bookmark_name(
-        &commit_data,
-        3,
-        variation,
-        max_length,
-        bookmark_gen::DISALLOWED_CHARS,
-    )?;
-
-    match auto_prefix {
-        Some(prefix) => Some(format!("{prefix}{name}")),
-        None => Some(name),
-    }
+    bookmark_gen::tfidf_prefixed_name(&commit_data, variation, auto_prefix)
 }
 
 /// State for the bookmark assignment widget.
@@ -215,6 +202,19 @@ pub struct BookmarkAssignmentState {
     auto_prefix: Option<String>,
     /// Whether the user is currently typing into a `UserInput` row.
     pub input_mode: InputMode,
+    /// Every local bookmark name in the repo. New names are checked against
+    /// this rather than against the graph, which cannot see trunk's own
+    /// bookmark or anything the bookmarks revset filtered out.
+    reserved: std::collections::HashSet<String>,
+}
+
+/// Whether `name` is already taken, and so unusable as a new bookmark name.
+///
+/// `reserved` is repo truth and normally covers the row's own bookmarks too;
+/// the row check keeps the states honest when a caller supplies a narrower
+/// set.
+fn is_taken(reserved: &std::collections::HashSet<String>, row: &BookmarkRow, name: &str) -> bool {
+    reserved.contains(name) || row.existing_bookmarks.iter().any(|e| e == name)
 }
 
 impl BookmarkAssignmentState {
@@ -223,6 +223,7 @@ impl BookmarkAssignmentState {
         path: &[&LayoutNode],
         has_bookmark_command: bool,
         auto_prefix: Option<&str>,
+        reserved: &std::collections::HashSet<String>,
     ) -> Self {
         let rows: Vec<BookmarkRow> = path
             .iter()
@@ -271,6 +272,7 @@ impl BookmarkAssignmentState {
             cursor,
             auto_prefix: auto_prefix.map(String::from),
             input_mode: InputMode::Normal,
+            reserved: reserved.clone(),
         }
     }
 
@@ -298,7 +300,7 @@ impl BookmarkAssignmentState {
         }
 
         let has_distinct_generated = match &row.generated_name {
-            Some(generated) => !row.existing_bookmarks.iter().any(|e| e == generated),
+            Some(generated) => !is_taken(&self.reserved, row, generated),
             None => false,
         };
 
@@ -306,8 +308,7 @@ impl BookmarkAssignmentState {
             && match &row.custom_name {
                 Some(custom) => {
                     let matches_generated = row.generated_name.as_ref() == Some(custom);
-                    let matches_existing = row.existing_bookmarks.iter().any(|e| e == custom);
-                    !matches_generated && !matches_existing
+                    !matches_generated && !is_taken(&self.reserved, row, custom)
                 }
                 // No cached custom name yet — include UseCustom so it can be
                 // resolved lazily.
@@ -371,7 +372,7 @@ impl BookmarkAssignmentState {
         }
 
         let has_distinct_generated = match &row.generated_name {
-            Some(generated) => !row.existing_bookmarks.iter().any(|e| e == generated),
+            Some(generated) => !is_taken(&self.reserved, row, generated),
             None => false,
         };
 
@@ -379,8 +380,7 @@ impl BookmarkAssignmentState {
             && match &row.custom_name {
                 Some(custom) => {
                     let matches_generated = row.generated_name.as_ref() == Some(custom);
-                    let matches_existing = row.existing_bookmarks.iter().any(|e| e == custom);
-                    !matches_generated && !matches_existing
+                    !matches_generated && !is_taken(&self.reserved, row, custom)
                 }
                 None => true,
             };
@@ -503,7 +503,7 @@ impl BookmarkAssignmentState {
     }
 
     /// Try to compute a TF-IDF name for the given row. Returns `None` if
-    /// it produces no name or the name matches an existing/generated name.
+    /// it produces no name or the name is already taken.
     fn try_make_tfidf(&mut self, cursor: usize, variation: usize) -> Option<TfidfNameState> {
         let name =
             compute_tfidf_for_segment(&self.rows, cursor, variation, self.auto_prefix.as_deref())?;
@@ -513,8 +513,8 @@ impl BookmarkAssignmentState {
         if row.generated_name.as_ref() == Some(&name) {
             return None;
         }
-        // Skip if it matches an existing bookmark.
-        if row.existing_bookmarks.iter().any(|e| e == &name) {
+        // Skip if the name is taken by any local bookmark.
+        if is_taken(&self.reserved, row, &name) {
             return None;
         }
 
@@ -630,22 +630,26 @@ impl BookmarkAssignmentState {
             };
 
             // Recompute from the (potentially changed) dynamic segment.
-            match compute_tfidf_for_segment(&self.rows, idx, variation, self.auto_prefix.as_deref())
-            {
-                Some(new_name) if new_name != old_name => {
+            let recomputed =
+                compute_tfidf_for_segment(&self.rows, idx, variation, self.auto_prefix.as_deref());
+            match recomputed {
+                Some(new_name) if new_name == old_name => {} // Nothing to do.
+                Some(new_name) if !is_taken(&self.reserved, &self.rows[idx], &new_name) => {
                     self.rows[idx].tfidf_name = Some((new_name.clone(), variation));
                     self.rows[idx].state = RowState::UseTfidf(TfidfNameState {
                         name: new_name,
                         variation,
                     });
                 }
-                None => {
-                    // Segment no longer produces a TF-IDF name — fall back to
-                    // Unchecked.
+                // The segment no longer produces a TF-IDF name, or produces
+                // one that is already taken — either way the row has no
+                // usable auto name, so it falls back to Unchecked. Without
+                // this, a toggle elsewhere could park a row on a name that
+                // `jj bookmark create` would reject.
+                _ => {
                     self.rows[idx].tfidf_name = None;
                     self.rows[idx].state = RowState::Unchecked;
                 }
-                Some(_) => {} // Same name, nothing to do.
             }
         }
     }
@@ -723,8 +727,8 @@ impl BookmarkAssignmentState {
     /// Build the selection result from included rows.
     ///
     /// Returns `Err` with the duplicate bookmark name if any two included rows
-    /// resolve to the same name, or if any row is still loading
-    /// (`UseCustom(Loading)`).
+    /// resolve to the same name, if a new name is already taken by a local
+    /// bookmark, or if any row is still loading (`UseCustom(Loading)`).
     pub fn build_result(&self) -> Result<Vec<BookmarkAssignment>, SelectionError> {
         let mut assignments = Vec::new();
         let mut seen = std::collections::HashSet::new();
@@ -770,8 +774,16 @@ impl BookmarkAssignmentState {
                 return Err(SelectionError::DuplicateName(bookmark_name));
             }
 
+            // A new name must not shadow a bookmark that already exists —
+            // `jj bookmark create` would reject it during execution. Kept
+            // names are exempt: reusing them is the point.
+            if is_new && self.reserved.contains(&bookmark_name) {
+                return Err(SelectionError::NameExists(bookmark_name));
+            }
+
             assignments.push(BookmarkAssignment {
                 change_id: r.change_id.clone(),
+                short_change_id: r.short_change_id.clone(),
                 bookmark_name,
                 is_new,
             });
@@ -941,11 +953,13 @@ impl<'a> BookmarkWidget<'a> {
             ];
 
             if !name_str.is_empty() {
-                // Use red for user-input text that fails validation.
+                // Use red for user-input text that fails validation or names
+                // a bookmark that already exists.
                 let name_style = if let RowState::UserInput(s) = &row.state
                     && !s.is_empty()
                     && self.editing_row == Some(idx)
-                    && bookmark_gen::validate_bookmark_name(s).is_err()
+                    && (bookmark_gen::validate_bookmark_name(s).is_err()
+                        || self.state.reserved.contains(s))
                 {
                     Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)
                 } else {
@@ -1064,8 +1078,30 @@ pub fn bookmark_help_line(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashSet;
+
     use super::*;
     use crate::graph::layout::LayoutNode;
+
+    /// `from_path` with an empty reserved set — the repo has no bookmarks
+    /// beyond the ones the path itself carries.
+    fn state_from(
+        path: &[&LayoutNode],
+        has_bookmark_command: bool,
+        auto_prefix: Option<&str>,
+    ) -> BookmarkAssignmentState {
+        BookmarkAssignmentState::from_path(path, has_bookmark_command, auto_prefix, &HashSet::new())
+    }
+
+    /// `from_path` with an explicit set of names already taken in the repo.
+    fn state_from_reserved(
+        path: &[&LayoutNode],
+        auto_prefix: Option<&str>,
+        reserved: &[&str],
+    ) -> BookmarkAssignmentState {
+        let reserved: HashSet<String> = reserved.iter().map(ToString::to_string).collect();
+        BookmarkAssignmentState::from_path(path, false, auto_prefix, &reserved)
+    }
 
     fn make_node(
         change_id: &str,
@@ -1112,7 +1148,7 @@ mod tests {
             make_node("ch_b", "add feature", &[], false, true),
         ];
         let refs: Vec<&LayoutNode> = nodes.iter().collect();
-        let state = BookmarkAssignmentState::from_path(&refs, false, None);
+        let state = state_from(&refs, false, None);
 
         assert_eq!(state.rows.len(), 3);
 
@@ -1139,7 +1175,7 @@ mod tests {
             make_node("ch_b", "add feature", &[], false, true),
         ];
         let refs: Vec<&LayoutNode> = nodes.iter().collect();
-        let state = BookmarkAssignmentState::from_path(&refs, false, None);
+        let state = state_from(&refs, false, None);
 
         // Highest index = leaf = top row on screen.
         assert_eq!(state.cursor, 2);
@@ -1149,7 +1185,7 @@ mod tests {
     fn state_from_path_trunk_only_keeps_cursor_on_trunk() {
         let nodes = [make_node("", "trunk", &[], true, false)];
         let refs: Vec<&LayoutNode> = nodes.iter().collect();
-        let state = BookmarkAssignmentState::from_path(&refs, false, None);
+        let state = state_from(&refs, false, None);
 
         assert_eq!(state.cursor, 0);
     }
@@ -1161,7 +1197,7 @@ mod tests {
             make_node("ch_a", "work", &["feat"], false, true),
         ];
         let refs: Vec<&LayoutNode> = nodes.iter().collect();
-        let mut state = BookmarkAssignmentState::from_path(&refs, false, None);
+        let mut state = state_from(&refs, false, None);
 
         // Cursor starts on the leaf row; starts UseExisting.
         assert_eq!(state.cursor, 1);
@@ -1196,7 +1232,7 @@ mod tests {
             make_node("ch_a", "work", &["feat"], false, true),
         ];
         let refs: Vec<&LayoutNode> = nodes.iter().collect();
-        let mut state = BookmarkAssignmentState::from_path(&refs, false, None);
+        let mut state = state_from(&refs, false, None);
 
         // Starts UseExisting(0).
         assert_eq!(state.rows[1].state, RowState::UseExisting(0));
@@ -1239,7 +1275,7 @@ mod tests {
             ),
         ];
         let refs: Vec<&LayoutNode> = nodes.iter().collect();
-        let mut state = BookmarkAssignmentState::from_path(&refs, false, None);
+        let mut state = state_from(&refs, false, None);
 
         // Forward to Unchecked first.
         // Space skips past all existing as one stop:
@@ -1278,7 +1314,7 @@ mod tests {
             make_node("ch_x", "feature", &[], false, true),
         ];
         let refs: Vec<&LayoutNode> = nodes.iter().collect();
-        let mut state = BookmarkAssignmentState::from_path(&refs, false, None);
+        let mut state = state_from(&refs, false, None);
 
         assert_eq!(state.rows[1].state, RowState::Unchecked);
 
@@ -1306,7 +1342,7 @@ mod tests {
             make_node("ch_x", "add update remove", &[], false, true),
         ];
         let refs: Vec<&LayoutNode> = nodes.iter().collect();
-        let mut state = BookmarkAssignmentState::from_path(&refs, false, None);
+        let mut state = state_from(&refs, false, None);
 
         assert_eq!(state.rows[1].state, RowState::Unchecked);
 
@@ -1327,7 +1363,7 @@ mod tests {
     fn reverse_toggle_trunk_is_noop() {
         let nodes = [make_node("", "trunk", &[], true, false)];
         let refs: Vec<&LayoutNode> = nodes.iter().collect();
-        let mut state = BookmarkAssignmentState::from_path(&refs, false, None);
+        let mut state = state_from(&refs, false, None);
         state.cursor = 0;
         let state_before = state.rows[0].state.clone();
         state.toggle_current_reverse();
@@ -1341,7 +1377,7 @@ mod tests {
             make_node("ch_a", "work", &["feat"], false, true),
         ];
         let refs: Vec<&LayoutNode> = nodes.iter().collect();
-        let mut state = BookmarkAssignmentState::from_path(&refs, false, None);
+        let mut state = state_from(&refs, false, None);
 
         let initial = state.rows[1].state.clone();
         state.toggle_current();
@@ -1353,7 +1389,7 @@ mod tests {
     fn toggle_trunk_is_noop() {
         let nodes = [make_node("", "trunk", &[], true, false)];
         let refs: Vec<&LayoutNode> = nodes.iter().collect();
-        let mut state = BookmarkAssignmentState::from_path(&refs, false, None);
+        let mut state = state_from(&refs, false, None);
         state.cursor = 0;
         let state_before = state.rows[0].state.clone();
         state.toggle_current();
@@ -1370,7 +1406,7 @@ mod tests {
             make_node("abcdefghijkl", "work", &["stakk-abcdefghijkl"], false, true),
         ];
         let refs: Vec<&LayoutNode> = nodes.iter().collect();
-        let mut state = BookmarkAssignmentState::from_path(&refs, false, None);
+        let mut state = state_from(&refs, false, None);
 
         assert_eq!(state.rows[1].state, RowState::UseExisting(0));
 
@@ -1398,7 +1434,7 @@ mod tests {
             make_node("ch_x", "feature", &[], false, true),
         ];
         let refs: Vec<&LayoutNode> = nodes.iter().collect();
-        let mut state = BookmarkAssignmentState::from_path(&refs, false, None);
+        let mut state = state_from(&refs, false, None);
 
         assert_eq!(state.rows[1].state, RowState::Unchecked);
 
@@ -1424,7 +1460,7 @@ mod tests {
             make_node("ch_x", "add update remove", &[], false, true),
         ];
         let refs: Vec<&LayoutNode> = nodes.iter().collect();
-        let mut state = BookmarkAssignmentState::from_path(&refs, false, None);
+        let mut state = state_from(&refs, false, None);
 
         assert_eq!(state.rows[1].state, RowState::Unchecked);
 
@@ -1448,7 +1484,7 @@ mod tests {
             make_node("ch_c", "leaf", &["leaf"], false, true),
         ];
         let refs: Vec<&LayoutNode> = nodes.iter().collect();
-        let mut state = BookmarkAssignmentState::from_path(&refs, false, None);
+        let mut state = state_from(&refs, false, None);
 
         // Toggle the middle (unmarked) commit: Unchecked → UseTfidf.
         // "middle" produces a TF-IDF name.
@@ -1473,7 +1509,7 @@ mod tests {
             make_node("ch_a", "work", &["feat"], false, true),
         ];
         let refs: Vec<&LayoutNode> = nodes.iter().collect();
-        let mut state = BookmarkAssignmentState::from_path(&refs, false, None);
+        let mut state = state_from(&refs, false, None);
 
         // Toggle to Unchecked: UseExisting → UseTfidf → UserInput →
         // UseGenerated → Unchecked.
@@ -1485,6 +1521,141 @@ mod tests {
 
         let result = state.build_result().unwrap();
         assert!(result.is_empty());
+    }
+
+    // -- reserved names --
+
+    /// A typed name that collides with a bookmark elsewhere in the repo is
+    /// rejected on confirm. The graph cannot see such bookmarks, so the
+    /// check has to consult the repo-wide list.
+    #[test]
+    fn build_result_rejects_user_input_matching_a_reserved_name() {
+        let nodes = [
+            make_node("", "trunk", &[], true, false),
+            make_node("ch_a", "work", &[], false, true),
+        ];
+        let refs: Vec<&LayoutNode> = nodes.iter().collect();
+        let mut state = state_from_reserved(&refs, None, &["main"]);
+
+        state.cursor = 1;
+        state.rows[1].state = RowState::UserInput("main".to_string());
+        assert!(matches!(
+            state.build_result(),
+            Err(SelectionError::NameExists(name)) if name == "main"
+        ));
+
+        // A free name goes through.
+        state.rows[1].state = RowState::UserInput("not-main".to_string());
+        let result = state.build_result().unwrap();
+        assert_eq!(result[0].bookmark_name, "not-main");
+        assert!(result[0].is_new);
+    }
+
+    /// Keeping an existing bookmark is not a collision — its name is in the
+    /// reserved set by definition.
+    #[test]
+    fn build_result_allows_keeping_a_bookmark_in_the_reserved_set() {
+        let nodes = [
+            make_node("", "trunk", &[], true, false),
+            make_node("ch_a", "work", &["feat"], false, true),
+        ];
+        let refs: Vec<&LayoutNode> = nodes.iter().collect();
+        let state = state_from_reserved(&refs, None, &["main", "feat"]);
+
+        assert_eq!(state.rows[1].state, RowState::UseExisting(0));
+        let result = state.build_result().unwrap();
+        assert_eq!(result[0].bookmark_name, "feat");
+        assert!(!result[0].is_new);
+    }
+
+    /// The state cycle skips a TF-IDF name that is already taken in the repo,
+    /// the same way it skips one matching a bookmark on the row itself.
+    #[test]
+    fn toggle_skips_tfidf_name_taken_elsewhere_in_the_repo() {
+        let nodes = [
+            make_node("", "trunk", &[], true, false),
+            make_node("ch_a", "database caching layer", &[], false, true),
+        ];
+        let refs: Vec<&LayoutNode> = nodes.iter().collect();
+
+        // Baseline: with nothing reserved, the first stop is UseTfidf.
+        let mut free = state_from(&refs, false, None);
+        free.cursor = 1;
+        free.toggle_current();
+        let RowState::UseTfidf(ts) = free.rows[1].state.clone() else {
+            panic!("expected UseTfidf, got {:?}", free.rows[1].state);
+        };
+
+        // Reserve that exact name: the cycle now lands on UserInput instead.
+        let mut taken = state_from_reserved(&refs, None, &[&ts.name]);
+        taken.cursor = 1;
+        taken.toggle_current();
+        assert_eq!(taken.rows[1].state, RowState::UserInput(String::new()));
+    }
+
+    /// Toggling a row changes the dynamic segments above it, so a TF-IDF
+    /// name can be recomputed into one that is already taken. Such a row
+    /// falls back to Unchecked rather than parking on a name that
+    /// `jj bookmark create` would reject.
+    #[test]
+    fn refresh_drops_a_tfidf_row_whose_new_name_is_taken() {
+        let nodes = [
+            make_node("", "trunk", &[], true, false),
+            make_node("ch_a", "database caching layer", &[], false, false),
+            make_node("ch_b", "email templates", &[], false, true),
+        ];
+        let refs: Vec<&LayoutNode> = nodes.iter().collect();
+
+        // The leaf's segment while the row below is unchecked spans both
+        // commits; checking the row below shrinks it to the leaf alone,
+        // which derives a different name.
+        let mut probe = state_from(&refs, false, None);
+        probe.cursor = 2;
+        probe.toggle_current();
+        let RowState::UseTfidf(wide) = probe.rows[2].state.clone() else {
+            panic!("expected UseTfidf, got {:?}", probe.rows[2].state);
+        };
+        probe.cursor = 1;
+        probe.toggle_current();
+        let RowState::UseTfidf(narrow) = probe.rows[2].state.clone() else {
+            panic!(
+                "expected the leaf to keep UseTfidf, got {:?}",
+                probe.rows[2].state
+            );
+        };
+        assert_ne!(
+            wide.name, narrow.name,
+            "the segment change renames the leaf"
+        );
+
+        // Same sequence, but the narrowed name is taken in the repo.
+        let mut state = state_from_reserved(&refs, None, &[&narrow.name]);
+        state.cursor = 2;
+        state.toggle_current();
+        assert!(matches!(state.rows[2].state, RowState::UseTfidf(_)));
+        state.cursor = 1;
+        state.toggle_current();
+        assert_eq!(state.rows[2].state, RowState::Unchecked);
+    }
+
+    /// The generated `stakk-<change_id>` state is skipped too when taken.
+    #[test]
+    fn toggle_skips_generated_name_taken_elsewhere_in_the_repo() {
+        let nodes = [
+            make_node("", "trunk", &[], true, false),
+            make_node("ch_a", "work", &[], false, true),
+        ];
+        let refs: Vec<&LayoutNode> = nodes.iter().collect();
+        let generated = bookmark_gen::default_bookmark_name("ch_a");
+
+        let mut state = state_from_reserved(&refs, None, &[&generated]);
+        state.cursor = 1;
+        // Unchecked → UseTfidf → UserInput → (UseGenerated skipped) →
+        // Unchecked.
+        state.toggle_current();
+        state.toggle_current();
+        state.toggle_current();
+        assert_eq!(state.rows[1].state, RowState::Unchecked);
     }
 
     fn make_bare_row(state: RowState) -> BookmarkRow {
@@ -1546,6 +1717,7 @@ mod tests {
             cursor: 0,
             auto_prefix: None,
             input_mode: InputMode::Normal,
+            reserved: HashSet::new(),
         };
         assert!(matches!(
             state.build_result(),
@@ -1560,7 +1732,7 @@ mod tests {
             make_node("ch_a", "add feature", &["feat"], false, true),
         ];
         let refs: Vec<&LayoutNode> = nodes.iter().collect();
-        let state = BookmarkAssignmentState::from_path(&refs, false, None);
+        let state = state_from(&refs, false, None);
         let widget = BookmarkWidget::new(&state, 0, None, None);
 
         let area = Rect::new(0, 0, 60, 10);
@@ -1593,7 +1765,7 @@ mod tests {
             ),
         ];
         let refs: Vec<&LayoutNode> = nodes.iter().collect();
-        let mut state = BookmarkAssignmentState::from_path(&refs, false, None);
+        let mut state = state_from(&refs, false, None);
 
         assert_eq!(state.rows[1].state, RowState::UseExisting(0));
 
@@ -1644,7 +1816,7 @@ mod tests {
             ),
         ];
         let refs: Vec<&LayoutNode> = nodes.iter().collect();
-        let mut state = BookmarkAssignmentState::from_path(&refs, false, None);
+        let mut state = state_from(&refs, false, None);
 
         assert_eq!(state.rows[1].state, RowState::UseExisting(0));
 
@@ -1672,7 +1844,7 @@ mod tests {
             make_node("ch_a", "work", &["alpha", "beta"], false, true),
         ];
         let refs: Vec<&LayoutNode> = nodes.iter().collect();
-        let mut state = BookmarkAssignmentState::from_path(&refs, false, None);
+        let mut state = state_from(&refs, false, None);
 
         // Use r/R (vary) to cycle from UseExisting(0) → UseExisting(1).
         let vary = state.vary_current();
@@ -1691,7 +1863,7 @@ mod tests {
             make_node("ch_a", "work", &["alpha", "beta", "gamma"], false, true),
         ];
         let refs: Vec<&LayoutNode> = nodes.iter().collect();
-        let state = BookmarkAssignmentState::from_path(&refs, false, None);
+        let state = state_from(&refs, false, None);
 
         assert_eq!(state.rows[1].existing_bookmarks.len(), 3);
         assert_eq!(state.rows[1].existing_bookmarks[0], "alpha");
@@ -1712,7 +1884,7 @@ mod tests {
             ),
         ];
         let refs: Vec<&LayoutNode> = nodes.iter().collect();
-        let mut state = BookmarkAssignmentState::from_path(&refs, false, None);
+        let mut state = state_from(&refs, false, None);
 
         // Unchecked → UseTfidf (auto is first after existing/unchecked).
         state.toggle_current();
@@ -1742,7 +1914,7 @@ mod tests {
             ),
         ];
         let refs: Vec<&LayoutNode> = nodes.iter().collect();
-        let mut state = BookmarkAssignmentState::from_path(&refs, false, None);
+        let mut state = state_from(&refs, false, None);
 
         // Get to UseTfidf (first toggle from Unchecked).
         state.toggle_current();
@@ -1790,7 +1962,7 @@ mod tests {
             ),
         ];
         let refs: Vec<&LayoutNode> = nodes.iter().collect();
-        let mut state = BookmarkAssignmentState::from_path(&refs, false, Some("gb-"));
+        let mut state = state_from(&refs, false, Some("gb-"));
 
         // Unchecked → UseTfidf (auto is first).
         state.toggle_current();
@@ -1819,7 +1991,7 @@ mod tests {
             make_node("ch_leaf", "rate limiting endpoints", &[], false, true),
         ];
         let refs: Vec<&LayoutNode> = nodes.iter().collect();
-        let mut state = BookmarkAssignmentState::from_path(&refs, false, None);
+        let mut state = state_from(&refs, false, None);
 
         // Get leaf to UseTfidf: Unchecked → UseTfidf (auto is first).
         state.cursor = 2;
@@ -1865,7 +2037,7 @@ mod tests {
             make_node("ch_a", "work", &[], false, true),
         ];
         let refs: Vec<&LayoutNode> = nodes.iter().collect();
-        let mut state = BookmarkAssignmentState::from_path(&refs, false, None);
+        let mut state = state_from(&refs, false, None);
 
         // Toggle to UserInput.
         state.toggle_current(); // UseTfidf or UserInput depending on tfidf availability.
@@ -1904,7 +2076,7 @@ mod tests {
             make_node("ch_a", "feature", &[], false, true),
         ];
         let refs: Vec<&LayoutNode> = nodes.iter().collect();
-        let mut state = BookmarkAssignmentState::from_path(&refs, false, None);
+        let mut state = state_from(&refs, false, None);
 
         // Toggle to UserInput.
         while !matches!(state.rows[1].state, RowState::UserInput(_)) {
@@ -1935,7 +2107,7 @@ mod tests {
             make_node("ch_a", "work", &[], false, true),
         ];
         let refs: Vec<&LayoutNode> = nodes.iter().collect();
-        let mut state = BookmarkAssignmentState::from_path(&refs, false, None);
+        let mut state = state_from(&refs, false, None);
 
         // Toggle to UserInput (empty).
         while !matches!(state.rows[1].state, RowState::UserInput(_)) {
@@ -1956,7 +2128,7 @@ mod tests {
             make_node("ch_a", "work", &[], false, true),
         ];
         let refs: Vec<&LayoutNode> = nodes.iter().collect();
-        let mut state = BookmarkAssignmentState::from_path(&refs, false, None);
+        let mut state = state_from(&refs, false, None);
 
         // Toggle to UserInput.
         while !matches!(state.rows[1].state, RowState::UserInput(_)) {
@@ -1991,7 +2163,7 @@ mod tests {
             make_node("ch_a", "work", &["feat"], false, true),
         ];
         let refs: Vec<&LayoutNode> = nodes.iter().collect();
-        let mut state = BookmarkAssignmentState::from_path(&refs, false, None);
+        let mut state = state_from(&refs, false, None);
 
         // On UseExisting — edit mode should not enter.
         assert!(!state.enter_edit_mode());
@@ -2005,7 +2177,7 @@ mod tests {
             make_node("ch_a", "work", &["feat"], false, true),
         ];
         let refs: Vec<&LayoutNode> = nodes.iter().collect();
-        let mut state = BookmarkAssignmentState::from_path(&refs, true, None);
+        let mut state = state_from(&refs, true, None);
 
         assert_eq!(state.cursor, 1);
         assert_eq!(state.rows[1].state, RowState::UseExisting(0));
@@ -2049,7 +2221,7 @@ mod tests {
             make_node("ch_a", "work", &["feat"], false, true),
         ];
         let refs: Vec<&LayoutNode> = nodes.iter().collect();
-        let mut state = BookmarkAssignmentState::from_path(&refs, true, None);
+        let mut state = state_from(&refs, true, None);
 
         assert_eq!(state.rows[1].state, RowState::UseExisting(0));
 
@@ -2092,7 +2264,7 @@ mod tests {
             make_node("ch_a", "work", &["feat"], false, true),
         ];
         let refs: Vec<&LayoutNode> = nodes.iter().collect();
-        let mut state = BookmarkAssignmentState::from_path(&refs, true, None);
+        let mut state = state_from(&refs, true, None);
 
         // Pre-populate custom_name matching an existing bookmark.
         state.rows[1].custom_name = Some("feat".to_string());
@@ -2113,7 +2285,7 @@ mod tests {
             make_node("ch_a", "work", &["feat"], false, true),
         ];
         let refs: Vec<&LayoutNode> = nodes.iter().collect();
-        let mut state = BookmarkAssignmentState::from_path(&refs, true, None);
+        let mut state = state_from(&refs, true, None);
 
         // Pre-populate custom_name matching the generated name.
         let gen_name = state.rows[1].generated_name.clone().unwrap();
@@ -2146,7 +2318,7 @@ mod tests {
             make_node("ch_leaf", "leaf work", &["leaf"], false, true),
         ];
         let refs: Vec<&LayoutNode> = nodes.iter().collect();
-        BookmarkAssignmentState::from_path(&refs, false, None)
+        state_from(&refs, false, None)
     }
 
     #[test]
@@ -2180,7 +2352,7 @@ mod tests {
             node
         }];
         let refs: Vec<&LayoutNode> = nodes.iter().collect();
-        let mut state = BookmarkAssignmentState::from_path(&refs, false, None);
+        let mut state = state_from(&refs, false, None);
 
         assert!(!state.rows[1].is_locked());
         assert_eq!(state.rows[1].state, RowState::UseExisting(0));

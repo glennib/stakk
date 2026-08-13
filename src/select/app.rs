@@ -3,6 +3,7 @@
 //! Two screens: `GraphView` (pick a branch) → `BookmarkAssignment` (toggle
 //! bookmarks). Uses ratatui's inline viewport (not fullscreen).
 
+use std::collections::HashSet;
 use std::io;
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -48,6 +49,7 @@ use crate::error::StakkError::{self};
 use crate::graph::layout::GraphLayout;
 use crate::graph::layout::build_layout;
 use crate::graph::types::ChangeGraph;
+use crate::graph::types::SegmentCommit;
 
 /// Terminal type used by the TUI: inline viewport over stderr.
 type Tui = Terminal<CrosstermBackend<io::Stderr>>;
@@ -74,6 +76,7 @@ pub fn run_tui(
     graph: &ChangeGraph,
     bookmark_command: Option<&str>,
     auto_prefix: Option<&str>,
+    reserved: &HashSet<String>,
 ) -> Result<Option<SelectionResult>, StakkError> {
     let layout = build_layout(graph);
     let has_bookmark_command = bookmark_command.is_some();
@@ -94,6 +97,7 @@ pub fn run_tui(
 
     let result = run_event_loop(
         &mut terminal,
+        graph,
         &layout,
         &mut graph_state,
         &mut bookmark_state,
@@ -102,6 +106,7 @@ pub fn run_tui(
         bookmark_command,
         auto_prefix,
         &bookmark_cache,
+        reserved,
     );
 
     // Collapse the inline viewport: erase it and park the cursor at its top,
@@ -131,6 +136,30 @@ pub fn run_tui(
     }
 
     result
+}
+
+/// The trunk-to-tip commit chain of the stack whose tip is the currently
+/// selected leaf.
+///
+/// Every layout leaf is the tip of a stack: layout nodes come from
+/// `graph.stacks`, and a node without children is by construction the last
+/// commit of at least one stack.
+fn selected_stack_path(
+    graph: &ChangeGraph,
+    layout: &GraphLayout,
+    graph_state: &GraphViewState,
+) -> Vec<SegmentCommit> {
+    let leaf = layout.leaves[graph_state.selected_leaf];
+    let leaf_commit_id = &layout.nodes[leaf].commit_id;
+    let stack = graph
+        .stacks
+        .iter()
+        .find(|s| {
+            s.tip_commit()
+                .is_some_and(|c| &c.commit_id == leaf_commit_id)
+        })
+        .expect("every layout leaf is the tip of a stack");
+    stack.commits_trunk_to_tip().cloned().collect()
 }
 
 /// Viewport height for a screen with `content_rows` content lines: content
@@ -185,6 +214,7 @@ fn replace_viewport(terminal: &mut Tui, viewport_height: u16) -> io::Result<()> 
 )]
 fn run_event_loop(
     terminal: &mut Tui,
+    graph: &ChangeGraph,
     layout: &GraphLayout,
     graph_state: &mut GraphViewState,
     bookmark_state: &mut Option<BookmarkAssignmentState>,
@@ -193,6 +223,7 @@ fn run_event_loop(
     bookmark_command: Option<&str>,
     auto_prefix: Option<&str>,
     bookmark_cache: &Arc<Mutex<BookmarkNameCache>>,
+    reserved: &HashSet<String>,
 ) -> Result<Option<SelectionResult>, StakkError> {
     let mut pending: Vec<PendingCommand> = Vec::new();
     let mut spinner_tick: usize = 0;
@@ -305,6 +336,7 @@ fn run_event_loop(
                                 &path,
                                 has_bookmark_command,
                                 auto_prefix,
+                                reserved,
                             );
                             replace_viewport(terminal, viewport_height_for(state.rows.len())?)?;
                             *bookmark_state = Some(state);
@@ -390,11 +422,16 @@ fn run_event_loop(
                             match state.build_result() {
                                 Ok(assignments) if assignments.is_empty() => {}
                                 Ok(assignments) => {
-                                    return Ok(Some(SelectionResult { assignments }));
+                                    let path = selected_stack_path(graph, layout, graph_state);
+                                    return Ok(Some(SelectionResult { assignments, path }));
                                 }
                                 Err(SelectionError::DuplicateName(name)) => {
                                     error_message =
                                         Some(format!("Duplicate bookmark name: {name}"));
+                                }
+                                Err(SelectionError::NameExists(name)) => {
+                                    error_message =
+                                        Some(format!("Bookmark already exists: {name}"));
                                 }
                                 Err(SelectionError::StillLoading) => {
                                     error_message =
