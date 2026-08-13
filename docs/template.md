@@ -56,7 +56,12 @@ no indentation for structure, and no code fence (links inside a fence are dead).
 The default template draws one node glyph per line at column 0 — `●` current, `○` other, `◆` trunk —
 the same glyphs `stakk show` uses, and relies on GitHub rendering soft breaks as `<br>`.
 
-A template that fails to render fails the submission, so test changes with `--dry-run` against a real stack first.
+A template that fails to render fails the submission, and `--dry-run` does not exercise it:
+dry-run returns before the template is read at all.
+What the ordering does guarantee is that a template is read and compiled before the execute phase,
+so a syntax error stops the run before anything is pushed.
+A failure that only appears while rendering surfaces later —
+the branches are pushed and the PRs created or updated first, and the stack comments written after that.
 
 ## Custom bookmark names
 

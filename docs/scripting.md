@@ -115,7 +115,8 @@ with the same type and the same value — so a script can move from one to the o
 Both report the same `schema_version`.
 
 Sparse is the discovery format because commit bodies, author blocks and `files[]` dominate the byte count:
-on this repository, full is roughly 8× sparse.
+dropping them shrinks the document by close to an order of magnitude on a repository like this one,
+and the gap widens with commit-message length.
 Reach for `json-full` when you actually need to read commit messages or see which files a commit touches.
 
 Both projections carry the same top level:

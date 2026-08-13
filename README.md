@@ -48,6 +48,7 @@ and idempotent updates.
 stakk shells out to the [`jj`](https://github.com/jj-vcs/jj) CLI, which must be installed and on your `PATH`.
 The minimum supported jj version is **0.39.0**.
 Older versions may work but are untested; stakk prints a warning when it detects one.
+Raising that floor is not a breaking change — see [Stability](#stability).
 
 ### mise (recommended)
 
@@ -166,15 +167,9 @@ For a GitHub Enterprise Server host, name the host with `--github-host`, `STAKK_
 stakk then accepts remotes on that host and uses its API at `https://<host>/api/v3`.
 Tokens are resolved per host, mirroring the GitHub CLI, so an Enterprise token is never sent to github.com.
 
-```sh
-export GH_HOST=github.example.com
-gh auth login --hostname github.example.com
-gh auth status --hostname github.example.com
-```
-
 Host resolution order and the API base: [docs/config.md](docs/config.md), or run `stakk docs config`.
-The per-host token order, what to do when it fails, and how to check the setup: [docs/auth.md](docs/auth.md),
-or run `stakk docs auth`.
+The `gh` commands that set the host up, the per-host token order, what to do when it fails, and how to check the setup:
+[docs/auth.md](docs/auth.md), or run `stakk docs auth`.
 
 ## Usage
 
@@ -328,6 +323,37 @@ The submission pipeline is split into three phases:
 
 This separation makes the business logic testable without hitting real APIs, and `--dry-run` falls out naturally
 (run phases 1 and 2, skip 3).
+
+## Stability
+
+stakk follows semantic versioning.
+What that guarantee covers — the surface a script, an agent, or another tool may rely on:
+
+**Stable.**
+Changing these needs a major release.
+
+- Subcommand names and their flags.
+- `STAKK_`-prefixed environment variables.
+- Config file keys and their defaults.
+- The `stakk show` JSON document, under its `schema_version`
+  (currently `2`; both the sparse `json` and the `json-full` projection report it).
+- The JSON handed to `--bookmark-command` on stdin, under its own `schema_version` (currently `1`).
+- Diagnostic codes (`stakk::…`).
+- Exit codes.
+
+**Not stable.** These may change in any release.
+
+- The rendered text of `stakk docs` and `--help`.
+  Doc topics may be added, reworded, or restructured at any time;
+  only the `stakk docs <topic>` invocation shape is stable.
+- The `pretty` output of `stakk show`.
+- The TUI layout and keybindings.
+- Spinner and progress text.
+- Error message wording — the diagnostic codes are the contract, not the prose.
+
+**Not a breaking change:** raising the minimum supported jj version.
+The check is warn-only — stakk runs against an older jj and says so — so the floor can move in any release,
+normally the one that actually adopts a newer jj's behaviour.
 
 ## License
 

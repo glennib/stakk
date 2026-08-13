@@ -7,14 +7,20 @@ It complements jj by turning local bookmark state into coherent GitHub PRs with 
 
 ## Current Status
 
-**v1.22.0** — All core features complete: stack detection, three-phase submission, interactive TUI selection,
-non-interactive selection via `--keep`/`--new*`, offline `stakk show`
+All core features are complete: stack detection, three-phase submission, interactive TUI selection,
+fully explicit non-interactive selection via `--keep`/`--new*`, offline `stakk show`
 (pretty graph + versioned JSON in sparse and full projections),
 four stack-placement modes, stack comment templating, layered config
-(CLI > env > repo/user TOML), and comprehensive error handling.
+(CLI > env > repo/user TOML), bundled documentation via `stakk docs`, and comprehensive error handling.
+
+The CLI surface is the one `plans/cli-v2.md` describes: `stakk` and `stakk submit` both open the TUI,
+every PR boundary of a non-interactive submission is named with a selection flag, and there is no positional bookmark,
+no `--keep-all`, no `--draft`, and no `stakk auth`.
+Which parts of that surface are semver-guarded is stated in the README's **Stability** section —
+the contract lives there, not in a doc topic, because doc-topic text is exactly what it declares unstable.
 
 Versions are managed by release-plz from conventional-commit messages.
-Never edit `CHANGELOG.md` or the `version` field by hand.
+Never edit `CHANGELOG.md` or the `version` field by hand, and do not pin a version number here — release-plz owns it.
 
 ## Testing
 

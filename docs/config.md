@@ -155,28 +155,9 @@ The host is resolved highest to lowest:
 Any other host is rejected, so an unrelated forge is never mistaken for GitHub.
 
 The token is resolved for the host the remote actually points at,
-by asking `gh auth token --hostname <host>` first and reading the environment only if `gh` is unavailable
-or has no token for that host:
-
-| Host | Environment variables |
-|------|-----------------------|
-| `github.com` | `GH_TOKEN`, `GITHUB_TOKEN` |
-| anything else | `GH_ENTERPRISE_TOKEN`, `GITHUB_ENTERPRISE_TOKEN` |
-
-So a github.com token is never sent to an Enterprise host, or the other way around.
-
-```sh
-export GH_HOST=github.example.com
-gh auth login --hostname github.example.com
-gh auth status --hostname github.example.com
-```
-
-`gh auth status --hostname <host>` reports the token stakk will get, since stakk asks `gh` first,
-so it is the quickest way to confirm the setup.
-A `stakk submit --dry-run` *with selection flags* — for example `stakk submit --dry-run --keep <bookmark>` —
-exercises the whole remote → token → API chain read-only; without them it stops at the selection TUI,
-before the plan phase that queries the forge.
-Both are covered by `stakk docs auth`.
+so a github.com token is never sent to an Enterprise host, or the other way around.
+The per-host variables, the `gh auth login` commands that set the host up, and how to confirm the setup afterwards:
+`stakk docs auth`.
 
 Note that the API base is always `https`, even for an `http://` remote:
 an Enterprise Server reachable only over plain HTTP is not supported.
