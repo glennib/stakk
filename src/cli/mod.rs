@@ -32,6 +32,15 @@ pub struct Cli {
     #[arg(long, global = true, env = "STAKK_CONFIG", verbatim_doc_comment)]
     pub config: Option<PathBuf>,
 
+    /// Extra host to treat as GitHub, for GitHub Enterprise Server.
+    ///
+    /// github.com is always accepted. Naming a host here additionally accepts
+    /// remotes on that host and talks to its API at https://<host>/api/v3.
+    /// Falls back to GH_HOST when unset, so an existing GitHub CLI setup works
+    /// without further configuration.
+    #[arg(long, global = true, env = "STAKK_GITHUB_HOST", verbatim_doc_comment)]
+    pub github_host: Option<String>,
+
     #[command(subcommand)]
     pub command: Option<Commands>,
     /// Default submit arguments (used when no subcommand is given).
@@ -116,6 +125,7 @@ pub struct ShowArgs {
 )]
 pub fn apply_config_defaults(config: Config, cmd: Command) -> Command {
     // Apply to top-level (flattened submit args) first.
+    let cmd = apply_global_defaults(&config, cmd);
     let cmd = apply_submit_and_graph_defaults(&config, cmd);
     // Clone for the closures that mut_subcommand requires ('static).
     let config2 = config.clone();
@@ -131,6 +141,18 @@ fn set_default(cmd: Command, arg_id: &str, value: &str) -> Command {
     // bounded by the number of config fields.
     let leaked: &'static str = Box::leak(value.to_string().into_boxed_str());
     cmd.mut_arg(arg_id, |a| a.default_value(leaked))
+}
+
+/// Defaults for `global = true` args on the root command.
+///
+/// Global args are defined once on the root and propagated to subcommands by
+/// clap, so `mut_arg` must run on the root — calling it on a subcommand would
+/// panic with "Argument is undefined".
+fn apply_global_defaults(config: &Config, mut cmd: Command) -> Command {
+    if let Some(ref host) = config.github_host {
+        cmd = set_default(cmd, "github_host", host);
+    }
+    cmd
 }
 
 fn apply_submit_defaults(config: &Config, mut cmd: Command) -> Command {
@@ -309,6 +331,71 @@ mod tests {
         };
         let cli = parse_with_config(config, &["stakk", "submit", "--remote", "other", "bm"]);
         assert_eq!(submit_args(&cli).remote, "other");
+    }
+
+    // -- github_host tests --
+    //
+    // github_host is a `global = true` arg on the root command, so its config
+    // default is injected there rather than per subcommand. These cover that it
+    // still reaches every subcommand.
+
+    #[test]
+    fn github_host_default_none() {
+        let cli = parse_with_config(Config::default(), &["stakk", "submit", "bm"]);
+        assert_eq!(cli.github_host, None);
+    }
+
+    #[test]
+    fn github_host_from_config() {
+        let config = Config {
+            github_host: Some("github.example.com".into()),
+            ..Default::default()
+        };
+        let cli = parse_with_config(config, &["stakk", "submit", "bm"]);
+        assert_eq!(cli.github_host.as_deref(), Some("github.example.com"));
+    }
+
+    #[test]
+    fn github_host_cli_overrides_config() {
+        let config = Config {
+            github_host: Some("github.example.com".into()),
+            ..Default::default()
+        };
+        let cli = parse_with_config(
+            config,
+            &["stakk", "submit", "--github-host", "ghe.other.com", "bm"],
+        );
+        assert_eq!(cli.github_host.as_deref(), Some("ghe.other.com"));
+    }
+
+    #[test]
+    fn github_host_from_config_without_subcommand() {
+        let config = Config {
+            github_host: Some("github.example.com".into()),
+            ..Default::default()
+        };
+        let cli = parse_with_config(config, &["stakk", "bm"]);
+        assert_eq!(cli.github_host.as_deref(), Some("github.example.com"));
+    }
+
+    #[test]
+    fn github_host_from_config_reaches_show() {
+        let config = Config {
+            github_host: Some("github.example.com".into()),
+            ..Default::default()
+        };
+        let cli = parse_with_config(config, &["stakk", "show"]);
+        assert_eq!(cli.github_host.as_deref(), Some("github.example.com"));
+    }
+
+    #[test]
+    fn github_host_from_config_reaches_auth_test() {
+        let config = Config {
+            github_host: Some("github.example.com".into()),
+            ..Default::default()
+        };
+        let cli = parse_with_config(config, &["stakk", "auth", "test"]);
+        assert_eq!(cli.github_host.as_deref(), Some("github.example.com"));
     }
 
     // -- stack_placement tests --
@@ -658,6 +745,7 @@ mod tests {
     fn toml_deserialize_full() {
         let toml_str = r#"
 remote = "upstream"
+github_host = "github.example.com"
 pr_mode = "draft"
 template = "/path/to/template.jinja"
 stack_placement = "body"
@@ -670,6 +758,7 @@ heads_revset = "heads(all())"
 "#;
         let config: Config = toml::from_str(toml_str).unwrap();
         assert_eq!(config.remote.as_deref(), Some("upstream"));
+        assert_eq!(config.github_host.as_deref(), Some("github.example.com"));
         assert_eq!(config.pr_mode, Some(PrMode::Draft));
         assert_eq!(config.template.as_deref(), Some("/path/to/template.jinja"));
         assert_eq!(config.stack_placement, Some(StackPlacement::Body));

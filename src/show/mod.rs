@@ -33,6 +33,8 @@ pub struct ShowData<'a> {
     pub default_branch: &'a str,
     pub remotes: &'a [GitRemote],
     pub graph: &'a ChangeGraph,
+    /// Extra host to treat as GitHub, besides github.com.
+    pub github_host: Option<&'a str>,
 }
 
 // ---------------------------------------------------------------------------
@@ -117,7 +119,7 @@ fn build_report<'a>(data: &ShowData<'a>) -> ShowReport<'a> {
             .map(|r| RemoteReport {
                 name: &r.name,
                 url: &r.url,
-                github: parse_github_url(&r.url).map(|g| g.to_string()),
+                github: parse_github_url(&r.url, data.github_host).map(|g| g.to_string()),
             })
             .collect(),
         excluded_bookmark_count: data.graph.excluded_bookmark_count,
@@ -184,7 +186,7 @@ pub fn render_pretty(data: &ShowData, colors: bool) -> String {
 
     let _ = writeln!(out, "Default branch: {}", data.default_branch);
     for remote in data.remotes {
-        let github = parse_github_url(&remote.url)
+        let github = parse_github_url(&remote.url, data.github_host)
             .map(|r| format!(" ({r})"))
             .unwrap_or_default();
         let _ = writeln!(out, "Remote: {} {}{}", remote.name, remote.url, github);
@@ -425,6 +427,7 @@ mod tests {
             default_branch: "main",
             remotes: &remotes,
             graph: &graph,
+            github_host: None,
         };
         insta::assert_snapshot!(render_pretty(&data, false));
     }
@@ -437,6 +440,7 @@ mod tests {
             default_branch: "main",
             remotes: &remotes,
             graph: &graph,
+            github_host: None,
         };
         let out = render_pretty(&data, false);
         assert!(out.contains("No bookmark stacks found."));
@@ -451,6 +455,7 @@ mod tests {
             default_branch: "main",
             remotes: &remotes,
             graph: &graph,
+            github_host: None,
         };
         insta::assert_snapshot!(render_json(&data));
     }
@@ -463,6 +468,7 @@ mod tests {
             default_branch: "main",
             remotes: &remotes,
             graph: &graph,
+            github_host: None,
         };
         let v: serde_json::Value = serde_json::from_str(&render_json(&data)).unwrap();
 

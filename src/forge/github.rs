@@ -20,17 +20,35 @@ pub struct GitHubForge {
 
 impl GitHubForge {
     /// Create a new `GitHubForge` for the given repository.
-    pub fn new(token: &str, owner: String, repo: String) -> Result<Self, ForgeError> {
-        let client = Octocrab::builder()
-            .personal_token(token.to_string())
-            .build()
-            .map_err(|e| {
-                let message = format!("failed to create GitHub client: {e}");
+    ///
+    /// `api_base_uri` is `None` for github.com, where octocrab's default
+    /// (`https://api.github.com`) applies, and `Some` for a GitHub Enterprise
+    /// Server host. It is a plain string rather than a parsed remote so this
+    /// module stays independent of `jj::remote`.
+    pub fn new(
+        token: &str,
+        owner: String,
+        repo: String,
+        api_base_uri: Option<&str>,
+    ) -> Result<Self, ForgeError> {
+        let mut builder = Octocrab::builder().personal_token(token.to_string());
+        if let Some(uri) = api_base_uri {
+            builder = builder.base_uri(uri).map_err(|e| {
+                let message = format!("invalid GitHub API base URI '{uri}': {e}");
                 ForgeError::Api {
                     message,
                     source: Box::new(e),
                 }
             })?;
+        }
+
+        let client = builder.build().map_err(|e| {
+            let message = format!("failed to create GitHub client: {e}");
+            ForgeError::Api {
+                message,
+                source: Box::new(e),
+            }
+        })?;
 
         Ok(Self {
             client,

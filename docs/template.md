@@ -32,12 +32,13 @@ larger stack are cleaned up (unless the mode is `ignore`).
 Stack comments are rendered with [minijinja](https://github.com/mitsuhiko/minijinja).
 `--template <path>` (or `template` in a config file, or `STAKK_TEMPLATE`) replaces the built-in template.
 
-The template receives a context with a `stack` array, ordered **trunk-first** —
-`position` is 1 for the entry nearest the trunk.
+The context holds `stack`, `stack_size`, `default_branch`, `current_bookmark` and `stakk_url`.
+The `stack` array is ordered **trunk-first** — `position` is 1 for the entry nearest the trunk.
 The default template reverses it (`stack | reverse`) so the rendered graph reads leaf-at-top,
 matching `stakk show` and the TUI.
 
-Each entry carries its `position`, `bookmark`, `pr_url`, `title`, and whether it is the PR currently being rendered.
+Each entry carries `bookmark_name`, `pr_url`, `pr_number`, `title`, `base`, `is_draft`, `position` and `is_current`.
+`stakk submit --help` prints the same list with a worked example template.
 Note that `title` is the *commit-derived* title,
 which can differ from the PR's live title on GitHub when `--sync-pr-content` does not include titles.
 The default template deliberately shows the bare `pr_url` — GitHub renders it as `#N` with the real title on hover —

@@ -47,7 +47,7 @@ pub enum SubmitError {
     #[error("bookmark '{bookmark}' not found in any stack")]
     #[diagnostic(
         code(stakk::submit::bookmark_not_found),
-        help("run `stakk` with no arguments to see available stacks")
+        help("run `stakk show` to list the bookmarks in every stack")
     )]
     BookmarkNotFound { bookmark: String },
 

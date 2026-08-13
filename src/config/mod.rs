@@ -48,6 +48,8 @@ pub struct Config {
     #[serde(default = "default_true")]
     pub inherit: bool,
     pub remote: Option<String>,
+    /// Extra host to treat as GitHub, for GitHub Enterprise Server.
+    pub github_host: Option<String>,
     pub pr_mode: Option<PrMode>,
     pub template: Option<String>,
     pub stack_placement: Option<StackPlacement>,
@@ -64,6 +66,7 @@ impl Default for Config {
         Self {
             inherit: true,
             remote: None,
+            github_host: None,
             pr_mode: None,
             template: None,
             stack_placement: None,
@@ -132,6 +135,7 @@ impl Config {
         Self {
             inherit: self.inherit,
             remote: self.remote.or(fallback.remote),
+            github_host: self.github_host.or(fallback.github_host),
             pr_mode: self.pr_mode.or(fallback.pr_mode),
             template: self.template.or(fallback.template),
             stack_placement: self.stack_placement.or(fallback.stack_placement),

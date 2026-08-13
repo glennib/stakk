@@ -75,26 +75,35 @@ When adding, renaming, or changing the default of one, update all of them in the
    via `set_default(...)`, and add tests mirroring the `sync_pr_content_*` set: `default`, `config_*`,
    `cli_overrides_config`.
    Extend `toml_deserialize_full`.
-4. **`README.md`** — three places:
-   - the `stakk.toml` example block,
-   - the **Environment variables** table,
-   - the per-subcommand flag table (e.g. under `stakk submit`).
-     `GraphArgs` flags (`--bookmarks-revset`, `--heads-revset`) appear in *two* tables —
-     `stakk submit` and `stakk show` — because both subcommands flatten them.
+   A `global = true` arg on `Cli` (like `--config` and `--github-host`) is defined on the *root* command only,
+   so its default goes through `apply_global_defaults`, not `apply_submit_defaults` —
+   `mut_arg` on a subcommand would panic with "Argument is undefined".
+4. **`docs/config.md`** — two places:
+   - the annotated `stakk.toml` example block (the exhaustive one; document the default in the comment),
+   - the **Environment variables** table.
 
-   Options with a prose section of their own need that section updated too:
-   `--stack-placement` has the **Stack info placement** mode table,
-   the selection flags have **Agent / scripting usage**.
+   `README.md` deliberately carries *no* flag or env-var reference tables — `stakk --help`,
+   `stakk <subcommand> --help` and `docs/config.md` are the reference.
+   Only touch the README when the option changes something it describes in prose: the four-key `stakk.toml` sample,
+   the **Stack info placement** summary, **GitHub Enterprise Server**, **Non-interactive selection**,
+   **PR titles and bodies**, **Custom bookmark names**, or **Immutable commits**.
+   Deeper reference material for those lives in `docs/template.md` and `docs/scripting.md`,
+   which each README section links to alongside its `stakk docs <topic>` command.
 
 A change that lands in only some of these will silently drop config-file support, fail to appear in `--help` defaults,
 or stay invisible in the docs.
+
+The README describes only encouraged flows.
+The bare `stakk <bookmark>` form works but is never shown there — `stakk` with no arguments means the TUI,
+and submitting a named bookmark means `stakk submit <bookmark>`.
+Subcommand shadowing and `stakk -- <bookmark>` are documented in `docs/scripting.md` only.
 
 ## Architecture
 
 ```text
 src/
 ├── main.rs          # CLI entry point (clap)
-├── auth.rs          # GitHub token resolution (gh CLI, env vars)
+├── auth.rs          # Per-host GitHub token resolution (gh CLI, env vars)
 ├── cli/             # clap subcommand definitions (Cli, SubmitArgs, ShowArgs, GraphArgs, AuthArgs, DocTopic)
 ├── config/          # TOML config discovery, merging, and clap-default injection
 ├── docs/            # `stakk docs` — include_str!s docs/*.md, renders them, generates the topic index
@@ -105,7 +114,7 @@ src/
 │   ├── mod.rs       # Jj<R: JjRunner> — every jj invocation
 │   ├── runner.rs    # JjRunner trait + real/mock runners
 │   ├── types.rs     # serde structs for jj template output
-│   ├── remote.rs    # GitHub remote URL parsing (GitHubRepo)
+│   ├── remote.rs    # Remote URL parsing + GitHub host gate (GitHubRepo, api_base_uri)
 │   └── version.rs   # jj version parsing + minimum supported version
 ├── forge/           # Forge trait + GitHub implementation (octocrab)
 │   ├── mod.rs       # Forge trait, forge-agnostic types, ForgeError
@@ -351,6 +360,21 @@ If you change any of the following, update `scripts/record-demo.py` in the same 
   Fenced blocks pass through the wrapper unwrapped
   (a folded shell command is a broken one),
   so a test caps fenced lines in `docs/*.md` at 76 chars — rumdl formats at 120 and will not catch it.
+- Remote host handling: `jj::remote::parse_remote_url` parses `<host>/<owner>/<repo>` for *any* host;
+  `parse_github_url` layers the gate on top, accepting `GITHUB_COM` plus one configured host
+  (`--github-host` / `STAKK_GITHUB_HOST` / `github_host` / `GH_HOST`, resolved once in `run()`).
+  The URL is the source of truth for the host — the setting only says which hosts are allowed,
+  so a repo with both a github.com and an Enterprise remote still works.
+  SSH ports are dropped (they say nothing about the API) and HTTP(S) ports are kept (they are the API port).
+  `GitHubRepo::api_base_uri()` returns `None` for github.com,
+  so octocrab keeps its own `https://api.github.com` default, and `https://<host>/api/v3` otherwise —
+  the two are not one template.
+  Always `https`, even for an `http://` remote.
+- The remote must be resolved *before* the token:
+  `auth::resolve_token(host)` picks `GITHUB_TOKEN`/`GH_TOKEN` for github.com
+  and `GH_ENTERPRISE_TOKEN`/`GITHUB_ENTERPRISE_TOKEN` otherwise, and passes `--hostname` to `gh auth token`.
+  Without `--hostname`, gh answers for whatever `GH_HOST` names, which need not be this repo's host.
+  `env_sources`/`token_from_env` take the lookup as a closure so tests never mutate the process environment.
 - jj JSON output uses NDJSON (one JSON object per line).
   Parse with `lines()` plus a per-line `serde_json::from_str`.
 - `jj git remote list` outputs plain text, not JSON.
