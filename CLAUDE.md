@@ -50,7 +50,7 @@ The core submission logic must never import GitHub-specific types directly.
 
 Re-running any command must be safe.
 `submit` updates existing PRs rather than creating duplicates.
-Stack comments are identified by embedded metadata.
+Stack comments are found by the `STAKK_STACK` marker on their metadata line, then rewritten wholesale.
 
 ### 5. Boring solutions over clever abstractions
 
@@ -452,6 +452,14 @@ If you change any of the following, update `scripts/record-demo.py` in the same 
   body mode adds `BODY_WARNING` inside the fence.
   `format_stack_comment` itself is placement-neutral (no warning lines).
   `STAKK_REPO_URL` is the single source of truth for the repo URL.
+- The base64 payload on that line is **write-only**: nothing reads it back.
+  `find_stack_comment` locates stakk's comment with a substring test for `COMMENT_DATA_PREFIX`,
+  and the comment is then regenerated from freshly computed state rather than diffed against what it said before —
+  so `StackCommentData` derives `Serialize` only.
+  The payload is kept because comments already on GitHub carry it, which is what a future reader
+  (detecting merged PRs, say)
+  would need and cannot retrofit; writing that reader means deriving `Deserialize` again and parsing the line,
+  not changing the format.
 - `format_stack_comment` returns `Result` because user templates can fail.
 - `StackCommentContext.stack` is ordered trunk-first
   (`position` is 1 nearest the trunk);
