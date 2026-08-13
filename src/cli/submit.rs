@@ -77,15 +77,6 @@ impl std::fmt::Display for TrailerHandling {
 #[derive(Debug, Args)]
 #[command(group = clap::ArgGroup::new("explicit_marks").multiple(true))]
 pub struct SubmitArgs {
-    /// The bookmark to submit as a pull request.
-    ///
-    /// Every bookmark between trunk and this one gets its own stacked
-    /// pull request. Omit it for interactive selection, or for the
-    /// --keep/--keep-all/--new/--new-auto/--new-command flags, which
-    /// conflict with this argument.
-    #[arg(conflicts_with = "explicit_marks", verbatim_doc_comment)]
-    pub bookmark: Option<String>,
-
     /// Print the submission plan and stop.
     ///
     /// Fully inert: no bookmark is created, nothing is pushed, and no

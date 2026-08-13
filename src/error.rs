@@ -115,7 +115,10 @@ pub enum StakkError {
     #[error("interactive mode requires a terminal")]
     #[diagnostic(
         code(stakk::not_interactive),
-        help("pass the bookmark name explicitly: stakk submit <BOOKMARK>")
+        help(
+            "select explicitly instead: stakk submit --keep <BOOKMARK> / --new <REV>[=<NAME>] — \
+             run `stakk docs scripting` for the full non-interactive workflow"
+        )
     )]
     NotInteractive,
 

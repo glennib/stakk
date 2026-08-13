@@ -94,9 +94,8 @@ A change that lands in only some of these will silently drop config-file support
 or stay invisible in the docs.
 
 The README describes only encouraged flows.
-The bare `stakk <bookmark>` form works but is never shown there — `stakk` with no arguments means the TUI,
-and submitting a named bookmark means `stakk submit <bookmark>`.
-Subcommand shadowing and `stakk -- <bookmark>` are documented in `docs/scripting.md` only.
+`submit` takes no positional bookmark: `stakk` and `stakk submit` both mean the TUI,
+and non-interactive submission is spelled with the `--keep`/`--new*` selection flags.
 
 ## Architecture
 
@@ -453,13 +452,12 @@ If you change any of the following, update `scripts/record-demo.py` in the same 
   unlike `BookmarkSegment::bookmark_names`, it includes bookmarks the bookmarks revset excluded
   (e.g. on immutable commits).
   Feeds `excluded_bookmarks` in the graph layout, which labels locked TUI rows.
-- Two phase-1 constructors: the positional `stakk submit <bookmark>` path uses `analyze_submission` —
-  every boundary from trunk through the target is its own stacked PR, no folding (issue #184).
-  Folding lives only in the selection constructor.
-  Selection-based paths (the TUI and the explicit flags via `select::explicit`) use
-  `analysis_from_selection(path, assignments, ...)`: boundaries are matched by change ID on the selected trunk→tip path,
-  so new bookmarks need not exist yet and no graph rebuild happens; commits between boundaries fold into the boundary
-  above.
+- One phase-1 constructor: every submission — the TUI and the explicit flags via `select::explicit` alike —
+  goes through `analysis_from_selection(path, assignments, ...)`.
+  Boundaries are matched by change ID on the selected trunk→tip path,
+  so new bookmarks need not exist yet and no graph rebuild happens;
+  commits between boundaries fold into the boundary above.
+  Marking every boundary reproduces the no-fold shape (issue #184): each segment keeps exactly its own commit.
 - Explicit selection (`select/explicit.rs`):
   `--keep`/`--keep-all`/`--new REV[=NAME]`/`--new-auto REV`/`--new-command REV` marks fully determine the PR set —
   nothing implicit.

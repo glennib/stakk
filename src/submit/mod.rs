@@ -32,7 +32,6 @@ use crate::forge::comment::splice_stack_into_body;
 use crate::forge::comment::strip_stack_from_body;
 use crate::forge::comment::with_comment_preamble;
 use crate::graph::types::BookmarkSegment;
-use crate::graph::types::ChangeGraph;
 use crate::graph::types::SegmentCommit;
 use crate::jj::Jj;
 use crate::jj::JjError;
@@ -43,14 +42,6 @@ use crate::submit::trailers::split_trailers;
 /// Errors from the submission pipeline.
 #[derive(Debug, Error, Diagnostic)]
 pub enum SubmitError {
-    /// Target bookmark was not found in any stack.
-    #[error("bookmark '{bookmark}' not found in any stack")]
-    #[diagnostic(
-        code(stakk::submit::bookmark_not_found),
-        help("run `stakk show` to list the bookmarks in every stack")
-    )]
-    BookmarkNotFound { bookmark: String },
-
     /// A segment in the change graph has no bookmark name.
     #[error("segment for change {change_id} has no bookmark name")]
     #[diagnostic(
@@ -307,8 +298,8 @@ pub struct BookmarkCreation {
 #[derive(Debug)]
 pub struct SubmissionPlan {
     /// Local bookmarks to create before pushing. Derived from the
-    /// selection's `is_new` assignments; empty for the positional
-    /// `stakk submit <bookmark>` path where every bookmark already exists.
+    /// selection's `is_new` assignments; empty when every selected bookmark
+    /// already exists.
     pub bookmark_creations: Vec<BookmarkCreation>,
     /// Per-bookmark plans, ordered trunk-to-leaf.
     pub bookmark_plans: Vec<BookmarkPlan>,
@@ -331,65 +322,21 @@ pub struct SubmissionResult {
 // Phase 1: Analysis
 // ---------------------------------------------------------------------------
 
-/// Find the segments relevant to submitting the target bookmark.
+/// Build a submission analysis from an explicit selection.
 ///
-/// Locates the stack containing `target_bookmark` in the change graph and
-/// returns all segments from trunk to the target (inclusive). Every segment
-/// boundary becomes its own stacked PR — the `stakk submit <bookmark>` path,
-/// where the whole ancestor chain is submitted. Selection-driven paths, which
-/// fold commits between chosen boundaries, go through
-/// [`analysis_from_selection`] instead.
-pub fn analyze_submission(
-    target_bookmark: &str,
-    change_graph: &ChangeGraph,
-    default_branch: &str,
-) -> Result<SubmissionAnalysis, SubmitError> {
-    let stack = change_graph
-        .stacks
-        .iter()
-        .find(|s| {
-            s.segments
-                .iter()
-                .any(|seg| seg.bookmark_names.contains(&target_bookmark.to_string()))
-        })
-        .ok_or_else(|| SubmitError::BookmarkNotFound {
-            bookmark: target_bookmark.to_string(),
-        })?;
-
-    let target_index = stack
-        .segments
-        .iter()
-        .position(|seg| seg.bookmark_names.contains(&target_bookmark.to_string()))
-        .expect("bookmark was found in stack above");
-
-    let segments = stack.segments[..=target_index]
-        .iter()
-        .map(|seg| BookmarkSegment {
-            bookmark_names: seg.bookmark_names.clone(),
-            change_id: seg.change_id.clone(),
-            commits: seg.commits.clone(),
-        })
-        .collect();
-
-    Ok(SubmissionAnalysis {
-        segments,
-        default_branch: default_branch.to_string(),
-    })
-}
-
-/// Build a submission analysis directly from an explicit selection.
+/// This is the only phase-1 constructor: every submission — interactive or
+/// flag-driven — arrives here.
 ///
 /// `path` is the full trunk-to-tip commit chain of the selected stack and
 /// `assignments` (trunk-to-leaf) name the commits that become segment
-/// boundaries. Commits between boundaries belong to the boundary above them
-/// — the same fold semantics as `analyze_submission` with a selected subset.
+/// boundaries. Commits between boundaries belong to the boundary above them.
 /// Commits above the last boundary are not part of the submission.
 ///
-/// Unlike `analyze_submission`, no bookmark lookup happens: boundaries are
-/// matched by change ID, so bookmarks that do not exist yet (`is_new`
-/// assignments) work without creating them first or rebuilding the graph.
-/// That keeps `--dry-run` free of side effects; the execute phase performs
-/// the actual `jj bookmark create` calls.
+/// No bookmark lookup happens: boundaries are matched by change ID, so
+/// bookmarks that do not exist yet (`is_new` assignments) work without
+/// creating them first or rebuilding the graph. That keeps `--dry-run` free
+/// of side effects; the execute phase performs the actual `jj bookmark
+/// create` calls.
 ///
 /// Contract: every assignment's `change_id` must be present on `path`
 /// (guaranteed by the TUI, whose rows come from the selected path). An
@@ -400,10 +347,9 @@ pub fn analyze_submission(
 /// bookmark creations scheduled for execution.
 ///
 /// Where a segment carries several bookmark names, the resulting segment
-/// keeps only the assigned name — the name the user actually chose — rather
-/// than all names like `analyze_submission` does. With several consecutive
-/// folded segments the folded commits are ordered strictly newest-first,
-/// per `BookmarkSegment::commits`' convention.
+/// keeps only the assigned name — the name the user actually chose. With
+/// several consecutive folded segments the folded commits are ordered
+/// strictly newest-first, per `BookmarkSegment::commits`' convention.
 pub fn analysis_from_selection(
     path: &[SegmentCommit],
     assignments: &[BookmarkAssignment],
@@ -513,9 +459,9 @@ fn build_pr_body(commits: &[SegmentCommit], trailers: TrailerHandling) -> Option
 ///
 /// For each segment in the analysis, checks the forge for existing PRs and
 /// determines whether to push, create, or update. `bookmark_creations` are
-/// the local bookmarks the execute phase must create first (empty for the
-/// positional path, where every bookmark already exists); taking them here
-/// keeps the returned plan complete at construction.
+/// the local bookmarks the execute phase must create first (empty when every
+/// selected bookmark already exists); taking them here keeps the returned
+/// plan complete at construction.
 pub async fn create_submission_plan<F: Forge>(
     analysis: &SubmissionAnalysis,
     bookmark_creations: Vec<BookmarkCreation>,
@@ -1183,18 +1129,6 @@ mod tests {
         }
     }
 
-    fn make_graph(stacks: Vec<BranchStack>) -> ChangeGraph {
-        ChangeGraph {
-            adjacency_list: HashMap::new(),
-            stack_leaves: std::collections::HashSet::new(),
-            stack_roots: std::collections::HashSet::new(),
-            segments: HashMap::new(),
-            tainted_change_ids: std::collections::HashSet::new(),
-            excluded_bookmark_count: 0,
-            stacks,
-        }
-    }
-
     fn make_pr(number: u64, head: &str, base: &str) -> PullRequest {
         PullRequest {
             number,
@@ -1482,111 +1416,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Phase 1 tests
-    // -----------------------------------------------------------------------
-
-    #[test]
-    fn analyze_single_bookmark() {
-        let seg = make_segment(&["feat-a"], "ch_a", "add feature a");
-        let graph = make_graph(vec![BranchStack {
-            segments: vec![seg],
-        }]);
-
-        let result = analyze_submission("feat-a", &graph, "main").unwrap();
-        assert_eq!(result.segments.len(), 1);
-        assert_eq!(result.segments[0].bookmark_names, vec!["feat-a"]);
-
-        assert_eq!(result.default_branch, "main");
-    }
-
-    #[test]
-    fn analyze_middle_of_stack() {
-        let seg_a = make_segment(&["feat-a"], "ch_a", "feature a");
-        let seg_b = make_segment(&["feat-b"], "ch_b", "feature b");
-        let seg_c = make_segment(&["feat-c"], "ch_c", "feature c");
-        let graph = make_graph(vec![BranchStack {
-            segments: vec![seg_a, seg_b, seg_c],
-        }]);
-
-        let result = analyze_submission("feat-b", &graph, "main").unwrap();
-        assert_eq!(result.segments.len(), 2);
-        assert_eq!(result.segments[0].bookmark_names, vec!["feat-a"]);
-        assert_eq!(result.segments[1].bookmark_names, vec!["feat-b"]);
-    }
-
-    #[test]
-    fn analyze_leaf_of_stack() {
-        let seg_a = make_segment(&["feat-a"], "ch_a", "feature a");
-        let seg_b = make_segment(&["feat-b"], "ch_b", "feature b");
-        let graph = make_graph(vec![BranchStack {
-            segments: vec![seg_a, seg_b],
-        }]);
-
-        let result = analyze_submission("feat-b", &graph, "main").unwrap();
-        assert_eq!(result.segments.len(), 2);
-    }
-
-    #[test]
-    fn analyze_bookmark_not_found() {
-        let seg = make_segment(&["feat-a"], "ch_a", "feature a");
-        let graph = make_graph(vec![BranchStack {
-            segments: vec![seg],
-        }]);
-
-        let result = analyze_submission("nonexistent", &graph, "main");
-        assert!(result.is_err());
-        let err = result.unwrap_err().to_string();
-        assert!(
-            err.contains("nonexistent"),
-            "error should mention the bookmark name: {err}"
-        );
-    }
-
-    #[test]
-    fn analyze_multiple_stacks_finds_correct_one() {
-        let stack1 = BranchStack {
-            segments: vec![make_segment(&["alpha"], "ch_alpha", "alpha")],
-        };
-        let stack2 = BranchStack {
-            segments: vec![
-                make_segment(&["beta"], "ch_beta", "beta"),
-                make_segment(&["gamma"], "ch_gamma", "gamma"),
-            ],
-        };
-        let graph = make_graph(vec![stack1, stack2]);
-
-        let result = analyze_submission("gamma", &graph, "main").unwrap();
-        assert_eq!(result.segments.len(), 2);
-        assert_eq!(result.segments[0].bookmark_names, vec!["beta"]);
-        assert_eq!(result.segments[1].bookmark_names, vec!["gamma"]);
-    }
-
-    /// Regression test for <https://github.com/glennib/stakk/issues/184>:
-    /// `stakk submit <leaf>` (no interactive selection) must submit the leaf
-    /// and every bookmarked ancestor as separate stacked segments, not fold
-    /// the ancestors into one cumulative leaf PR.
-    #[test]
-    fn analyze_explicit_target_submits_all_ancestors() {
-        let seg_a = make_segment(&["feat-a"], "ch_a", "feature a");
-        let seg_b = make_segment(&["feat-b"], "ch_b", "feature b");
-        let seg_c = make_segment(&["feat-c"], "ch_c", "feature c");
-        let graph = make_graph(vec![BranchStack {
-            segments: vec![seg_a, seg_b, seg_c],
-        }]);
-
-        let result = analyze_submission("feat-c", &graph, "main").unwrap();
-        assert_eq!(result.segments.len(), 3);
-        assert_eq!(result.segments[0].bookmark_names, vec!["feat-a"]);
-        assert_eq!(result.segments[1].bookmark_names, vec!["feat-b"]);
-        assert_eq!(result.segments[2].bookmark_names, vec!["feat-c"]);
-        // No folding: each segment keeps exactly its own commit.
-        for seg in &result.segments {
-            assert_eq!(seg.commits.len(), 1);
-        }
-    }
-
-    // -----------------------------------------------------------------------
-    // analysis_from_selection tests
+    // Phase 1 tests (analysis_from_selection)
     // -----------------------------------------------------------------------
 
     fn make_assignment(change_id: &str, name: &str, is_new: bool) -> BookmarkAssignment {
@@ -1684,7 +1514,9 @@ mod tests {
     }
 
     /// Marking every boundary folds nothing — each segment keeps exactly its
-    /// own commit, the same shape `stakk submit <bookmark>` produces.
+    /// own commit, so the leaf and every bookmarked ancestor become separate
+    /// stacked PRs rather than one cumulative leaf PR
+    /// (<https://github.com/glennib/stakk/issues/184>).
     #[test]
     fn from_selection_all_boundaries_no_folding() {
         let stack = BranchStack {
@@ -1714,7 +1546,7 @@ mod tests {
     }
 
     /// A new bookmark on a mid-segment commit splits the segment — possible
-    /// without the bookmark existing anywhere, unlike `analyze_submission`.
+    /// without the bookmark existing anywhere yet.
     #[test]
     fn from_selection_splits_segment_at_new_bookmark() {
         let stack = BranchStack {
@@ -1746,8 +1578,8 @@ mod tests {
         assert_eq!(direct.segments[1].commits[0].description, "newest work");
     }
 
-    /// Commits above the topmost assignment are not part of the submission
-    /// (parity with `analyze_submission`'s trunk..=target slice).
+    /// Commits above the topmost assignment are not part of the submission:
+    /// the analysis covers trunk up to and including the topmost mark.
     #[test]
     fn from_selection_drops_commits_above_topmost_mark() {
         let stack = BranchStack {

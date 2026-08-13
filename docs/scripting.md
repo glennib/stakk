@@ -15,21 +15,15 @@ stakk submit --keep base --new qzvs=my-feature --new-auto wmtk
 
 ## Always name the subcommand
 
-Write `stakk submit`, never the bare `stakk <bookmark>` form.
-A leading subcommand name wins over the positional bookmark,
-so `stakk show` runs the `show` subcommand even when a bookmark of that name exists.
-The reserved set is `submit`, `auth`, `show`, `completions`, `docs` and `help`,
-and it grows whenever stakk gains a subcommand.
-Both `stakk submit show` and `stakk -- show` submit the bookmark.
-
-Flags belong after the subcommand.
-`stakk submit --dry-run my-feature` works, while `stakk --dry-run submit my-feature` is rejected.
+Write `stakk submit`, and put flags after it.
+`stakk submit --dry-run` works, while `stakk --dry-run submit` is rejected.
+Bare `stakk` with no arguments is the sole exception — it means `stakk submit`, which opens the TUI.
 
 ## Selection flags
 
 The selection flags replace the TUI with a fully explicit selection.
-They conflict with the positional bookmark argument, and they are deliberately CLI-only:
-no environment variables and no config keys, because a persisted default would silently change what gets submitted.
+They are deliberately CLI-only: no environment variables and no config keys,
+because a persisted default would silently change what gets submitted.
 
 | Flag | Meaning |
 |------|---------|

@@ -160,8 +160,8 @@ fn auth_setup() {
     println!("To verify: run `stakk auth test`");
 }
 
-/// Submits a bookmark as a stacked pull request using the three-phase pipeline:
-/// analyze, plan, execute.
+/// Submits a selection of bookmarks as stacked pull requests using the
+/// three-phase pipeline: analyze, plan, execute.
 async fn submit_bookmark(args: &SubmitArgs, github_host: Option<&str>) -> Result<(), StakkError> {
     let pb = indicatif::ProgressBar::new_spinner();
     pb.enable_steady_tick(std::time::Duration::from_millis(120));
@@ -192,66 +192,58 @@ async fn submit_bookmark(args: &SubmitArgs, github_host: Option<&str>) -> Result
     pb.set_message("Detecting default branch...");
     let default_branch = jj.get_default_branch().await?;
 
-    // Resolve bookmark: explicit argument or interactive selection.
     pb.finish_and_clear();
 
-    // Phase 1: Analyze. A positional bookmark argument submits the target
-    // and all its bookmarked ancestors as stacked PRs (no folding). The
-    // selection flags (--keep/--new/...) and the interactive TUI instead
-    // yield explicit assignments on a selected path; the analysis is built
-    // directly from those, so new bookmarks need not exist yet — they are
-    // created in the execute phase, which keeps --dry-run free of side
-    // effects.
-    let (analysis, bookmark_creations) = if let Some(name) = &args.bookmark {
-        let analysis = submit::analyze_submission(name, &change_graph, &default_branch)?;
-        (analysis, Vec::new())
+    // Phase 1: Analyze. Selection always comes from the same place: the
+    // interactive TUI when no selection flag is given, the explicit
+    // --keep/--new/... marks otherwise. Both yield explicit assignments on a
+    // selected path, and the analysis is built directly from those, so new
+    // bookmarks need not exist yet — they are created in the execute phase,
+    // which keeps --dry-run free of side effects.
+    let spec = select::explicit::SelectionSpec::from_args(args)?;
+    // Every local bookmark name in the repo, not just the ones on the graph: a
+    // new bookmark must not collide with trunk's own bookmark or with anything
+    // the bookmarks revset filtered out.
+    let reserved_names = jj.get_local_bookmark_names().await?;
+    let selection = if spec.is_empty() {
+        select::resolve_bookmark_interactively(
+            &change_graph,
+            args.bookmark_command.as_deref(),
+            args.auto_prefix.as_deref(),
+            &reserved_names,
+        )?
     } else {
-        let spec = select::explicit::SelectionSpec::from_args(args)?;
-        // Every local bookmark name in the repo, not just the ones on the
-        // graph: a new bookmark must not collide with trunk's own bookmark or
-        // with anything the bookmarks revset filtered out. Only the selection
-        // paths create bookmarks, so the positional path skips this.
-        let reserved_names = jj.get_local_bookmark_names().await?;
-        let selection = if spec.is_empty() {
-            select::resolve_bookmark_interactively(
+        Some(
+            select::explicit::resolve_bookmarks_explicitly(
                 &change_graph,
-                args.bookmark_command.as_deref(),
+                &spec,
                 args.auto_prefix.as_deref(),
+                args.bookmark_command.as_deref(),
                 &reserved_names,
-            )?
-        } else {
-            Some(
-                select::explicit::resolve_bookmarks_explicitly(
-                    &change_graph,
-                    &spec,
-                    args.auto_prefix.as_deref(),
-                    args.bookmark_command.as_deref(),
-                    &reserved_names,
-                )
-                .await?,
             )
-        };
-        match selection {
-            Some(result) => {
-                let analysis = submit::analysis_from_selection(
-                    &result.path,
-                    &result.assignments,
-                    &default_branch,
-                )?;
-                let creations: Vec<submit::BookmarkCreation> = result
-                    .assignments
-                    .iter()
-                    .filter(|a| a.is_new)
-                    .map(|a| submit::BookmarkCreation {
-                        bookmark_name: a.bookmark_name.clone(),
-                        change_id: a.change_id.clone(),
-                        short_change_id: a.short_change_id.clone(),
-                    })
-                    .collect();
-                (analysis, creations)
-            }
-            None => return Ok(()),
+            .await?,
+        )
+    };
+    let (analysis, bookmark_creations) = match selection {
+        Some(result) => {
+            let analysis = submit::analysis_from_selection(
+                &result.path,
+                &result.assignments,
+                &default_branch,
+            )?;
+            let creations: Vec<submit::BookmarkCreation> = result
+                .assignments
+                .iter()
+                .filter(|a| a.is_new)
+                .map(|a| submit::BookmarkCreation {
+                    bookmark_name: a.bookmark_name.clone(),
+                    change_id: a.change_id.clone(),
+                    short_change_id: a.short_change_id.clone(),
+                })
+                .collect();
+            (analysis, creations)
         }
+        None => return Ok(()),
     };
 
     // Phase 2: Plan.

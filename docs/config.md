@@ -123,8 +123,8 @@ stack_placement = "body"
 remote = "upstream"
 ```
 
-With both files above, `stakk submit my-feature` uses `remote = "upstream"` from the repo config
-and `pr_mode = "draft"`, `stack_placement = "body"` from the user config.
+With both files above, `stakk submit` uses `remote = "upstream"` from the repo config and `pr_mode = "draft"`,
+`stack_placement = "body"` from the user config.
 Passing `--pr-mode regular` on the command line overrides all of them.
 
 **Team-enforced config** — no user config inheritance:

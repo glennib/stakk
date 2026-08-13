@@ -86,11 +86,11 @@ stakk
 # See your stacks without submitting (offline: jj only, never GitHub)
 stakk show
 
-# Submit a specific bookmark and its ancestors as stacked PRs
-stakk submit my-feature
-
 # Preview a submission without touching the repo or GitHub
-stakk submit my-feature --dry-run
+stakk submit --keep feat-auth --keep feat-api --keep my-feature --dry-run
+
+# Submit without the TUI — every --keep is one PR boundary
+stakk submit --keep feat-auth --keep feat-api --keep my-feature
 ```
 
 ## How stacking works
@@ -106,8 +106,9 @@ Create the bookmarks yourself, or let stakk discover unbookmarked heads and crea
  ◆  main       ← trunk
 ```
 
-`stakk submit feat-ui` pushes every bookmark from the trunk up to `feat-ui` and creates or updates one PR per bookmark,
-basing each on the bookmark below it:
+Picking `feat-ui` as the tip and keeping all three bookmarks — in the TUI,
+or as `stakk submit --keep feat-auth --keep feat-api --keep feat-ui` —
+pushes every one of them and creates or updates one PR per bookmark, basing each on the bookmark below it:
 
 - `feat-auth` → PR targeting `main`
 - `feat-api` → PR targeting `feat-auth`
@@ -186,10 +187,11 @@ A ratatui TUI shows a graph of all branch stacks; select a leaf branch, then tog
 Works even in repos with no pre-existing bookmarks — stakk creates `stakk-<change_id>` bookmarks for unmarked commits.
 Identical to `stakk submit` with no arguments.
 
-### `stakk submit [bookmark]`
+### `stakk submit`
 
-Submit a bookmark and all its ancestors as stacked PRs.
-Without a bookmark argument, it runs the interactive flow above.
+Submit a stack of bookmarks as stacked PRs.
+With no selection flags it runs the interactive flow above — `stakk` and `stakk submit` are the same thing.
+The selection flags below replace the TUI with an explicit, scriptable selection.
 
 #### Non-interactive selection
 
