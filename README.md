@@ -156,8 +156,8 @@ stack_placement = "body"
 auto_prefix = "gb-"
 ```
 
-Every config key and environment variable, the `inherit` field, and worked examples: [docs/config.md](docs/config.md),
-or run `stakk docs config`.
+Every config key and environment variable, the `inherit` field, worked examples,
+and what a repo-supplied `stakk.toml` is able to do: [docs/config.md](docs/config.md), or run `stakk docs config`.
 
 ### GitHub Enterprise Server
 

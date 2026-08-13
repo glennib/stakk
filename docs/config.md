@@ -28,6 +28,31 @@ Both files use the same format.
 When both exist, settings from the repo config take precedence —
 the user config fills in any fields the repo config leaves unset.
 
+## Repo config runs with your privileges
+
+Discovery has no trust step, and a `stakk.toml` is often committed,
+so cloning a repository can hand you its configuration.
+Most keys only set a preference.
+Two do more:
+
+- **`bookmark_command`** is run through `sh -c` (`cmd /C` on Windows) while stakk works out which bookmarks to create.
+  That happens in the first phase, so it runs before any GitHub call, with `--dry-run`, and with no valid token.
+- **`template_path`** reads whatever path it names — not only files inside the repo — and renders the contents into a
+  pull request comment or body, which is outward-facing.
+
+The rest cannot act on their own.
+Revsets reach `jj` as arguments rather than through a shell, `pr_mode`, `stack_placement`,
+`sync_pr_content` and `trailers` are closed sets of values, `remote` has to name a remote that already exists,
+and `github_host` does nothing without a remote on that host.
+
+So before running stakk in a repository you have not read, check whether it has a `stakk.toml`,
+and read those two keys if it does.
+Note also that `inherit = false` in a repo config suppresses your user config entirely,
+so a repo-supplied value cannot be overridden by yours — only by a flag or an environment variable.
+
+`--config <path>` (or `STAKK_CONFIG`) replaces the repo-level file rather than adding to it,
+which is the way to run in an untrusted repository with configuration you chose.
+
 ## Config file format
 
 All fields are optional.
@@ -49,6 +74,7 @@ pr_mode = "draft"
 
 # Path to a custom minijinja template for stack comments
 # (default: none — the built-in template is used)
+# Reads any path and renders it into a PR — see the trust note above.
 template_path = "/path/to/my-template.md.jinja"
 
 # Where to place stack info: "comment", "body", "none", or "ignore"
@@ -83,6 +109,7 @@ sync_pr_content = "all"
 trailers = "strip"
 
 # Shell command for generating custom bookmark names
+# Runs via sh -c — see the trust note above.
 bookmark_command = "my-bookmark-namer"
 
 # Whether to merge with the user config (default: true)
@@ -106,6 +133,10 @@ stack_placement = "comment"
 
 `inherit` only has meaning in a repo config.
 It is not merged from the user config.
+
+Enforcing settings this way works because the repo file wins and your own is skipped —
+which is also why a repo you have not read deserves a look first.
+See **Repo config runs with your privileges** above.
 
 ## Examples
 
