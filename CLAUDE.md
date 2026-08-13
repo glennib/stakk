@@ -9,7 +9,7 @@ It complements jj by turning local bookmark state into coherent GitHub PRs with 
 
 **v1.22.0** — All core features complete: stack detection, three-phase submission, interactive TUI selection,
 non-interactive selection via `--keep`/`--new*`, offline `stakk show`
-(pretty graph + versioned JSON),
+(pretty graph + versioned JSON in sparse and full projections),
 four stack-placement modes, stack comment templating, layered config
 (CLI > env > repo/user TOML), and comprehensive error handling.
 
@@ -132,7 +132,9 @@ src/
 │   ├── bookmark_gen.rs # Bookmark validation and external command execution
 │   ├── tfidf.rs     # TF-IDF algorithm for auto-generated bookmark names
 │   └── event.rs     # crossterm key event mapping to app actions
-├── show/            # `stakk show` rendering: pretty graph + schema-versioned JSON (offline, pure jj)
+├── show/            # `stakk show` rendering: pretty graph + schema-versioned JSON in two
+│                    # projections, sparse (`--format=json`) and full (`--format=json-full`)
+│                    # (offline, pure jj)
 ├── submit/          # Three-phase submission (analyze → plan → execute)
 └── error.rs         # Error types (thiserror)
 ```
@@ -509,6 +511,22 @@ If you change any of the following, update `scripts/record-demo.py` in the same 
   A commit can carry several bookmarks,
   and two `--keep`s on one commit are two marks on one boundary (`stakk::selection::duplicate_mark`).
   See `docs/scripting.md`.
+- `stakk show`'s JSON is one schema in two projections: `--format=json` is sparse, `--format=json-full` is everything.
+  Sparse must stay a *strict subset* of full — same names, types, values and emitted order.
+  That is enforced by construction: full-only fields
+  (`commit_id`, `description`, `author`, `files`)
+  are `Option`s on the single `CommitReport` with `skip_serializing_if = "Option::is_none"`,
+  so they are *omitted* rather than nulled and there is no second serializer path to drift.
+  `sparse_is_a_strict_subset_of_full` pins values, `sparse_omits_full_only_fields` pins the field set on every commit
+  (omitted, never nulled),
+  and `sparse_field_order_matches_full` pins the emitted order per commit object — the last one reads the rendered text,
+  because a parsed `serde_json::Value` sorts its keys,
+  and it scans each commit object separately
+  because a document-wide cursor scan accepts a permutation inside one commit by matching the later keys in the commits
+  that follow.
+  `show::json_projection` maps `--format` to the projection so the wiring is testable rather than inline in `main`.
+  `title` is the first line of `description`; `description` stays the full message.
+  Both projections report the same `SCHEMA_VERSION`.
 - Reserved bookmark names: `Jj::get_local_bookmark_names`
   (`jj bookmark list` with *no* `-r`) is the single source of truth for "this name is taken".
   The change graph is not — it cannot see trunk's own bookmark

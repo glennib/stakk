@@ -57,7 +57,12 @@ pub struct LogEntryRaw {
     /// Whether jj considers the commit immutable. Deliberately not
     /// serde-defaulted: a template/parser mismatch must fail loudly.
     pub immutable: bool,
-    /// Shortest unique change ID prefix (from `change_id.shortest(4)`).
+    /// Shortest unique change ID prefix, from jj's own `change_id.shortest()`.
+    ///
+    /// No minimum length is requested, so this is as short as jj can make it
+    /// while staying unique in the repository — two characters is common, one
+    /// happens. It is jj that decides, not stakk: the prefix must stay in step
+    /// with what `jj log` shows and with what a later `--new REV` can resolve.
     pub short_change_id: String,
 }
 

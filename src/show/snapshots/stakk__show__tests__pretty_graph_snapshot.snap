@@ -7,11 +7,11 @@ Remote: origin git@github.com:glennib/stakk.git (glennib/stakk)
 Remote: mirror https://gitlab.com/x/y.git
 
  ○  wmtk  feat-a  (no description set)
- ○  wmtk  "feat a work"
+ ○  ptsz  "feat a work"
  │ ○  rlkv  feat-b  "feat b work"  (immutable — bookmark old-mark excluded by --bookmarks-revset)
  ├─╯
  ○  qzvs  base  "extend base"
- ○  qzvs  "add base"
+ ○  mnrq  "add base"
  ◆  trunk
 
 (1 bookmark(s) excluded due to merge commits)

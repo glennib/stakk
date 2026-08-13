@@ -334,9 +334,9 @@ async fn show_status(args: &ShowArgs, github_host: Option<&str>) -> Result<(), S
         graph: &change_graph,
         github_host,
     };
-    match args.format {
-        ShowFormat::Pretty => print!("{}", show::render_pretty(&data, console::colors_enabled())),
-        ShowFormat::Json => print!("{}", show::render_json(&data)),
+    match show::json_projection(args.format) {
+        None => print!("{}", show::render_pretty(&data, console::colors_enabled())),
+        Some(projection) => print!("{}", show::render_json(&data, projection)),
     }
 
     Ok(())

@@ -107,18 +107,51 @@ Selection failures carry machine-readable diagnostic codes and point back at `st
 `--format=json` emits a schema-versioned document for machine consumption.
 Identifiers in it — change id prefixes and bookmark names — can be passed straight to `stakk submit`.
 
-- `schema_version` — currently `1`; bumped on breaking schema changes
+There are two projections of one schema.
+`--format=json` is **sparse**: enough to pinpoint a segment and drive `stakk submit`, nothing more.
+`--format=json-full` is the **full** document.
+Sparse is a strict subset of full — every sparse field appears in full under the same name,
+with the same type and the same value — so a script can move from one to the other without rewriting its paths.
+Both report the same `schema_version`.
+
+Sparse is the discovery format because commit bodies, author blocks and `files[]` dominate the byte count:
+on this repository, full is roughly 8× sparse.
+Reach for `json-full` when you actually need to read commit messages or see which files a commit touches.
+
+Both projections carry the same top level:
+
+- `schema_version` — currently `2`; bumped on breaking schema changes
 - `default_branch`
 - `remotes[]` — `name`, `url`, `github` (`owner/repo`, or `null` for non-GitHub remotes)
 - `excluded_bookmark_count` — bookmarks excluded due to merge commits
 - `stacks[]` — one per leaf, trunk-to-leaf; shared ancestor segments are repeated in every stack that contains them
   - `segments[]` — `bookmark_names[]` and `commits[]` (oldest first)
-    - each commit: `change_id`, `short_change_id`, `commit_id`, `description` (full), `author` (`name`, `email`,
-      `timestamp`), `files[]`, `is_immutable`, `local_bookmark_names[]` (unfiltered — includes bookmarks the
-      bookmarks revset excluded), `is_boundary` (the commit its segment's bookmarks point at), `is_leaf` (the tip of
-      its stack)
 
-Pulling the identifiers you need out of the first stack:
+They differ only in the fields of each commit.
+Sparse carries:
+
+- `change_id`, `short_change_id` — identifiers; either can be passed to `stakk submit`'s selection flags.
+  `short_change_id` is jj's shortest prefix that is unique *right now*, often only one or two characters,
+  so it can stop being unique as the repository grows — pass `change_id` when the value is stored
+  rather than used immediately, or the later run may fail with `stakk::selection::rev_ambiguous`
+- `title` — the first line of the commit message
+- `is_immutable`
+- `local_bookmark_names[]` — unfiltered; includes bookmarks the bookmarks revset excluded
+- `is_boundary` — the commit its segment's bookmarks point at
+- `is_leaf` — the tip of its stack
+
+`--format=json-full` adds, on every commit:
+
+- `commit_id`
+- `description` — the full commit message, `title` line included
+- `author` — `name`, `email`, `timestamp`
+- `files[]`
+
+These four are *absent* from sparse, not null.
+A script that read `.description`, `.author`,
+`.files` or `.commit_id` from `--format=json` moves to `--format=json-full`.
+
+Pulling the identifiers you need out of the first stack — all sparse fields, so plain `--format=json` suffices:
 
 ```console
 stakk show --format=json \

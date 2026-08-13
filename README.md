@@ -276,6 +276,9 @@ Bookmarks whose history contains a merge commit cannot be stacked and are left o
 
 `--format=json` emits a schema-versioned document for machine consumption
 (scripts, agents); its change id prefixes and bookmark names can be passed directly to `stakk submit`.
+It is a sparse projection — identifiers, commit titles, bookmarks and stack position, and nothing else —
+while `--format=json-full` adds each commit's `commit_id`, full `description`, `author` and `files[]`.
+Sparse is a strict subset of full: same schema, same field names, same values.
 Field-by-field schema: [docs/scripting.md](docs/scripting.md), or run `stakk docs scripting`.
 
 ### `stakk docs [topic]`

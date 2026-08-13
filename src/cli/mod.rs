@@ -89,8 +89,12 @@ pub enum ShowFormat {
     /// Human-readable jj-log-style graph of all bookmark stacks.
     #[default]
     Pretty,
-    /// Machine-readable, schema-versioned JSON document.
+    /// Machine-readable, schema-versioned JSON: a sparse projection with
+    /// just enough to pinpoint a segment.
     Json,
+    /// The same JSON document with every field, including commit
+    /// descriptions, authors and touched files.
+    JsonFull,
 }
 
 /// Arguments for the show subcommand.
@@ -103,7 +107,13 @@ pub struct ShowArgs {
     ///
     /// json describes every stack, segment and commit for scripts and
     /// agents. Its identifiers (short_change_id, bookmark names) can be
-    /// passed directly to `stakk submit`.
+    /// passed directly to `stakk submit`. It is a sparse projection:
+    /// per commit it carries change_id, short_change_id, title,
+    /// is_immutable, local_bookmark_names, is_boundary and is_leaf.
+    ///
+    /// json-full is the same document with commit_id, description,
+    /// author and files added back. Every json field is present in
+    /// json-full with the same name, type and value.
     #[arg(long, default_value = "pretty", value_enum, verbatim_doc_comment)]
     pub format: ShowFormat,
 
