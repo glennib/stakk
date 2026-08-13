@@ -4,6 +4,7 @@ Status: accepted and in progress.
 C1–C6 and C8 are decided.
 C7 is superseded (no version bump; its policy moved into C8's contract).
 C9 was added after C3 landed; its field list is decided.
+C10 was added after C6 landed, from a token-precedence bug found while writing `docs/auth.md`.
 Implements the "breaking" half of issue #202 and collects every other worthwhile break into one major release (v2.0.0).
 
 ## Goals
@@ -292,6 +293,37 @@ Consequences:
 - `ShowFormat` gains a variant; `--format` is a `value_enum`, so `--help` and completions follow.
   `stakk show` has no env var or config key for `format`, so §8's four-touchpoint rule does not apply.
 
+### C10 — align the github.com token fallback order with the GitHub CLI (required)
+
+Found while writing `docs/auth.md` for C6.
+`gh help environment` states the precedence as `GH_TOKEN`, `GITHUB_TOKEN` for github.com and `GH_ENTERPRISE_TOKEN`,
+`GITHUB_ENTERPRISE_TOKEN` for an Enterprise host.
+`env_sources` in `src/auth.rs` follows that for Enterprise but **inverts it for github.com**,
+trying `GITHUB_TOKEN` before `GH_TOKEN`.
+The code comment states the reason plainly —
+"github.com keeps stakk's long-standing `GITHUB_TOKEN` before `GH_TOKEN` order" — which is legacy, not a rationale.
+
+So github.com is inconsistent both with gh and with stakk's own Enterprise branch.
+Empirically, with both variables exported,
+`gh auth token` returns `GH_TOKEN` while stakk's fallback would return `GITHUB_TOKEN`:
+the same environment resolves to two different tokens depending on whether gh happens to be installed.
+
+- Swap the github.com pair in `env_sources` to `GH_TOKEN`, then `GITHUB_TOKEN`.
+- Replace the legacy comment with the real rule: both pairs follow the GitHub CLI's documented order,
+  so stakk's fallback and gh's own answer agree.
+- Update the precedence assertions in `src/auth.rs`'s tests, and the token tables in `docs/auth.md`
+  and `docs/config.md`.
+  `docs/auth.md` can drop its "the two do not agree, so export one" caveat, which exists only to
+  describe this bug.
+
+Narrow but real break: it changes which token is used when *both* variables are set *and* gh is absent
+or unauthenticated for the host.
+With gh present, gh already decides and nothing changes.
+
+Not addressed here: gh also applies `GH_TOKEN`/`GITHUB_TOKEN` to `ghe.com` subdomains,
+which stakk routes to the Enterprise pair.
+That is a separate divergence, out of scope for a precedence fix.
+
 ## Considered and rejected
 
 - **Argv injection** (treat any bare `stakk <flags>` as `stakk submit <flags>`): fights clap,
@@ -323,6 +355,7 @@ Consequences:
 | `--draft` / `STAKK_DRAFT`                     | `--pr-mode draft` / `STAKK_PR_MODE=draft` / `pr_mode` in TOML |
 | `--template` / `STAKK_TEMPLATE` / `template`  | `--template-path` / `STAKK_TEMPLATE_PATH` / `template_path`  |
 | `stakk show --format=json` (full document)    | `stakk show --format=json-full` (sparse is the new `json`)   |
+| `GITHUB_TOKEN` beats `GH_TOKEN` (no gh)       | `GH_TOKEN` beats `GITHUB_TOKEN`, matching the GitHub CLI      |
 | `stakk auth setup`                            | `stakk docs auth`                                            |
 | `stakk auth test`                             | `gh auth status --hostname <host>`, or `stakk submit --dry-run` |
 
