@@ -31,7 +31,6 @@ because a persisted default would silently change what gets submitted.
 | Flag | Meaning |
 |------|---------|
 | `--keep <bookmark>` | Keep an existing bookmark as a PR boundary (repeatable) |
-| `--keep-all` | Keep every existing bookmark on the selected path |
 | `--new <rev>[=<name>]` | New bookmark at `rev` — `stakk-<change_id>` by default, or `name` (repeatable) |
 | `--new-auto <rev>` | New TF-IDF-named bookmark at `rev`, honoring `--auto-prefix` (repeatable) |
 | `--new-command <rev>` | New bookmark at `rev` named by `--bookmark-command` (repeatable) |
@@ -53,10 +52,27 @@ an unmarked commit is absorbed into the next boundary, it does not silently get 
 **`--new-auto` falls back** to `stakk-<change_id>` when no name can be derived from the commit,
 or when the derived name is already taken.
 
-**Bare `--keep-all` requires the choice of stack to be unambiguous** — a single stack,
-or several that agree on their bookmarks (differing only in unbookmarked heads such as the working copy).
-Anchor it with `--keep`/`--new` otherwise.
-Commits already carrying an explicit mark are skipped by `--keep-all`: explicit beats bulk.
+## Submitting a whole stack
+
+There is no bulk flag: every PR boundary is named on the command line.
+Keeping the boundaries a stack already has means enumerating them, which `stakk show` can do for you:
+
+```console
+stakk submit $(stakk show --format=json \
+  | jq -r '.stacks[0].segments[]
+           | select(.bookmark_names | length > 0)
+           | "--keep=\(.bookmark_names[0])"')
+```
+
+`.stacks[0]` is the first stack in the document; index another one, or filter on a bookmark name,
+when the repository has several.
+
+One `--keep` per *segment*, not per bookmark name.
+A commit can carry several bookmarks,
+and two `--keep`s naming bookmarks on the same commit are two marks on one boundary —
+`stakk::selection::duplicate_mark`.
+Taking `bookmark_names[0]` picks one name per boundary; name a different one explicitly when the choice matters.
+Segments with no bookmark are skipped: there is nothing to keep, and they fold into the boundary above.
 
 ## Dry runs
 
@@ -80,8 +96,6 @@ Selection failures carry machine-readable diagnostic codes and point back at `st
 | `stakk::selection::invalid_new_spec` | A `--new` value is neither `REV` nor `REV=NAME` |
 | `stakk::selection::not_colinear` | The marks do not lie on a single trunk-to-tip path |
 | `stakk::selection::keep_not_found` | No such bookmark on the selected path |
-| `stakk::selection::keep_all_ambiguous` | Bare `--keep-all` cannot pick between stacks |
-| `stakk::selection::no_marks` | No marks given, so there is nothing to submit |
 | `stakk::selection::no_stacks` | The repository has no bookmark stacks to select from |
 | `stakk::selection::duplicate_mark` | The same revision was marked twice |
 | `stakk::selection::duplicate_name` | Two marks would create the same bookmark name |

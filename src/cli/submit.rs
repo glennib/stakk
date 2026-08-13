@@ -75,7 +75,6 @@ impl std::fmt::Display for TrailerHandling {
 
 /// Arguments for the submit subcommand.
 #[derive(Debug, Args)]
-#[command(group = clap::ArgGroup::new("explicit_marks").multiple(true))]
 pub struct SubmitArgs {
     /// Print the submission plan and stop.
     ///
@@ -86,42 +85,22 @@ pub struct SubmitArgs {
 
     /// Keep an existing bookmark as a PR boundary (repeatable).
     ///
-    /// Non-interactive selection: the --keep/--keep-all/--new/--new-auto/
-    /// --new-command marks fully determine the PR set — nothing is
-    /// implicit. All marks must lie on one trunk-to-tip path; the topmost
-    /// is the tip of the submission. Bookmarks on the path that are not
-    /// kept fold into the PR above them.
+    /// Non-interactive selection: the --keep/--new/--new-auto/--new-command
+    /// marks fully determine the PR set — nothing is implicit. All marks
+    /// must lie on one trunk-to-tip path; the topmost is the tip of the
+    /// submission. Bookmarks on the path that are not kept fold into the PR
+    /// above them.
     ///
     /// `stakk show [--format=json]` lists stacks, bookmarks and change
     /// ids.
-    #[arg(
-        long,
-        value_name = "BOOKMARK",
-        group = "explicit_marks",
-        verbatim_doc_comment
-    )]
+    #[arg(long, value_name = "BOOKMARK", verbatim_doc_comment)]
     pub keep: Vec<String>,
-
-    /// Keep every existing bookmark on the selected path.
-    ///
-    /// With other marks, expands on the path they anchor, skipping commits
-    /// that carry an explicit mark (explicit beats bulk). Alone, it needs
-    /// the choice of stack to be unambiguous: one stack, or several that
-    /// agree on their bookmarks (e.g. differing only in unbookmarked heads
-    /// such as the working copy).
-    #[arg(long, group = "explicit_marks", verbatim_doc_comment)]
-    pub keep_all: bool,
 
     /// Create a new bookmark at REV as a PR boundary (repeatable).
     ///
     /// REV is a change id or commit id prefix (as shown by `stakk show`).
     /// The bookmark is named stakk-<change_id> unless =NAME is given.
-    #[arg(
-        long,
-        value_name = "REV[=NAME]",
-        group = "explicit_marks",
-        verbatim_doc_comment
-    )]
+    #[arg(long, value_name = "REV[=NAME]", verbatim_doc_comment)]
     pub new: Vec<String>,
 
     /// Create a new auto-named bookmark at REV (repeatable).
@@ -130,24 +109,14 @@ pub struct SubmitArgs {
     /// the commits folded into the boundary, honoring --auto-prefix. Falls
     /// back to stakk-<change_id> when nothing can be derived or the
     /// derived name is already taken.
-    #[arg(
-        long,
-        value_name = "REV",
-        group = "explicit_marks",
-        verbatim_doc_comment
-    )]
+    #[arg(long, value_name = "REV", verbatim_doc_comment)]
     pub new_auto: Vec<String>,
 
     /// Create a new bookmark at REV named by --bookmark-command (repeatable).
     ///
     /// Errors if no bookmark command is configured. The command receives
     /// the same JSON segment description as in the TUI.
-    #[arg(
-        long,
-        value_name = "REV",
-        group = "explicit_marks",
-        verbatim_doc_comment
-    )]
+    #[arg(long, value_name = "REV", verbatim_doc_comment)]
     pub new_command: Vec<String>,
 
     #[command(flatten)]

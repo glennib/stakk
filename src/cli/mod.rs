@@ -686,7 +686,6 @@ mod tests {
                 "a",
                 "--keep",
                 "b",
-                "--keep-all",
                 "--new",
                 "r1=name1",
                 "--new",
@@ -699,7 +698,6 @@ mod tests {
         );
         let args = submit_args(&cli);
         assert_eq!(args.keep, vec!["a", "b"]);
-        assert!(args.keep_all);
         assert_eq!(args.new, vec!["r1=name1", "r2"]);
         assert_eq!(args.new_auto, vec!["r3"]);
         assert_eq!(args.new_command, vec!["r4"]);

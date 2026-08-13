@@ -31,7 +31,7 @@ and idempotent updates.
   Existing PRs are updated, never duplicated.
 - **Dry-run mode** — `--dry-run` shows exactly what would happen without
   touching GitHub — or the repo: no bookmarks are created, nothing is pushed.
-- **Non-interactive selection** — `--keep`/`--keep-all`/`--new`/`--new-auto`/`--new-command` build the exact same
+- **Non-interactive selection** — `--keep`/`--new`/`--new-auto`/`--new-command` build the exact same
   submission the TUI would, without a terminal.
 - **PR titles and bodies from descriptions** — populated from jj change descriptions on creation, so manual edits on
   GitHub survive; `--sync-pr-content` opts into keeping them in sync.
@@ -195,8 +195,8 @@ The selection flags below replace the TUI with an explicit, scriptable selection
 
 #### Non-interactive selection
 
-`--keep`, `--keep-all`, `--new`, `--new-auto` and `--new-command` replace the TUI with a fully explicit,
-scriptable selection: the marks determine the PR set with nothing implicit, all marks must lie on one trunk-to-tip path,
+`--keep`, `--new`, `--new-auto` and `--new-command` replace the TUI with a fully explicit, scriptable selection:
+every PR boundary is named on the command line, all marks must lie on one trunk-to-tip path,
 the topmost mark is the tip, and bookmarks on the path that are not kept fold into the PR above them.
 `rev` is a change id or commit id prefix as printed by `stakk show`, which makes submission a two-command loop:
 

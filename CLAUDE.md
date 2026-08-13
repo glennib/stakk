@@ -128,7 +128,7 @@ src/
 │   ├── app.rs       # App state machine, event loop, terminal init
 │   ├── graph_widget.rs  # Screen 1: jj-log-style graph widget (leaf selection, collapsing, scrolling)
 │   ├── bookmark_widget.rs # Screen 2: bookmark toggle/assignment widget
-│   ├── explicit.rs  # Non-interactive selection via --keep/--keep-all/--new/--new-auto/--new-command
+│   ├── explicit.rs  # Non-interactive selection via --keep/--new/--new-auto/--new-command
 │   ├── bookmark_gen.rs # Bookmark validation and external command execution
 │   ├── tfidf.rs     # TF-IDF algorithm for auto-generated bookmark names
 │   └── event.rs     # crossterm key event mapping to app actions
@@ -468,14 +468,20 @@ If you change any of the following, update `scripts/record-demo.py` in the same 
   commits between boundaries fold into the boundary above.
   Marking every boundary reproduces the no-fold shape (issue #184): each segment keeps exactly its own commit.
 - Explicit selection (`select/explicit.rs`):
-  `--keep`/`--keep-all`/`--new REV[=NAME]`/`--new-auto REV`/`--new-command REV` marks fully determine the PR set —
-  nothing implicit.
+  `--keep`/`--new REV[=NAME]`/`--new-auto REV`/`--new-command REV` marks fully determine the PR set —
+  every PR boundary is named on the command line, nothing is implicit and there is no bulk flag.
   Revs prefix-match change/commit ids on the graph
   (deduped by commit_id: shared segments cloned into several stacks are one commit, not ambiguous);
   colinearity is validated by intersecting per-mark containing-stack sets; the topmost mark is the tip.
-  Bare `--keep-all` needs the stacks to agree on their bookmarks; anchored, it expands on the marked path,
-  skipping commits with explicit marks (explicit beats bulk).
+  `resolve_bookmarks_explicitly` requires at least one mark —
+  an empty `SelectionSpec` means the TUI and `main.rs` routes it there,
+  so the intersection `reduce` `expect`s a non-empty mark list.
   Errors are `stakk::selection::*` diagnostics pointing at `stakk show`.
+  "Submit my whole stack" is a `stakk show --format=json` + `jq` idiom that emits one `--keep=` per *segment* —
+  `bookmark_names[0]`, not `bookmark_names[]`.
+  A commit can carry several bookmarks,
+  and two `--keep`s on one commit are two marks on one boundary (`stakk::selection::duplicate_mark`).
+  See `docs/scripting.md`.
 - Reserved bookmark names: `Jj::get_local_bookmark_names`
   (`jj bookmark list` with *no* `-r`) is the single source of truth for "this name is taken".
   The change graph is not — it cannot see trunk's own bookmark
@@ -523,7 +529,7 @@ If you change any of the following, update `scripts/record-demo.py` in the same 
   tooling's (or your own) comments and body fences alone are two different wishes.
   `none` serves the first, `ignore` the second; neither is a safe default for the other.
 - **`--dry-run` not in env vars** — one-off decision, surprising as a default.
-- **Selection flags not in env vars/config** — `--keep`, `--keep-all`, `--new`, `--new-auto`,
+- **Selection flags not in env vars/config** — `--keep`, `--new`, `--new-auto`,
   `--new-command` are per-invocation decisions like `--dry-run`;
   a persisted default would silently change what gets submitted.
   CLI + README touchpoints only (deliberate exception to the four-touchpoint rule).
