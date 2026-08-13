@@ -7,8 +7,12 @@
 //! Output depends on where it is going. At a terminal the prose is re-flowed to
 //! the terminal width, because the sources use semantic line breaks that would
 //! otherwise read as ragged fragments. Redirected, the source is emitted
-//! verbatim — `stakk docs scripting >> AGENTS.md` should write exactly what is
-//! in `docs/scripting.md`.
+//! verbatim — `stakk docs agents >> AGENTS.md` should write exactly what is in
+//! `docs/agents.md`.
+//!
+//! Every file in `docs/` is a topic. `every_docs_file_is_a_topic` fails the
+//! build on one that is not, so a new document cannot ship unreachable from
+//! `stakk docs` and missing from its index.
 
 use std::fmt::Write as _;
 
@@ -17,7 +21,9 @@ use clap::ValueEnum;
 use crate::cli::DocTopic;
 use crate::markdown::wrap::wrap_markdown;
 
+const AGENTS: &str = include_str!("../../docs/agents.md");
 const SCRIPTING: &str = include_str!("../../docs/scripting.md");
+const SHOW: &str = include_str!("../../docs/show.md");
 const CONFIG: &str = include_str!("../../docs/config.md");
 const TEMPLATE: &str = include_str!("../../docs/template.md");
 const AUTH: &str = include_str!("../../docs/auth.md");
@@ -30,7 +36,9 @@ const MAX_WIDTH: usize = 100;
 /// The Markdown source for a topic, exactly as it appears in `docs/`.
 pub(crate) fn source(topic: DocTopic) -> &'static str {
     match topic {
+        DocTopic::Agents => AGENTS,
         DocTopic::Scripting => SCRIPTING,
+        DocTopic::Show => SHOW,
         DocTopic::Config => CONFIG,
         DocTopic::Template => TEMPLATE,
         DocTopic::Auth => AUTH,
@@ -209,12 +217,39 @@ mod tests {
     }
 
     #[test]
-    fn index_describes_scripting_for_coding_agents() {
+    fn index_describes_a_topic_for_coding_agents() {
         assert!(
             index().contains("coding agents"),
-            "the scripting entry should name coding agents, so an agent scanning the index picks \
-             it"
+            "one index entry should name coding agents, so an agent scanning the index picks it"
         );
+    }
+
+    /// Every `docs/*.md` file is reachable as a topic.
+    ///
+    /// `source` maps topics to files, which cannot catch the other direction:
+    /// a file added to `docs/` with no `DocTopic` variant compiles, passes
+    /// every other test, and ships as documentation nobody can reach from the
+    /// binary or find in its index. This reads the directory rather than the
+    /// `include_str!`s precisely because it must see files the code does not
+    /// mention.
+    #[test]
+    fn every_docs_file_is_a_topic() {
+        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/docs");
+        let bundled: Vec<&str> = all_topics().into_iter().map(source).collect();
+
+        for entry in std::fs::read_dir(dir).expect("docs/ exists") {
+            let path = entry.expect("readable dir entry").path();
+            if path.extension().is_none_or(|ext| ext != "md") {
+                continue;
+            }
+            let contents = std::fs::read_to_string(&path).expect("readable doc");
+            assert!(
+                bundled.contains(&contents.as_str()),
+                "{} is not reachable from `stakk docs`: add a `DocTopic` variant and a `source` \
+                 arm, or the file ships unlisted",
+                path.display(),
+            );
+        }
     }
 
     #[test]

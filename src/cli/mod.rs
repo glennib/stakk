@@ -73,8 +73,12 @@ pub enum Commands {
 /// list, so they cannot drift from each other.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
 pub enum DocTopic {
-    /// Non-interactive submission, for scripts and coding agents.
+    /// Submitting without the TUI, written for coding agents.
+    Agents,
+    /// Driving stakk from a program: exit codes and a worked example.
     Scripting,
+    /// The `stakk show` document, field by field.
+    Show,
     /// Config files, precedence, and environment variables.
     Config,
     /// GitHub authentication: tokens, hosts, and troubleshooting.
@@ -672,7 +676,9 @@ mod tests {
     #[test]
     fn docs_parses_each_topic() {
         for (arg, expected) in [
+            ("agents", DocTopic::Agents),
             ("scripting", DocTopic::Scripting),
+            ("show", DocTopic::Show),
             ("config", DocTopic::Config),
             ("template", DocTopic::Template),
         ] {

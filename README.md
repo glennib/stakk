@@ -203,9 +203,11 @@ stakk submit --keep base --new qzvs=my-feature --new-auto wmtk --dry-run
 stakk submit --keep base --new qzvs=my-feature --new-auto wmtk
 ```
 
-Every selection rule, the machine-readable `stakk::selection::*` diagnostic codes, and the JSON schema:
-[docs/scripting.md](docs/scripting.md), or run `stakk docs scripting`.
-Pointing a coding agent at `stakk docs scripting` is the fastest way to bring it up to speed.
+Every selection rule and the machine-readable `stakk::selection::*` diagnostic codes: [docs/agents.md](docs/agents.md),
+or run `stakk docs agents`.
+Pointing a coding agent at `stakk docs agents` is the fastest way to bring it up to speed.
+For a program rather than an agent, [docs/scripting.md](docs/scripting.md)
+(`stakk docs scripting`) adds exit codes and a worked Python example.
 
 #### PR titles and bodies
 
@@ -241,7 +243,7 @@ a bookmark exists on it *and* the bookmarks revset does not filter that bookmark
 (the default `~ immutable()` term does).
 So if you really need a PR there, create the bookmark yourself and drop `~ immutable()` from `--bookmarks-revset`;
 otherwise move the work onto mutable commits.
-The non-interactive side of this is in [docs/scripting.md](docs/scripting.md), or run `stakk docs scripting`.
+The non-interactive side of this is in [docs/agents.md](docs/agents.md), or run `stakk docs agents`.
 
 ### `stakk show`
 
@@ -268,14 +270,17 @@ Remote: origin git@github.com:you/repo.git (you/repo)
 ```
 
 Bookmarks whose history contains a merge commit cannot be stacked and are left out of the graph; when that happens,
-`pretty` prints a `(N bookmark(s) excluded due to merge commits)` footer.
+`pretty` names them in a footer, and the JSON reports them in `excluded_bookmarks`.
 
 `--format=json` emits a schema-versioned document for machine consumption
 (scripts, agents); its change id prefixes and bookmark names can be passed directly to `stakk submit`.
 It is a sparse projection — identifiers, commit titles, bookmarks and stack position, and nothing else —
 while `--format=json-full` adds each commit's `commit_id`, full `description`, `author` and `files[]`.
 Sparse is a strict subset of full: same schema, same field names, same values.
-Field-by-field schema: [docs/scripting.md](docs/scripting.md), or run `stakk docs scripting`.
+Each segment also reports its bookmarks' push state
+(`unpushed`, `diverged`, `synced`),
+derived from `jj` alone, so a consumer can tell new work from an update without a network round trip.
+Field-by-field schema: [docs/show.md](docs/show.md), or run `stakk docs show`.
 
 ### `stakk docs [topic]`
 
@@ -286,7 +291,7 @@ Each topic is one of the Markdown files in [docs/](docs/), which is also where t
 
 At a terminal the prose is re-flowed to your terminal width.
 Redirected, the source is emitted verbatim —
-so `stakk docs scripting >> AGENTS.md` writes exactly the Markdown in `docs/scripting.md`,
+so `stakk docs agents >> AGENTS.md` writes exactly the Markdown in `docs/agents.md`,
 which makes it a one-line way to give a coding agent the full non-interactive workflow.
 
 ### `stakk completions <shell>`
@@ -343,7 +348,7 @@ Changing these needs a major release.
 - Diagnostic codes (`stakk::…`).
 - Exit codes: `0` success, `1` failure, `130` interrupted.
   `2` is clap's usage-error convention and follows clap, not this contract.
-  The table is in `stakk docs scripting`.
+  The table is in `stakk docs scripting`, alongside the rules a program should follow.
 
 **Not stable.** These may change in any release.
 

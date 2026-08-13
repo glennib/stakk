@@ -93,7 +93,7 @@ When adding, renaming, or changing the default of one, update all of them in the
    Only touch the README when the option changes something it describes in prose: the four-key `stakk.toml` sample,
    the **Stack info placement** summary, **GitHub Enterprise Server**, **Non-interactive selection**,
    **PR titles and bodies**, **Custom bookmark names**, or **Immutable commits**.
-   Deeper reference material for those lives in `docs/template.md` and `docs/scripting.md`,
+   Deeper reference material for those lives in `docs/template.md`, `docs/agents.md` and `docs/show.md`,
    which each README section links to alongside its `stakk docs <topic>` command.
 
 A change that lands in only some of these will silently drop config-file support, fail to appear in `--help` defaults,
@@ -372,10 +372,18 @@ If you change any of the following, update `scripts/record-demo.py` in the same 
   (a parallel implementation of production logic, a parse for a value nothing writes) justifies nothing — delete both.
   `#[expect]` warns once a suppression becomes unnecessary, so `mise run ci` catches stale ones —
   find the current set with `grep -rn dead_code src/`.
+- **Every file in `docs/` must be reachable as a `stakk docs` topic.**
+  A Markdown file there is not "documentation in the repo" — it is payload compiled into the binary,
+  and one with no `DocTopic` variant ships as a document nobody can print and nobody can find in the index.
+  Adding a file to `docs/` therefore means three edits in the same change: the file, a `DocTopic` variant,
+  and a `docs::source` arm.
+  `docs::tests::every_docs_file_is_a_topic` reads the directory at test time and fails the build otherwise,
+  so this is enforced rather than remembered.
+  The reverse direction needs no test — a `source` arm without a file fails to compile.
+  Anything that genuinely is not a topic (a README for the directory, say) does not belong in `docs/`.
 - `stakk docs` `include_str!`s `docs/*.md`,
   so those files are the single source of truth and cargo rebuilds the crate when they change (no `build.rs` needed).
-  Adding a topic means a `DocTopic` variant, a `docs::source` arm, and the file —
-  the index is generated from `DocTopic::value_variants()`, so it cannot drift.
+  The index is generated from `DocTopic::value_variants()`, so it cannot drift.
   The variant doc comments are load-bearing:
   clap prints them as possible-value help *and* `docs::index` reads them back.
   `DocTopic` has no `Default` on purpose — `None` means "print the index", not "print a default topic".
@@ -385,7 +393,7 @@ If you change any of the following, update `scripts/record-demo.py` in the same 
   or the `_ => true` fallthrough makes it shell out to jj for a version check it does not need.
 - `stakk docs` output depends on where it goes: a TTY gets prose re-flowed to the terminal width,
   a redirect gets the source verbatim.
-  The verbatim path is what makes `stakk docs scripting >> AGENTS.md` reproduce the file byte for byte,
+  The verbatim path is what makes `stakk docs agents >> AGENTS.md` reproduce the file byte for byte,
   and it is asserted by a test — do not "improve" it by always rendering.
   Width resolution checks `COLUMNS` before `console`, which reads the terminal over ioctl and never consults it;
   without that there is no way to exercise a narrow terminal.
@@ -514,11 +522,10 @@ If you change any of the following, update `scripts/record-demo.py` in the same 
   an empty `SelectionSpec` means the TUI and `main.rs` routes it there,
   so the intersection `reduce` `expect`s a non-empty mark list.
   Errors are `stakk::selection::*` diagnostics pointing at `stakk show`.
-  "Submit my whole stack" is a `stakk show --format=json` + `jq` idiom that emits one `--keep=` per *segment* —
-  `bookmark_names[0]`, not `bookmark_names[]`.
+  "Submit my whole stack" emits one `--keep=` per *segment* — `bookmarks[0].name`, not one per `bookmarks[]` entry.
   A commit can carry several bookmarks,
   and two `--keep`s on one commit are two marks on one boundary (`stakk::selection::duplicate_mark`).
-  See `docs/scripting.md`.
+  `docs/scripting.md` works this through in Python; the `jq` one-liner is there too, marked as the shortcut it is.
 - `stakk show`'s JSON is one schema in two projections: `--format=json` is sparse, `--format=json-full` is everything.
   Sparse must stay a *strict subset* of full — same names, types, values and emitted order.
   That is enforced by construction: full-only fields

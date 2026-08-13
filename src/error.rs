@@ -117,7 +117,7 @@ pub enum StakkError {
         code(stakk::not_interactive),
         help(
             "select explicitly instead: stakk submit --keep <BOOKMARK> / --new <REV>[=<NAME>] — \
-             run `stakk docs scripting` for the full non-interactive workflow"
+             run `stakk docs agents` for the full non-interactive workflow"
         )
     )]
     NotInteractive,
