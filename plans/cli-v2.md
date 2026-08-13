@@ -1,6 +1,9 @@
 # Plan: CLI v2 — one parse path, fully explicit selection
 
-Status: accepted — all changes below are decided; no open questions remain.
+Status: accepted and in progress.
+C1–C6 and C8 are decided.
+C7 is superseded (no version bump; its policy moved into C8's contract).
+C9 was added after C3 landed; its field list is decided.
 Implements the "breaking" half of issue #202 and collects every other worthwhile break into one major release (v2.0.0).
 
 ## Goals
@@ -152,8 +155,14 @@ The scripted idiom is one discovery call away:
 
 ```sh
 stakk submit $(stakk show --format=json \
-  | jq -r '.stacks[0].segments[].bookmark_names[] | "--keep=\(.)"')
+  | jq -r '.stacks[0].segments[]
+           | select(.bookmark_names | length > 0)
+           | "--keep=\(.bookmark_names[0])"')
 ```
+
+One `--keep` per *segment*, not per bookmark name: a commit can carry several bookmarks,
+and two `--keep`s on one commit are two marks on one boundary (`stakk::selection::duplicate_mark`).
+Unbookmarked segments are skipped — they fold into the boundary above, which is what they did under `--keep-all` too.
 
 Agents already run `stakk show --format=json` first per `docs/scripting.md`, so for them the cost is near zero.
 If the verbosity turns out to hurt humans, a replacement can ship in any 2.x.
@@ -192,11 +201,21 @@ and the `stakk docs` index for free.
   "the quickest way to confirm the setup" — that guidance moves with it.
 - New doc topic follows the established recipe: `DocTopic` variant, `docs::source` arm, the file.
 
-### C7 — bump the minimum supported jj version (required, at ship time)
+### C7 — state that the jj floor is not semver-guarded (required)
 
-`MIN_SUPPORTED_JJ_VERSION` is 0.39.0, the latest release when v1.0.0 shipped (2026-03).
-A major release is the natural time to raise the floor to the latest jj at ship time.
-It is warn-only, so this is hygiene rather than a hard break.
+Superseded: this was originally "bump `MIN_SUPPORTED_JJ_VERSION` to the latest jj at ship time".
+
+v2 changes no `jj` invocation — the CLI surface moves, the VCS interface does not —
+so there is nothing this release needs from a newer jj,
+and raising the floor to 0.44.0 would be a bump with no engineering behind it.
+A floor raised for its own sake costs users on older jj and buys nothing.
+
+What is worth settling is the *policy*, which belongs in C8's contract:
+`MIN_SUPPORTED_JJ_VERSION` is warn-only and raising it is **not** a breaking change.
+Saying so once means future bumps can land in any minor release,
+on the release where a new jj feature is actually adopted, rather than being saved up for a major.
+
+`MIN_SUPPORTED_JJ_VERSION` therefore stays 0.39.0 in v2.0.0.
 
 ### C8 — state the stability contract, and exempt `stakk docs` from it (required)
 
@@ -213,8 +232,62 @@ since doc-topic text is exactly what the contract declares unstable) declaring:
   (the codes are the contract, not the prose).
   Doc topics may be added, reworded, or restructured in any release;
   only the `stakk docs <topic>` invocation shape itself is stable.
+- **Not a breaking change**: raising `MIN_SUPPORTED_JJ_VERSION` (C7).
+  The check is warn-only — stakk runs against an older jj and says so — so a bump can land in any release,
+  on the release that actually adopts a newer jj's behaviour.
 
 This is what makes C6 safe going forward: setup guidance lives in a place we can freely rewrite.
+
+### C9 — split `stakk show` JSON into sparse and full (required)
+
+Reverses the "considered and rejected" entry below.
+The JSON document is the interface agents actually consume,
+and today it carries far more than pinpointing a segment needs: full commit-message bodies, author blocks,
+and `files[]` dominate it.
+Measured on this repo over six commit entries: **13,704 bytes full vs 1,659 sparse — roughly 8×**,
+and the ratio grows with commit-message length.
+For an agent paying by the token on every discovery call, that is the difference that matters.
+
+Shape:
+
+- **`--format=json` becomes sparse** — enough to pinpoint a segment and feed `stakk submit`, nothing more.
+- **`--format=json-full` is the current document**, plus the new `title` field.
+- **Sparse is a strict subset of full.**
+  Every field in sparse appears in full, with the same name, type, and meaning.
+  One schema, two projections — never two dialects.
+
+Field changes:
+
+- Add `title` to every commit: the first line of the commit message.
+- `description` keeps its current meaning — the *full* message, title line included.
+  Adding `title` alongside is purely additive, so `description` consumers are unaffected by the field itself;
+  they break only by being dropped from sparse.
+- Sparse commit: `change_id`, `short_change_id`, `title`, `is_immutable`, `local_bookmark_names[]`,
+  `is_boundary`, `is_leaf`.
+- Sparse drops per commit: `commit_id`, `description`, `author`, `files[]`.
+- Sparse keeps top-level `schema_version`, `default_branch`, `remotes[]`, `excluded_bookmark_count`
+  (all small, and `remotes[]` says where PRs will go).
+- `schema_version` → `2`, for both projections.
+
+Decided (both were open when C9 was drafted):
+
+- **`change_id` is in sparse.**
+  The full id is unambiguous where a prefix is not,
+  and ~32 bytes per commit is noise against a field set that already saves an order of magnitude.
+- **`files[]` is not in sparse.**
+  It is one of the two largest fields; an agent that needs to see what a commit touches asks for `--format=json-full`.
+
+Consequences:
+
+- `--format=json` changing content is the break.
+  Scripts reading `.description`, `.author`, `.files` or `.commit_id` from `--format=json` move to `--format=json-full`.
+- `docs/scripting.md`'s **The `stakk show --format=json` document** section documents both projections,
+  and its jq examples must be re-checked against sparse (the `local_bookmark_names` example still works;
+  it uses only sparse fields).
+- `src/show/snapshots/stakk__show__tests__json_snapshot.snap` will change and a full-format snapshot is likely added.
+  **Snapshots are for the repo owner to review and accept — the implementor must not accept them.**
+- `ShowFormat` gains a variant; `--format` is a `value_enum`, so `--help` and completions follow.
+  `stakk show` has no env var or config key for `format`, so §8's four-touchpoint rule does not apply.
 
 ## Considered and rejected
 
@@ -229,7 +302,10 @@ This is what makes C6 safe going forward: setup guidance lives in a place we can
 - **Changing default revsets, `--sync-pr-content`, or `--stack-placement` defaults**: current defaults are deliberate
   (see CLAUDE.md key decisions); no evidence they are wrong.
 - **Renaming `--new-auto`/`--new-command`**: already consistent with `--new` and `--bookmark-command`.
-- **`stakk show` JSON schema changes**: nothing rides along; `schema_version` stays 1.
+- ~~**`stakk show` JSON schema changes**: nothing rides along; `schema_version` stays 1.~~ **Reversed — see C9.**
+  The contract in C8 declares the JSON document stable *under* its `schema_version`,
+  which makes a later change cost a `schema_version` bump and a second migration event for scripts.
+  Doing it inside v2.0.0 costs one changelog line instead.
 
 ## Migration table (changelog material)
 
@@ -243,6 +319,7 @@ This is what makes C6 safe going forward: setup guidance lives in a place we can
 | `stakk --dry-run <...>` (flags before subcmd) | `stakk submit --dry-run <...>`                               |
 | `--draft` / `STAKK_DRAFT`                     | `--pr-mode draft` / `STAKK_PR_MODE=draft` / `pr_mode` in TOML |
 | `--template` / `STAKK_TEMPLATE` / `template`  | `--template-path` / `STAKK_TEMPLATE_PATH` / `template_path`  |
+| `stakk show --format=json` (full document)    | `stakk show --format=json-full` (sparse is the new `json`)   |
 | `stakk auth setup`                            | `stakk docs auth`                                            |
 | `stakk auth test`                             | `gh auth status --hostname <host>`, or `stakk submit --dry-run` |
 
@@ -263,10 +340,13 @@ Order (each lands green through `mise run ci`):
 5. **C5** — rename `template` → `template_path` (all four touchpoints in one commit, per CLAUDE.md §8).
 6. **C6** — remove `stakk auth`, add the `auth` doc topic (`cli/auth.rs` deleted, `DocTopic::Auth`,
    `docs/auth.md`, `main.rs` dispatch and `runs_jj`).
-7. **C7** — bump `MIN_SUPPORTED_JJ_VERSION` to the latest jj release, immediately before releasing.
-8. **C8** — the stability contract text (a `docs:` commit; ship it in the same release so v2.0.0 opens with the
-   contract in place).
-9. **Docs sweep** (can be folded into the commits above where the four-touchpoint rule demands it;
+7. **C7** — no code change; the jj-floor policy ships as part of C8's contract.
+8. **C9** — split `stakk show` JSON into sparse/full (`src/show/`, `ShowFormat`, `docs/scripting.md`).
+   After C6 so the doc-topic machinery is settled, before C8 so the contract describes the final schema.
+   Produces snapshot changes for the repo owner to accept.
+9. **C8** — the stability contract text (a `docs:` commit; ship it in the same release so v2.0.0 opens with the
+   contract in place), including the C7 policy statement and C9's `schema_version: 2`.
+10. **Docs sweep** (can be folded into the commits above where the four-touchpoint rule demands it;
    the README/scripting rewrite may be its own `docs:` commit).
 
 ### Docs sweep checklist
