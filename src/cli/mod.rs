@@ -22,8 +22,8 @@ use crate::config::Config;
 pub struct Cli {
     /// Path to a config file (overrides automatic discovery).
     ///
-    /// The file is loaded in place of the repo-level stakk.toml;
-    /// user-level config is still merged unless inherit = false.
+    /// Loaded in place of the repo-level stakk.toml; user-level config is
+    /// still merged unless inherit = false.
     // Implementation note: this arg exists for --help discoverability only.
     // Config is loaded *before* clap parsing (so config values can be injected
     // as clap defaults), which means clap's parsed value arrives too late.
@@ -72,14 +72,12 @@ pub enum ShowFormat {
 pub struct ShowArgs {
     /// Output format.
     ///
-    /// pretty renders a jj-log-style commit graph, always fully
-    /// expanded, with each commit's short change id, bookmarks, and
-    /// description summary.
+    /// pretty renders a fully expanded jj-log-style commit graph: short
+    /// change id, bookmarks and description summary per commit.
     ///
-    /// json emits a schema-versioned document describing every stack,
-    /// segment, and commit — intended for scripts and agents. Its
-    /// identifiers (short_change_id, bookmark names) can be passed
-    /// directly to `stakk submit`.
+    /// json describes every stack, segment and commit for scripts and
+    /// agents. Its identifiers (short_change_id, bookmark names) can be
+    /// passed directly to `stakk submit`.
     #[arg(long, default_value = "pretty", value_enum, verbatim_doc_comment)]
     pub format: ShowFormat,
 

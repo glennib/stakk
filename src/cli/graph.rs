@@ -4,11 +4,10 @@ use clap::Args;
 #[derive(Debug, Args)]
 pub struct GraphArgs {
     /// Revset passed to `jj bookmark list -r <REVSET>` to discover
-    /// bookmarks for graph construction.
+    /// bookmarks.
     ///
-    /// The result determines which bookmarks appear as named segments
-    /// in the stack graph. Each returned bookmark is then traversed
-    /// toward trunk to build the full commit chain.
+    /// The matched bookmarks become the named segments of the stack
+    /// graph; each is traversed toward trunk to build its commit chain.
     #[arg(
         long,
         default_value = "mine() ~ trunk() ~ immutable()",
@@ -18,12 +17,12 @@ pub struct GraphArgs {
     pub bookmarks_revset: String,
 
     /// Revset passed to `jj log -r <REVSET>` to discover unbookmarked
-    /// head changes for graph construction.
+    /// head changes.
     ///
-    /// Each returned change becomes a traversal starting point, walked
-    /// toward trunk to discover segments that have no bookmark yet.
-    /// The revset should typically return only leaf commits (use
-    /// `heads(...)`) to avoid redundant traversals.
+    /// Each match is a traversal starting point, walked toward trunk to
+    /// discover segments that have no bookmark yet. It should typically
+    /// return only leaf commits (use `heads(...)`) to avoid redundant
+    /// traversals.
     #[arg(
         long,
         default_value = "heads((mine() ~ empty() ~ immutable()) & trunk()..)",

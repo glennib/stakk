@@ -80,16 +80,16 @@ pub struct SubmitArgs {
     /// The bookmark to submit as a pull request.
     ///
     /// Every bookmark between trunk and this one gets its own stacked
-    /// pull request. If omitted, shows an interactive selection (or uses
-    /// the explicit selection flags --keep/--keep-all/--new/--new-auto/
-    /// --new-command, which conflict with this argument).
+    /// pull request. Omit it for interactive selection, or for the
+    /// --keep/--keep-all/--new/--new-auto/--new-command flags, which
+    /// conflict with this argument.
     #[arg(conflicts_with = "explicit_marks", verbatim_doc_comment)]
     pub bookmark: Option<String>,
 
-    /// Show what would be done without actually doing it.
+    /// Print the submission plan and stop.
     ///
-    /// Fully inert: the plan is printed, but no bookmark is created,
-    /// nothing is pushed, and no pull request is touched.
+    /// Fully inert: no bookmark is created, nothing is pushed, and no
+    /// pull request is touched.
     #[arg(long, verbatim_doc_comment)]
     pub dry_run: bool,
 
@@ -98,11 +98,11 @@ pub struct SubmitArgs {
     /// Non-interactive selection: the --keep/--keep-all/--new/--new-auto/
     /// --new-command marks fully determine the PR set — nothing is
     /// implicit. All marks must lie on one trunk-to-tip path; the topmost
-    /// mark is the tip of the submission. Bookmarks on the path that are
-    /// not kept fold into the PR above them.
+    /// is the tip of the submission. Bookmarks on the path that are not
+    /// kept fold into the PR above them.
     ///
-    /// Run `stakk show` (or `stakk show --format=json`) to list stacks,
-    /// bookmarks, and change ids.
+    /// `stakk show [--format=json]` lists stacks, bookmarks and change
+    /// ids.
     #[arg(
         long,
         value_name = "BOOKMARK",
@@ -113,19 +113,18 @@ pub struct SubmitArgs {
 
     /// Keep every existing bookmark on the selected path.
     ///
-    /// With other marks, expands on the path they anchor; commits that
-    /// carry an explicit mark are skipped (explicit beats bulk). Alone,
-    /// it requires the choice of stack to be unambiguous: a single stack,
-    /// or several that agree on their bookmarks (e.g. differing only in
-    /// unbookmarked heads such as the working copy).
+    /// With other marks, expands on the path they anchor, skipping commits
+    /// that carry an explicit mark (explicit beats bulk). Alone, it needs
+    /// the choice of stack to be unambiguous: one stack, or several that
+    /// agree on their bookmarks (e.g. differing only in unbookmarked heads
+    /// such as the working copy).
     #[arg(long, group = "explicit_marks", verbatim_doc_comment)]
     pub keep_all: bool,
 
     /// Create a new bookmark at REV as a PR boundary (repeatable).
     ///
     /// REV is a change id or commit id prefix (as shown by `stakk show`).
-    /// Without =NAME the bookmark is named stakk-<change_id>; with =NAME
-    /// the given name is used.
+    /// The bookmark is named stakk-<change_id> unless =NAME is given.
     #[arg(
         long,
         value_name = "REV[=NAME]",
@@ -136,10 +135,10 @@ pub struct SubmitArgs {
 
     /// Create a new auto-named bookmark at REV (repeatable).
     ///
-    /// The name is generated with TF-IDF from the descriptions and files
-    /// of the commits folded into the boundary, honoring --auto-prefix;
-    /// falls back to stakk-<change_id> when no name can be derived or
-    /// the derived name is already taken.
+    /// The name is derived with TF-IDF from the descriptions and files of
+    /// the commits folded into the boundary, honoring --auto-prefix. Falls
+    /// back to stakk-<change_id> when nothing can be derived or the
+    /// derived name is already taken.
     #[arg(
         long,
         value_name = "REV",
@@ -165,8 +164,8 @@ pub struct SubmitArgs {
 
     /// Whether new pull requests are created as regular or draft PRs.
     ///
-    /// This only affects newly created PRs. Existing PRs keep their
-    /// current draft/ready state. Overridden by --draft.
+    /// Existing PRs keep their current draft/ready state. Overridden by
+    /// --draft.
     #[arg(
         long,
         env = "STAKK_PR_MODE",
@@ -186,8 +185,7 @@ pub struct SubmitArgs {
 
     /// Path to a custom minijinja template for stack comments.
     ///
-    /// The template is rendered with minijinja and receives the following
-    /// context:
+    /// Render context:
     ///
     ///   stack             — list of entries (see below)
     ///   stack_size        — total number of entries
@@ -195,7 +193,7 @@ pub struct SubmitArgs {
     ///   current_bookmark  — the bookmark being submitted
     ///   stakk_url         — URL to the stakk project
     ///
-    /// Each entry in stack has:
+    /// Each stack entry:
     ///
     ///   bookmark_name  — bookmark name
     ///   pr_url         — full URL to the pull request
@@ -221,23 +219,18 @@ pub struct SubmitArgs {
 
     /// Where to place the stack overview on each pull request.
     ///
-    /// In body mode the stack is written inside a fenced section
-    /// (STAKK_BODY_START / STAKK_BODY_END) that is appended to the PR
-    /// description. Content you write outside the fences is preserved.
-    /// Do not edit the fenced section by hand — it is overwritten on
-    /// every run.
+    /// body mode appends a fenced section (STAKK_BODY_START /
+    /// STAKK_BODY_END) to the PR description. Content outside the fences
+    /// is preserved; the fenced section itself is overwritten on every
+    /// run, so do not edit it by hand.
     ///
-    /// In none mode no stack info is written at all. Existing stack
-    /// comments and body fences are removed from each PR on submit, so
-    /// the feature can be retired cleanly.
+    /// none retires the feature cleanly by removing existing stack
+    /// comments and body fences on submit. ignore leaves them exactly as
+    /// they are — use it when something else owns that part of the PR.
     ///
-    /// In ignore mode no stack info is written either, but existing
-    /// stack comments and body fences are left exactly as they are —
-    /// use it when something else owns that part of the PR.
-    ///
-    /// Switching between comment and body migrates automatically:
-    /// moving to body mode deletes the old stack comment, and moving to
-    /// comment mode strips the fenced section from the PR body.
+    /// Switching between comment and body migrates automatically: moving to
+    /// body deletes the old stack comment, moving to comment strips the
+    /// fenced section from the PR body.
     ///
     /// A submission that produces a single pull request is not a stack:
     /// no stack info is written, and stale artifacts are cleaned up
@@ -251,14 +244,12 @@ pub struct SubmitArgs {
     )]
     pub stack_placement: StackPlacement,
 
-    /// Controls whether existing PR titles and/or bodies are updated
-    /// from jj commit descriptions on every submit.
+    /// Whether existing PR titles and/or bodies are updated from jj commit
+    /// descriptions on every submit.
     ///
-    /// When syncing is enabled, manual edits to the synced fields on
-    /// GitHub will be overwritten.
+    /// Syncing overwrites manual edits to the synced fields on GitHub.
     ///
-    /// See --trailers for control over whether git commit trailers
-    /// (Signed-off-by, Co-authored-by, Refs, etc.) are kept or stripped.
+    /// See --trailers for whether commit trailers are kept or stripped.
     #[arg(
         long,
         env = "STAKK_SYNC_PR_CONTENT",
@@ -283,14 +274,10 @@ pub struct SubmitArgs {
 
     /// Prefix for auto-generated bookmark names.
     ///
-    /// When set, the prefix is prepended to names produced by the [~]auto
-    /// bookmark name generator (TF-IDF, term frequency-inverse document
-    /// frequency). For example, --auto-prefix gb- turns
-    /// "caching-database" into "gb-caching-database".
-    ///
-    /// Only applies to auto-generated names -- not to the default
-    /// stakk-<change_id> names or names from
-    /// --bookmark-command.
+    /// Prepended to names from the [~]auto generator (TF-IDF, term
+    /// frequency-inverse document frequency): --auto-prefix gb- turns
+    /// "caching-database" into "gb-caching-database". Does not apply to
+    /// the default stakk-<change_id> names or to --bookmark-command names.
     ///
     /// The prefix is applied before length/character validation, so it
     /// counts toward the 255-byte limit.
@@ -299,10 +286,10 @@ pub struct SubmitArgs {
 
     /// Shell command for generating custom bookmark names.
     ///
-    /// The command is invoked via sh -c <command> (Unix) or cmd /C
-    /// <command> (Windows). It receives a JSON object on stdin describing
-    /// a single segment of commits and must print exactly one bookmark name
-    /// to stdout (plain text, leading/trailing whitespace is trimmed).
+    /// Invoked via sh -c <command> (Unix) or cmd /C <command> (Windows).
+    /// It receives a JSON object on stdin describing a single segment of
+    /// commits and must print exactly one bookmark name to stdout (plain
+    /// text, leading/trailing whitespace is trimmed).
     ///
     /// The custom name appears as an additional [*] toggle option in the
     /// TUI, after the existing bookmarks [x] and generated name [+].
@@ -324,32 +311,24 @@ pub struct SubmitArgs {
     ///   change_id           -- full jj change ID (string)
     ///   short_change_id     -- shortest unique change ID prefix (string)
     ///   description         -- full commit message incl. body (string)
-    ///   author              -- object with name, email, timestamp
-    ///     .name             -- author name (string)
-    ///     .email            -- author email (string)
-    ///     .timestamp        -- commit timestamp (string, ISO 8601)
+    ///   author              -- object with .name, .email and .timestamp
+    ///                          (ISO 8601), all strings
     ///   files               -- array of file paths changed by this commit
-    ///                          (array of strings, e.g. ["src/main.rs"])
+    ///                          (e.g. ["src/main.rs"])
     ///
     /// Minimal example (two commits):
     ///
     ///   {
     ///     "schema_version": 1,
-    ///     "rules": {
-    ///       "max_length": 255,
-    ///       "disallowed_chars": " ~^:?*[\\"
-    ///     },
+    ///     "rules": { "max_length": 255, "disallowed_chars": " ~^:?*[\\" },
     ///     "commits": [
     ///       {
     ///         "commit_id": "aaa111",
     ///         "change_id": "abc123",
     ///         "short_change_id": "abc",
     ///         "description": "add login page",
-    ///         "author": {
-    ///           "name": "Jo",
-    ///           "email": "jo@example.com",
-    ///           "timestamp": "2026-03-01T12:00:00+01:00"
-    ///         },
+    ///         "author": { "name": "Jo", "email": "jo@example.com",
+    ///                     "timestamp": "2026-03-01T12:00:00+01:00" },
     ///         "files": ["src/login.rs"]
     ///       },
     ///       {
@@ -357,21 +336,16 @@ pub struct SubmitArgs {
     ///         "change_id": "def456",
     ///         "short_change_id": "def",
     ///         "description": "style login form",
-    ///         "author": {
-    ///           "name": "Jo",
-    ///           "email": "jo@example.com",
-    ///           "timestamp": "2026-03-01T13:00:00+01:00"
-    ///         },
+    ///         "author": { "name": "Jo", "email": "jo@example.com",
+    ///                     "timestamp": "2026-03-01T13:00:00+01:00" },
     ///         "files": ["src/login.rs", "styles/login.css"]
     ///       }
     ///     ]
     ///   }
     ///
-    /// Expected stdout (one line, trimmed):
+    /// Expected stdout (one line, trimmed): login-page
     ///
-    ///   login-page
-    ///
-    /// Example (lowercase the tip commit description, replace
+    /// Example command (lowercase the tip commit description, replace
     /// non-alphanumeric runs with hyphens, trim to 50 chars):
     ///
     ///   jq -r '.commits[-1].description' \
