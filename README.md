@@ -144,9 +144,18 @@ The result on GitHub:
 - `feat-api` → PR targeting `feat-auth`
 - `feat-ui` → PR targeting `feat-api`
 
-Each PR shows only its own diff, and a stack comment on every PR links all related PRs together:
+Each PR shows only its own diff, and a stack comment on every PR links all related PRs together.
+The comment draws the stack the same way `stakk show` and the TUI do — leaf at the top, trunk at the bottom —
+and marks the PR you are looking at:
 
-![Stack comment example on a GitHub PR](media/pr-comment.png)
+```text
+Stack of 3 PRs — merges into main
+
+○ #14 feat-ui
+● #13 feat-api ← this PR
+○ #12 feat-auth
+◆ main
+```
 
 Re-running `stakk submit` is always safe — it updates existing PRs rather than creating duplicates.
 

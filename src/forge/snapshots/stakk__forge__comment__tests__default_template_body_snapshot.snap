@@ -1,0 +1,22 @@
+---
+source: src/forge/comment.rs
+expression: "splice_stack_into_body(\"My PR description.\", &body)"
+---
+My PR description.
+
+<!-- STAKK_BODY_START -->
+<!-- This section is managed by stakk. Manual edits will be overwritten. -->
+<!-- https://github.com/glennib/stakk -->
+
+---
+
+<!--- STAKK_STACK: eyJ2ZXJzaW9uIjowLCJzdGFjayI6W3siYm9va21hcmtfbmFtZSI6ImZlYXQtYXV0aCIsInByX3VybCI6Imh0dHBzOi8vZ2l0aHViLmNvbS9vd25lci9yZXBvL3B1bGwvMSIsInByX251bWJlciI6MX0seyJib29rbWFya19uYW1lIjoiZmVhdC1hcGkiLCJwcl91cmwiOiJodHRwczovL2dpdGh1Yi5jb20vb3duZXIvcmVwby9wdWxsLzIiLCJwcl9udW1iZXIiOjJ9LHsiYm9va21hcmtfbmFtZSI6ImZlYXQtdWkiLCJwcl91cmwiOiJodHRwczovL2dpdGh1Yi5jb20vb3duZXIvcmVwby9wdWxsLzMiLCJwcl9udW1iZXIiOjN9XX0= --->
+**Stack of 3 PRs** — merges into `main`
+
+○ https://github.com/owner/repo/pull/3 `feat-ui`
+● https://github.com/owner/repo/pull/2 `feat-api` ← **this PR**
+○ https://github.com/owner/repo/pull/1 `feat-auth`
+◆ `main`
+
+<sub>Created with [stakk](https://github.com/glennib/stakk)</sub>
+<!-- STAKK_BODY_END -->

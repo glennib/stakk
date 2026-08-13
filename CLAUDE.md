@@ -348,6 +348,22 @@ If you change any of the following, update `scripts/record-demo.py` in the same 
   `format_stack_comment` itself is placement-neutral (no warning lines).
   `STAKK_REPO_URL` is the single source of truth for the repo URL.
 - `format_stack_comment` returns `Result` because user templates can fail.
+- `StackCommentContext.stack` is ordered trunk-first
+  (`position` is 1 nearest the trunk);
+  the default template reverses it in jinja
+  (`stack | reverse`) so the rendered graph reads leaf-at-top like `stakk show` and the TUI.
+  Reversing in Rust instead would silently flip iteration for every user template —
+  keep the order change in the template.
+- The default template draws one node glyph per line at column 0 — `●` current, `○` other, `◆` trunk,
+  the same glyphs as `graph/layout.rs`.
+  GitHub renders comments in a proportional font, so nothing may depend on horizontal alignment: no `│` gutter,
+  no indentation, and no code fence (fenced links are dead).
+  Lines separate on GitHub's soft-break-as-`<br>` rendering.
+- Entry `title` is the *commit-derived* title,
+  which can differ from the PR's live title on GitHub when `--sync-pr-content` does not include titles.
+  The default template deliberately shows the bare `pr_url`
+  (GitHub renders it as `#N` with the real title on hover)
+  plus the bookmark name, so the comment cannot contradict the PR page.
 - Body-mode fences (`STAKK_BODY_START`/`STAKK_BODY_END`) are HTML comments, invisible on GitHub.
   Migration between placement modes is automatic.
 - `StackPlacement` (4 CLI modes) resolves to `EffectivePlacement`

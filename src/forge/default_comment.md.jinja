@@ -1,6 +1,8 @@
-This PR is part of a stack that merges into `{{ default_branch }}`:
-{% for entry in stack %}
-{{ entry.position }}. {{ entry.pr_url }}{% if entry.is_current %} 👈{% endif %}
-{%- endfor %}
+**Stack of {{ stack_size }} PRs** — merges into `{{ default_branch }}`
+
+{% for entry in stack | reverse -%}
+{% if entry.is_current %}●{% else %}○{% endif %} {{ entry.pr_url }} `{{ entry.bookmark_name }}`{% if entry.is_current %} ← **this PR**{% endif %}
+{% endfor -%}
+◆ `{{ default_branch }}`
 
 <sub>Created with [stakk]({{ stakk_url }})</sub>

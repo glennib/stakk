@@ -313,10 +313,38 @@ mod tests {
         let env = default_env();
         let tmpl = env.get_template("stack_comment").unwrap();
         let body = format_stack_comment(&data, &ctx, &tmpl).unwrap();
-        // Second PR should be highlighted with pointing finger.
+        // The current PR carries the filled node glyph and the "this PR" marker;
+        // the others carry the hollow glyph.
         assert!(
-            body.contains("\u{1f448}"),
-            "expected pointing finger emoji in body: {body}"
+            body.contains(
+                "\u{25cf} https://github.com/owner/repo/pull/2 `feat-b` \u{2190} **this PR**"
+            ),
+            "expected current entry to be marked: {body}"
+        );
+        assert!(
+            body.contains("\u{25cb} https://github.com/owner/repo/pull/1 `feat-a`"),
+            "expected non-current entry to use the hollow glyph: {body}"
+        );
+        assert_eq!(
+            body.matches("**this PR**").count(),
+            1,
+            "exactly one entry is the current one: {body}"
+        );
+    }
+
+    #[test]
+    fn format_orders_leaf_first_with_trunk_anchor() {
+        let data = sample_data();
+        let ctx = sample_context(0);
+        let env = default_env();
+        let tmpl = env.get_template("stack_comment").unwrap();
+        let body = format_stack_comment(&data, &ctx, &tmpl).unwrap();
+        let leaf = body.find("pull/2").expect("leaf entry rendered");
+        let root = body.find("pull/1").expect("root entry rendered");
+        let trunk = body.find("\u{25c6} `main`").expect("trunk anchor rendered");
+        assert!(
+            leaf < root && root < trunk,
+            "entries run leaf-first with trunk at the bottom: {body}"
         );
     }
 
@@ -452,7 +480,7 @@ mod tests {
     }
 
     #[test]
-    fn format_single_entry_numbered_list() {
+    fn format_single_entry_graph() {
         let data = StackCommentData {
             version: 0,
             stack: vec![StackEntry {
@@ -481,8 +509,8 @@ mod tests {
         let tmpl = env.get_template("stack_comment").unwrap();
         let body = format_stack_comment(&data, &ctx, &tmpl).unwrap();
         assert!(
-            body.contains("1. https://github.com/o/r/pull/1"),
-            "expected numbered list entry: {body}"
+            body.contains("\u{25cf} https://github.com/o/r/pull/1 `solo`"),
+            "expected graph entry: {body}"
         );
     }
 
@@ -527,21 +555,86 @@ mod tests {
     }
 
     #[test]
-    fn format_renders_numbered_entries() {
+    fn format_renders_every_entry() {
         let data = sample_data();
         let ctx = sample_context(0);
         let env = default_env();
         let tmpl = env.get_template("stack_comment").unwrap();
         let body = format_stack_comment(&data, &ctx, &tmpl).unwrap();
-        // Should contain numbered list entries with PR URLs
         assert!(
-            body.contains("1. https://github.com/owner/repo/pull/1"),
+            body.contains("https://github.com/owner/repo/pull/1"),
             "expected entry 1: {body}"
         );
         assert!(
-            body.contains("2. https://github.com/owner/repo/pull/2"),
+            body.contains("https://github.com/owner/repo/pull/2"),
             "expected entry 2: {body}"
         );
+        assert!(
+            body.contains("**Stack of 2 PRs**"),
+            "expected stack size in header: {body}"
+        );
+    }
+
+    /// Three-entry stack with the middle PR current — the shape the snapshots
+    /// pin down.
+    fn snapshot_context() -> StackCommentContext {
+        let names = ["feat-auth", "feat-api", "feat-ui"];
+        let entries: Vec<StackEntryContext> = names
+            .iter()
+            .enumerate()
+            .map(|(i, name)| StackEntryContext {
+                bookmark_name: (*name).to_string(),
+                pr_url: format!("https://github.com/owner/repo/pull/{}", i + 1),
+                pr_number: (i + 1) as u64,
+                title: format!("add {name}"),
+                base: if i == 0 {
+                    "main".to_string()
+                } else {
+                    names[i - 1].to_string()
+                },
+                is_draft: false,
+                position: i + 1,
+                is_current: i == 1,
+            })
+            .collect();
+        StackCommentContext {
+            stack_size: entries.len(),
+            current_bookmark: "feat-api".to_string(),
+            stack: entries,
+            default_branch: "main".to_string(),
+            stakk_url: STAKK_REPO_URL.to_string(),
+        }
+    }
+
+    fn snapshot_data() -> StackCommentData {
+        StackCommentData {
+            version: 0,
+            stack: snapshot_context()
+                .stack
+                .iter()
+                .map(|e| StackEntry {
+                    bookmark_name: e.bookmark_name.clone(),
+                    pr_url: e.pr_url.clone(),
+                    pr_number: e.pr_number,
+                })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn default_template_comment_snapshot() {
+        let env = default_env();
+        let tmpl = env.get_template("stack_comment").unwrap();
+        let body = format_stack_comment(&snapshot_data(), &snapshot_context(), &tmpl).unwrap();
+        insta::assert_snapshot!(with_comment_preamble(&body));
+    }
+
+    #[test]
+    fn default_template_body_snapshot() {
+        let env = default_env();
+        let tmpl = env.get_template("stack_comment").unwrap();
+        let body = format_stack_comment(&snapshot_data(), &snapshot_context(), &tmpl).unwrap();
+        insta::assert_snapshot!(splice_stack_into_body("My PR description.", &body));
     }
 
     #[test]
