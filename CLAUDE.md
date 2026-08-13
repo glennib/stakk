@@ -359,6 +359,15 @@ If you change any of the following, update `scripts/record-demo.py` in the same 
   Fenced blocks pass through the wrapper unwrapped
   (a folded shell command is a broken one),
   so a test caps fenced lines in `docs/*.md` at 76 chars — rumdl formats at 120 and will not catch it.
+- `Cli` has no flattened `SubmitArgs`: every submit flag lives on the `submit` subcommand only,
+  so flags before a subcommand fail with clap's stock "unexpected argument".
+  Bare `stakk` still means `stakk submit`: the `None` arm calls `cli::default_submit_args`,
+  which takes the `Config` and parses the synthetic argv `["stakk", "submit"]` through a `Command` it config-applies
+  itself — the signature is what stops a caller from handing it an unprepared `Command`.
+  That clap parse is what makes `STAKK_*` env vars and config-injected defaults apply to the bare form —
+  `SubmitArgs` deliberately has no `Default` impl, because hand-building one silently drops both
+  (the bug 90718ef5cf97 fixed; `bare_stakk_submit_args_come_from_a_config_applied_clap_parse` pins the mechanism).
+  Only `global = true` args (`--config`, `--github-host`) are accepted on either side of the subcommand.
 - Remote host handling: `jj::remote::parse_remote_url` parses `<host>/<owner>/<repo>` for *any* host;
   `parse_github_url` layers the gate on top, accepting `GITHUB_COM` plus one configured host
   (`--github-host` / `STAKK_GITHUB_HOST` / `github_host` / `GH_HOST`, resolved once in `run()`).

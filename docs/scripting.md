@@ -15,9 +15,12 @@ stakk submit --keep base --new qzvs=my-feature --new-auto wmtk
 
 ## Always name the subcommand
 
-Write `stakk submit`, and put flags after it.
-`stakk submit --dry-run` works, while `stakk --dry-run submit` is rejected.
-Bare `stakk` with no arguments is the sole exception — it means `stakk submit`, which opens the TUI.
+Write `stakk submit`, and put its flags after it.
+`stakk submit --dry-run` works, while `stakk --dry-run submit` is rejected as an unexpected argument.
+Bare `stakk` with no arguments is the exception — it means `stakk submit`, which opens the TUI.
+
+The two global flags, `--config` and `--github-host`, are free of that rule: they belong to every subcommand,
+so `stakk --github-host X submit` and `stakk submit --github-host X` are the same.
 
 ## Selection flags
 

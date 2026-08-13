@@ -52,7 +52,7 @@ async fn main() {
 async fn run() -> Result<(), StakkError> {
     let config_path = config::pre_parse_config_path();
     let config = config::Config::load(config_path)?;
-    let cmd = cli::apply_config_defaults(config, Cli::command());
+    let cmd = cli::apply_config_defaults(config.clone(), Cli::command());
     let cli = Cli::from_arg_matches(&cmd.get_matches())?;
 
     // Warn about an outdated jj for commands that shell out to it. Commands that
@@ -97,7 +97,14 @@ async fn run() -> Result<(), StakkError> {
             docs::print(topic);
         }
         None => {
-            submit_bookmark(&cli.submit_args, github_host).await?;
+            // A bare `stakk` means `stakk submit`. Its arguments come from a
+            // clap parse of the synthetic argv `stakk submit` rather than from
+            // a hand-built value, so clap defaults, `STAKK_*` environment
+            // variables and config-injected defaults all reach it. The global
+            // flags are unaffected: `--config` is pre-parsed from the real
+            // argv, and `github_host` comes from the real parse above.
+            let args = cli::default_submit_args(config).unwrap_or_else(|e| e.exit());
+            submit_bookmark(&args, github_host).await?;
         }
     }
 

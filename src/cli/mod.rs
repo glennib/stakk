@@ -6,6 +6,8 @@ use std::path::PathBuf;
 
 use clap::Args;
 use clap::Command;
+use clap::CommandFactory;
+use clap::FromArgMatches;
 use clap::Parser;
 use clap::Subcommand;
 use clap_complete::Shell;
@@ -18,7 +20,6 @@ use crate::config::Config;
 /// stakk — bridge Jujutsu bookmarks to GitHub stacked pull requests.
 #[derive(Debug, Parser)]
 #[command(version, about, after_long_help = env!("CARGO_PKG_REPOSITORY"))]
-#[command(args_conflicts_with_subcommands = true)]
 pub struct Cli {
     /// Path to a config file (overrides automatic discovery).
     ///
@@ -43,9 +44,6 @@ pub struct Cli {
 
     #[command(subcommand)]
     pub command: Option<Commands>,
-    /// Default submit arguments (used when no subcommand is given).
-    #[command(flatten)]
-    pub submit_args: SubmitArgs,
 }
 
 #[derive(Debug, Subcommand)]
@@ -124,15 +122,34 @@ pub struct ShowArgs {
     reason = "Config is moved into closures captured by mut_subcommand which requires 'static"
 )]
 pub fn apply_config_defaults(config: Config, cmd: Command) -> Command {
-    // Apply to top-level (flattened submit args) first.
+    // Global args live on the root; every other arg has exactly one home on
+    // its own subcommand.
     let cmd = apply_global_defaults(&config, cmd);
-    let cmd = apply_submit_and_graph_defaults(&config, cmd);
     // Clone for the closures that mut_subcommand requires ('static).
     let config2 = config.clone();
     let cmd = cmd.mut_subcommand("submit", |sub| {
-        apply_submit_and_graph_defaults(&config, sub)
+        let sub = apply_submit_defaults(&config, sub);
+        apply_graph_defaults(&config, sub)
     });
     cmd.mut_subcommand("show", |sub| apply_graph_defaults(&config2, sub))
+}
+
+/// Parse the `SubmitArgs` that a bare `stakk` runs with.
+///
+/// The args come from a real clap parse of the synthetic argv `stakk submit`
+/// against a `Command` this function config-applies itself, so clap defaults,
+/// `STAKK_*` environment variables and config-injected defaults all apply,
+/// exactly as they would for a typed `stakk submit`. Building `SubmitArgs` by
+/// hand would bypass all three — which is why `SubmitArgs` has no `Default`
+/// impl. Taking the `Config` rather than a prepared `Command` keeps the
+/// config application inside this function, where a caller cannot skip it.
+pub fn default_submit_args(config: Config) -> Result<SubmitArgs, clap::Error> {
+    let cmd = apply_config_defaults(config, Cli::command());
+    let matches = cmd.try_get_matches_from(["stakk", "submit"])?;
+    let submit = matches
+        .subcommand_matches("submit")
+        .expect("the synthetic argv always names the submit subcommand");
+    SubmitArgs::from_arg_matches(submit)
 }
 
 fn set_default(cmd: Command, arg_id: &str, value: &str) -> Command {
@@ -193,16 +210,8 @@ fn apply_graph_defaults(config: &Config, mut cmd: Command) -> Command {
     cmd
 }
 
-fn apply_submit_and_graph_defaults(config: &Config, cmd: Command) -> Command {
-    let cmd = apply_submit_defaults(config, cmd);
-    apply_graph_defaults(config, cmd)
-}
-
 #[cfg(test)]
 mod tests {
-    use clap::CommandFactory;
-    use clap::FromArgMatches;
-
     use super::*;
     use crate::forge::comment::StackPlacement;
 
@@ -213,12 +222,11 @@ mod tests {
         Cli::from_arg_matches(&matches).unwrap()
     }
 
-    /// Extract `SubmitArgs` from parsed CLI (handles both top-level and
-    /// subcommand).
+    /// Extract `SubmitArgs` from a parsed `stakk submit` invocation.
     fn submit_args(cli: &Cli) -> &SubmitArgs {
         match &cli.command {
             Some(Commands::Submit(args)) => args,
-            _ => &cli.submit_args,
+            other => panic!("expected Submit, got {other:?}"),
         }
     }
 
@@ -287,22 +295,42 @@ mod tests {
         assert_eq!(submit_args(&cli).pr_mode(), PrMode::Draft);
     }
 
-    // -- pr_mode top-level (no subcommand) --
+    // -- the bare `stakk` form --
 
     #[test]
-    fn pr_mode_toplevel_config_draft() {
+    fn bare_stakk_parses_to_no_subcommand() {
+        let cli = parse_with_config(Config::default(), &["stakk"]);
+        assert!(cli.command.is_none());
+    }
+
+    /// Regression guard for 90718ef5cf97 ("fix: respect env vars when running
+    /// without subcommand").
+    ///
+    /// The bare `stakk` form must take its `SubmitArgs` from a clap parse of
+    /// the config-applied `Command` — the mechanism `default_submit_args`
+    /// implements and `main.rs`'s `None` arm calls. A hand-built value would
+    /// silently ignore both `STAKK_*` environment variables and the config
+    /// defaults passed here. Env vars ride the same parse, so pinning the
+    /// config path pins both; clap's own env handling is not ours to test.
+    #[test]
+    fn bare_stakk_submit_args_come_from_a_config_applied_clap_parse() {
         let config = Config {
             pr_mode: Some(PrMode::Draft),
             ..Default::default()
         };
-        let cli = parse_with_config(config, &["stakk"]);
-        assert_eq!(submit_args(&cli).pr_mode(), PrMode::Draft);
+        let args = default_submit_args(config).unwrap();
+        assert_eq!(args.pr_mode(), PrMode::Draft);
     }
 
     #[test]
-    fn pr_mode_toplevel_cli_draft_flag() {
-        let cli = parse_with_config(Config::default(), &["stakk", "--draft"]);
-        assert_eq!(submit_args(&cli).pr_mode(), PrMode::Draft);
+    fn bare_stakk_rejects_submit_flags() {
+        use clap::error::ErrorKind;
+
+        let cmd = apply_config_defaults(Config::default(), Cli::command());
+        let err = cmd
+            .try_get_matches_from(["stakk", "--dry-run"])
+            .unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::UnknownArgument);
     }
 
     // -- remote tests --
@@ -369,13 +397,14 @@ mod tests {
     }
 
     #[test]
-    fn github_host_from_config_without_subcommand() {
-        let config = Config {
-            github_host: Some("github.example.com".into()),
-            ..Default::default()
-        };
-        let cli = parse_with_config(config, &["stakk"]);
-        assert_eq!(cli.github_host.as_deref(), Some("github.example.com"));
+    fn github_host_is_global_and_parses_before_the_subcommand() {
+        // `global = true` makes it insertable anywhere; the submit flags are
+        // accepted only after `submit`.
+        let cli = parse_with_config(
+            Config::default(),
+            &["stakk", "--github-host", "ghe.example.com", "submit"],
+        );
+        assert_eq!(cli.github_host.as_deref(), Some("ghe.example.com"));
     }
 
     #[test]
@@ -395,6 +424,19 @@ mod tests {
             ..Default::default()
         };
         let cli = parse_with_config(config, &["stakk", "auth", "test"]);
+        assert_eq!(cli.github_host.as_deref(), Some("github.example.com"));
+    }
+
+    /// The bare form has no subcommand to carry the global arg, and `main.rs`
+    /// reads `github_host` off this parse — not off the synthetic `submit`
+    /// parse, which yields a `SubmitArgs` with no host field.
+    #[test]
+    fn github_host_from_config_reaches_bare_stakk() {
+        let config = Config {
+            github_host: Some("github.example.com".into()),
+            ..Default::default()
+        };
+        let cli = parse_with_config(config, &["stakk"]);
         assert_eq!(cli.github_host.as_deref(), Some("github.example.com"));
     }
 
@@ -661,19 +703,6 @@ mod tests {
         assert_eq!(args.new, vec!["r1=name1", "r2"]);
         assert_eq!(args.new_auto, vec!["r3"]);
         assert_eq!(args.new_command, vec!["r4"]);
-    }
-
-    #[test]
-    fn selection_flags_parse_at_top_level() {
-        // The flattened no-subcommand form must accept the flags too.
-        let cli = parse_with_config(
-            Config::default(),
-            &["stakk", "--keep", "a", "--new", "r=n", "--keep-all"],
-        );
-        assert!(cli.command.is_none());
-        assert_eq!(cli.submit_args.keep, vec!["a"]);
-        assert_eq!(cli.submit_args.new, vec!["r=n"]);
-        assert!(cli.submit_args.keep_all);
     }
 
     // -- env var interaction --

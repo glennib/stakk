@@ -1494,7 +1494,7 @@ mod tests {
         let cli = crate::cli::Cli::try_parse_from(args).unwrap();
         match cli.command {
             Some(crate::cli::Commands::Submit(a)) => *a,
-            _ => cli.submit_args,
+            other => panic!("expected Submit, got {other:?}"),
         }
     }
 
