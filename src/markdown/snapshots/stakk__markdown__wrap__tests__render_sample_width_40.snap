@@ -1,0 +1,69 @@
+---
+source: src/markdown/wrap.rs
+expression: "wrap_markdown(SAMPLE, 40)"
+---
+# Render sample
+
+This fixture exercises every construct
+`wrap_markdown` has to handle. It is
+written with semantic line breaks, one
+clause per line, exactly like the
+documents under `docs/`.
+
+## Prose
+
+A paragraph whose clauses are split
+across several source lines should be
+joined back together and then folded to
+the requested width, because a terminal
+reader wants paragraphs, not ragged
+fragments.
+
+## Code
+
+A fenced block must survive
+byte-identical at every width, since a
+folded shell command is a broken shell
+command:
+
+```console
+stakk submit --keep base --new qzvs=my-feature --new-auto wmtk --dry-run
+```
+
+An indented code block is also left
+alone:
+
+```text
+stakk show --format=json | jq '.stacks[0]'
+```
+
+## Tables
+
+| Flag | Meaning |
+|------|---------|
+| `--keep` | Keep an existing bookmark as a PR boundary |
+| `--new-auto` | Create a TF-IDF-named bookmark at a revision |
+
+## Lists
+
+- A bullet item long enough that it has
+  to wrap, so its continuation lines can
+  be checked for a hanging indent under
+  the item text.
+- A short item.
+  - A nested item that is also long
+    enough to need folding at narrow
+    widths.
+
+1. An ordered item that runs on long
+   enough to wrap at most widths.
+2. A short one.
+
+## Quotes and breaks
+
+> A blockquote is structural and passes through verbatim, even when its lines are longer than the target width.
+
+---
+
+Inline `code spans` and **bold text**
+are left exactly as written.

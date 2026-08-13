@@ -40,6 +40,7 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread", "process", "io
 directories = "6"
 toml = "1.0.7"
 jiff = { version = "0.2.35", default-features = false, features = ["std"] }
+textwrap = { version = "0.16.2", default-features = false, features = ["unicode-linebreak", "unicode-width"] }
 
 # The profile that 'dist' will build with
 [profile.dist]

@@ -40,6 +40,9 @@ and idempotent updates.
 - **Non-interactive selection** — `--keep`/`--keep-all`/`--new`/`--new-auto`/`--new-command` build the exact same
   submission the TUI would, without a terminal.
   Pair them with `stakk show --format=json` for scripts and coding agents.
+- **Self-documenting** — `stakk docs` prints the bundled documentation, version-locked to the binary you are running.
+  `stakk docs scripting` is the whole non-interactive workflow in one command, which is the fastest way to bring a
+  coding agent up to speed.
 - **Draft PRs** — `--draft` creates new PRs as drafts.
 - **PR body from descriptions** — PR titles and bodies are populated from jj change descriptions.
   By default they are only written when the PR is created, so manual edits on GitHub survive;
@@ -156,181 +159,47 @@ Re-running `stakk submit` is always safe — it updates existing PRs rather than
 `--stack-placement` (or `stack_placement` in a config file, or `STAKK_STACK_PLACEMENT`) decides
 where the stack overview lives on each PR:
 
-| Mode | Writes | Removes existing stack comments/body fences |
-|------|--------|---------------------------------------------|
-| `comment` (default) | A separate PR comment, updated in place | Yes, when migrating from `body` |
-| `body` | A fenced section in the PR body (`STAKK_BODY_START` … `STAKK_BODY_END`) | Yes, when migrating from `comment` |
-| `none` | Nothing | Yes, on every submit |
-| `ignore` | Nothing | No — existing artifacts are left exactly as they are |
+- `comment` (default) — a separate PR comment, updated in place
+- `body` — a fenced section in the PR body
+- `none` — write nothing, and remove stack comments and body fences that are already there
+- `ignore` — write nothing, and leave existing artifacts exactly as they are
 
 Switching between `comment` and `body` migrates automatically.
-Content you write outside the body fences is preserved; the fenced section itself is overwritten on every run.
+A submission that produces a single PR is not a stack, so no stack info is written.
 
-`none` and `ignore` both write no stack info — the difference is what happens to whatever is already on the PR.
-Use `none` to retire stakk's stack comments cleanly (for example when moving to GitHub's own stacked-PR UI).
-Use `ignore` to leave the existing comments and fences frozen in place — handy while trying another tool,
-or when another process owns that part of the PR.
-Neither mode reads or compiles a custom `--template`,
-so a broken template cannot fail a submission that will not render it.
-
-A submission that produces a single PR is not a stack: no stack info is written, and stale artifacts from an earlier,
-larger stack are cleaned up (unless the mode is `ignore`).
+Full mode table, migration details, and stack comment templating: [docs/template.md](docs/template.md),
+or run `stakk docs template`.
 
 ## Configuration
 
 stakk loads settings from TOML config files, environment variables, and CLI flags.
-The full precedence order (highest to lowest):
+The precedence order, highest to lowest, is CLI flags, then environment variables, then the repository `stakk.toml`,
+then the user config, then built-in defaults.
 
-1. **CLI flags** — `--remote`, `--draft`, `--pr-mode`, etc.
-2. **Environment variables** — `STAKK_REMOTE`, `STAKK_DRAFT`, etc.
-3. **Repository config** — `stakk.toml` found by walking up from the current
-   directory
-4. **User config** — `~/.config/stakk/config.toml` (Linux),
-   `~/Library/Application Support/stakk/config.toml` (macOS),
-   `%APPDATA%\stakk\config\config.toml` (Windows)
-5. **Built-in defaults**
-
-### Config files
-
-stakk discovers config files automatically — no flags needed.
-
-**Repository config** is found by walking from the current directory toward the jj workspace root
-(the directory containing `.jj/`), stopping at the first `stakk.toml` found.
-The search does not continue past the repo root.
-To share config across multiple repos, use `--config` or the `STAKK_CONFIG` environment variable.
-
-**User config** is loaded from your platform's standard config directory.
-On Linux this is typically `~/.config/stakk/config.toml`.
-
-Both files use the same format.
-When both exist, settings from the repo config take precedence —
-the user config fills in any fields the repo config leaves unset.
-
-### Config file format
-
-All fields are optional.
-Absent fields fall back to the next level in the precedence chain.
+Repository config is found by walking up from the current directory to the jj workspace root.
+User config lives in your platform's standard config directory (`~/.config/stakk/config.toml` on Linux).
+All fields are optional, and unknown fields cause a parse error.
 
 ```toml
-# stakk.toml — example with all available fields
-
-# Git remote to push to (default: "origin")
+# stakk.toml
 remote = "origin"
-
-# PR creation mode: "regular" or "draft" (default: "regular")
 pr_mode = "draft"
-
-# Path to a custom minijinja template for stack comments
-template = "/path/to/my-template.md.jinja"
-
-# Where to place stack info: "comment", "body", "none", or "ignore"
-# (default: "comment")
-# "none" writes no stack info and removes existing stack comments/body fences
-# on the next submit (e.g. if you rely on GitHub's native stacked PRs).
-# "ignore" writes no stack info and leaves existing artifacts untouched.
 stack_placement = "body"
-
-# Prefix for auto-generated bookmark names (default: none)
 auto_prefix = "gb-"
-
-# Revset for discovering bookmarks (default: "mine() ~ trunk() ~ immutable()")
-# Note: the default excludes bookmarks on immutable commits. Stale untracked
-# remote bookmarks can pin commits immutable — clean them up with
-# `jj bookmark forget --include-remotes 'glob:<pattern>'`, or drop the
-# `~ immutable()` term for one run to include them.
-bookmarks_revset = "mine() ~ trunk() ~ immutable()"
-
-# Revset for discovering unbookmarked heads
-# (default: "heads((mine() ~ empty() ~ immutable()) & trunk()..)")
-heads_revset = "heads((mine() ~ empty() ~ immutable()) & trunk()..)"
-
-# Sync PR title/body from commits on every submit (default: "none")
-# Options: "none", "title", "body", "all"
-sync_pr_content = "all"
-
-# How to handle git commit trailers in PR bodies (default: "keep")
-# Options: "keep", "strip"
-trailers = "strip"
-
-# Shell command for generating custom bookmark names
-bookmark_command = "my-bookmark-namer"
-
-# Whether to merge with the user config (default: true)
-# Set to false in a repo config to ignore the user config entirely.
-inherit = true
 ```
 
-Unknown fields cause a parse error, so typos are caught early.
-
-### The `inherit` field
-
-By default, repo config and user config are merged: the repo config wins for any field it sets,
-and the user config fills in the rest.
-If a repo needs to ignore the user config entirely
-(e.g. to enforce team-wide settings), set `inherit = false` in the repo-level `stakk.toml`:
-
-```toml
-# stakk.toml — standalone, ignores user config
-inherit = false
-pr_mode = "regular"
-stack_placement = "comment"
-```
-
-`inherit` only has meaning in a repo config.
-It is not merged from the user config.
-
-### Examples
-
-**User config** — personal defaults across all repos:
-
-```toml
-# ~/.config/stakk/config.toml
-pr_mode = "draft"
-stack_placement = "body"
-```
-
-**Repo config** — override remote for this repo, inherit everything else:
-
-```toml
-# stakk.toml (in repo root)
-remote = "upstream"
-```
-
-With both files above, running `stakk submit my-feature` uses `remote = "upstream"` from the repo config
-and `pr_mode = "draft"`, `stack_placement = "body"` from the user config.
-Passing `--pr-mode regular` on the command line overrides all of them.
-
-**Team-enforced config** — no user config inheritance:
-
-```toml
-# stakk.toml (in repo root)
-inherit = false
-remote = "origin"
-pr_mode = "regular"
-stack_placement = "comment"
-```
+Every config key, the `inherit` field, worked examples, and the full environment variable table:
+[docs/config.md](docs/config.md), or run `stakk docs config`.
 
 ## Environment variables
 
-| Variable | Description |
-|----------|-------------|
-| `STAKK_CONFIG` | Path to config file, overrides automatic discovery (overridden by `--config`) |
-| `STAKK_REMOTE` | Default git remote to push to (overridden by `--remote`) |
-| `STAKK_PR_MODE` | PR creation mode: `regular` or `draft` (overridden by `--pr-mode`) |
-| `STAKK_DRAFT` | Set to `true` to always create draft PRs (overridden by `--draft`) |
-| `STAKK_TEMPLATE` | Path to a custom minijinja template for stack comments (overridden by `--template`) |
-| `STAKK_STACK_PLACEMENT` | Where to place the stack info: `comment` (default), `body`, `none`, or `ignore` (overridden by `--stack-placement`) |
-| `STAKK_AUTO_PREFIX` | Prefix for auto-generated bookmark names (overridden by `--auto-prefix`) |
-| `STAKK_SYNC_PR_CONTENT` | Sync PR title/body from commits: `none` (default), `title`, `body`, or `all` (overridden by `--sync-pr-content`) |
-| `STAKK_TRAILERS` | Whether to keep or strip git commit trailers in PR bodies: `keep` (default) or `strip` (overridden by `--trailers`) |
-| `STAKK_BOOKMARK_COMMAND` | Shell command for generating custom bookmark names (overridden by `--bookmark-command`) |
-| `STAKK_BOOKMARKS_REVSET` | Revset for discovering bookmarks (overridden by `--bookmarks-revset`) |
-| `STAKK_HEADS_REVSET` | Revset for discovering unbookmarked heads (overridden by `--heads-revset`) |
-| `GITHUB_TOKEN` | GitHub personal access token (see `stakk auth setup`) |
-| `GH_TOKEN` | Alternative to `GITHUB_TOKEN` |
-
+Every `submit` flag has a matching `STAKK_`-prefixed environment variable — `STAKK_REMOTE`, `STAKK_PR_MODE`,
+`STAKK_STACK_PLACEMENT`, and so on — plus `GITHUB_TOKEN` / `GH_TOKEN` for authentication.
 CLI flags take precedence over environment variables, which take precedence over config files.
-See [Configuration](#configuration) for the full precedence order.
+
+`--dry-run` and the selection flags deliberately have no environment variables: they are per-invocation decisions.
+
+Full table: [docs/config.md](docs/config.md), or run `stakk docs config`.
 
 ## Usage
 
@@ -393,7 +262,7 @@ Non-interactive submission is a two-command loop — discover, then submit.
 Everything `stakk submit` needs (change id prefixes, bookmark names) is in `stakk show`'s output:
 
 ```console
-stakk show --format=json | jq '.stacks[0].segments[].commits[] | {short_change_id, description, local_bookmark_names}'
+stakk show --format=json
 stakk submit --keep base --new qzvs=my-feature --new-auto wmtk --dry-run
 stakk submit --keep base --new qzvs=my-feature --new-auto wmtk
 ```
@@ -401,6 +270,11 @@ stakk submit --keep base --new qzvs=my-feature --new-auto wmtk
 `--dry-run` is fully inert: it prints the planned bookmark creations and PR actions without creating, pushing,
 or changing anything — safe for validation before the real run.
 Selection errors carry machine-readable diagnostic codes (`stakk::selection::*`) and point back at `stakk show`.
+
+The complete reference — every selection rule, the diagnostic codes, and the JSON schema — is in
+[docs/scripting.md](docs/scripting.md).
+Point a coding agent at `stakk docs scripting`: it prints that document,
+so the agent never has to read this README or guess at flag semantics.
 
 #### PR titles and bodies
 
@@ -491,6 +365,23 @@ Identifiers in the document — change id prefixes and bookmark names — can be
       includes bookmarks the bookmarks revset excluded), `is_boundary`
       (the commit its segment's bookmarks point at), `is_leaf` (the tip
       of its stack)
+
+### `stakk docs [topic]`
+
+Print the documentation bundled into the binary.
+Because it ships inside the binary, it always describes the version you are actually running.
+
+Run `stakk docs` with no arguments for the list of topics.
+Each topic is one of the Markdown files in [docs/](docs/), which is also where to read them on GitHub.
+
+| Flag | Env var | Description |
+|------|---------|-------------|
+| `[topic]` | | Topic to print; omit to list the available topics |
+
+At a terminal the prose is re-flowed to your terminal width.
+Redirected, the source is emitted verbatim —
+so `stakk docs scripting >> AGENTS.md` writes exactly the Markdown in `docs/scripting.md`,
+which makes it a one-line way to give a coding agent the full non-interactive workflow.
 
 ### `stakk completions <shell>`
 

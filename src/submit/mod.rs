@@ -4,7 +4,6 @@
 //! stacked pull requests, updating existing PRs idempotently.
 
 mod trailers;
-mod unwrap;
 
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -38,8 +37,8 @@ use crate::graph::types::SegmentCommit;
 use crate::jj::Jj;
 use crate::jj::JjError;
 use crate::jj::runner::JjRunner;
+use crate::markdown::unwrap::unwrap_markdown;
 use crate::submit::trailers::split_trailers;
-use crate::submit::unwrap::unwrap_markdown;
 
 /// Errors from the submission pipeline.
 #[derive(Debug, Error, Diagnostic)]

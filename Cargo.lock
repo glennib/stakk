@@ -2843,6 +2843,7 @@ dependencies = [
  "ratatui",
  "serde",
  "serde_json",
+ "textwrap",
  "thiserror 2.0.20",
  "tokio",
  "toml",

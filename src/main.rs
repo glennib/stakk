@@ -1,10 +1,12 @@
 mod auth;
 mod cli;
 mod config;
+mod docs;
 mod error;
 mod forge;
 mod graph;
 mod jj;
+mod markdown;
 mod select;
 mod show;
 mod submit;
@@ -45,9 +47,9 @@ async fn run() -> Result<(), StakkError> {
     let cli = Cli::from_arg_matches(&cmd.get_matches())?;
 
     // Warn about an outdated jj for commands that shell out to it. Commands that
-    // never touch jj (completions, `auth setup`) skip the check.
+    // never touch jj (completions, docs, `auth setup`) skip the check.
     let runs_jj = match &cli.command {
-        Some(Commands::Completions { .. }) => false,
+        Some(Commands::Completions { .. } | Commands::Docs { .. }) => false,
         Some(Commands::Auth(args)) => matches!(args.command, AuthCommands::Test),
         _ => true, // Submit, Show, and None (= submit) all use jj.
     };
@@ -72,6 +74,9 @@ async fn run() -> Result<(), StakkError> {
         }
         Some(Commands::Completions { shell }) => {
             clap_complete::generate(shell, &mut Cli::command(), "stakk", &mut std::io::stdout());
+        }
+        Some(Commands::Docs { topic }) => {
+            docs::print(topic);
         }
         None => {
             submit_bookmark(&cli.submit_args).await?;
