@@ -14,6 +14,12 @@ jobs:
   ci:
     runs-on: ubuntu-latest
 
+    env:
+      # Debug info is the bulk of the cached target directory. Line tables keep
+      # file:line in panic backtraces at a fraction of the size.
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
+      CARGO_PROFILE_TEST_DEBUG: line-tables-only
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -22,6 +28,14 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
+
+      - name: Cache cargo registry and build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          # Only the default branch writes cache entries: branch-scoped caches
+          # are invisible to other branches, so saving from a PR costs quota
+          # and helps nothing.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Cache mise
         uses: actions/cache@v6
