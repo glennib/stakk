@@ -195,5 +195,10 @@ an Enterprise Server reachable only over plain HTTP is not supported.
 | `GH_ENTERPRISE_TOKEN` | Access token for a GitHub Enterprise Server host |
 | `GITHUB_ENTERPRISE_TOKEN` | Alternative to `GH_ENTERPRISE_TOKEN` |
 
+`--draft` is a shortcut for `--pr-mode draft`, and draft-ness wins from whichever source sets it:
+`--draft` *or* `STAKK_DRAFT=true` forces a draft even alongside an explicit `--pr-mode regular`.
+Unset `STAKK_DRAFT` rather than passing `--pr-mode regular` when you want a non-draft PR.
+There is no `draft` config key — use `pr_mode = "draft"` in a config file.
+
 `--dry-run` and the selection flags (`--keep`, `--keep-all`, `--new`, `--new-auto`, `--new-command`) deliberately have
 no environment variables or config keys: they are per-invocation decisions, and a persisted default would be surprising.

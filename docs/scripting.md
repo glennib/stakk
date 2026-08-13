@@ -79,13 +79,17 @@ Selection failures carry machine-readable diagnostic codes and point back at `st
 | `stakk::selection::rev_not_found` | No commit on the graph matches the prefix |
 | `stakk::selection::rev_ambiguous` | The prefix matches more than one commit |
 | `stakk::selection::rev_immutable` | The commit is jj-immutable and cannot take a bookmark |
+| `stakk::selection::empty_rev` | A selection flag was given an empty `REV` |
+| `stakk::selection::invalid_new_spec` | A `--new` value is neither `REV` nor `REV=NAME` |
 | `stakk::selection::not_colinear` | The marks do not lie on a single trunk-to-tip path |
 | `stakk::selection::keep_not_found` | No such bookmark on the selected path |
 | `stakk::selection::keep_all_ambiguous` | Bare `--keep-all` cannot pick between stacks |
 | `stakk::selection::no_marks` | No marks given, so there is nothing to submit |
+| `stakk::selection::no_stacks` | The repository has no bookmark stacks to select from |
 | `stakk::selection::duplicate_mark` | The same revision was marked twice |
 | `stakk::selection::duplicate_name` | Two marks would create the same bookmark name |
 | `stakk::selection::name_exists` | The requested name is already taken by a local bookmark |
+| `stakk::selection::bookmark_command_not_configured` | `--new-command` was used without `--bookmark-command` |
 
 ## The `stakk show --format=json` document
 

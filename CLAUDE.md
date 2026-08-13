@@ -63,7 +63,7 @@ stakk uses its own comment metadata format
 
 ### 8. CLI args, env vars, and config travel together
 
-Every user-facing `submit` arg has five touchpoints that must stay in sync.
+Every user-facing `submit` arg has four touchpoints that must stay in sync.
 When adding, renaming, or changing the default of one, update all of them in the same change:
 
 1. **`src/cli/submit.rs`** — the clap field with `#[arg(long, env = "STAKK_…",
@@ -78,22 +78,25 @@ When adding, renaming, or changing the default of one, update all of them in the
    A `global = true` arg on `Cli` (like `--config` and `--github-host`) is defined on the *root* command only,
    so its default goes through `apply_global_defaults`, not `apply_submit_defaults` —
    `mut_arg` on a subcommand would panic with "Argument is undefined".
-4. **`README.md`** — three places:
-   - the `stakk.toml` example block,
-   - the **Environment variables** table,
-   - the per-subcommand flag table (e.g. under `stakk submit`).
-     `GraphArgs` flags (`--bookmarks-revset`, `--heads-revset`) appear in *two* tables —
-     `stakk submit` and `stakk show` — because both subcommands flatten them.
+4. **`docs/config.md`** — two places:
+   - the annotated `stakk.toml` example block (the exhaustive one; document the default in the comment),
+   - the **Environment variables** table.
 
-   Options with a prose section of their own need that section updated too:
-   `--stack-placement` has the **Stack info placement** mode table,
-   the selection flags have **Agent / scripting usage**.
-5. **`docs/config.md`** — the same three places again
-   (the full `stakk.toml` block, the **Environment variables** table, and any prose section),
-   since README only carries an abbreviated version and links here.
+   `README.md` deliberately carries *no* flag or env-var reference tables — `stakk --help`,
+   `stakk <subcommand> --help` and `docs/config.md` are the reference.
+   Only touch the README when the option changes something it describes in prose: the four-key `stakk.toml` sample,
+   the **Stack info placement** summary, **GitHub Enterprise Server**, **Non-interactive selection**,
+   **PR titles and bodies**, **Custom bookmark names**, or **Immutable commits**.
+   Deeper reference material for those lives in `docs/template.md` and `docs/scripting.md`,
+   which each README section links to alongside its `stakk docs <topic>` command.
 
 A change that lands in only some of these will silently drop config-file support, fail to appear in `--help` defaults,
 or stay invisible in the docs.
+
+The README describes only encouraged flows.
+The bare `stakk <bookmark>` form works but is never shown there — `stakk` with no arguments means the TUI,
+and submitting a named bookmark means `stakk submit <bookmark>`.
+Subcommand shadowing and `stakk -- <bookmark>` are documented in `docs/scripting.md` only.
 
 ## Architecture
 
@@ -344,7 +347,7 @@ If you change any of the following, update `scripts/record-demo.py` in the same 
   The variant doc comments are load-bearing:
   clap prints them as possible-value help *and* `docs::index` reads them back.
   `DocTopic` has no `Default` on purpose — `None` means "print the index", not "print a default topic".
-  `stakk docs` is exempt from the five-touchpoint rule (§8): no env var, no config key,
+  `stakk docs` is exempt from the four-touchpoint rule (§8): no env var, no config key,
   so README is the only other touchpoint.
   Add it to the `runs_jj` false-arm in `main.rs` alongside `Completions`,
   or the `_ => true` fallthrough makes it shell out to jj for a version check it does not need.
@@ -516,7 +519,7 @@ If you change any of the following, update `scripts/record-demo.py` in the same 
 - **Selection flags not in env vars/config** — `--keep`, `--keep-all`, `--new`, `--new-auto`,
   `--new-command` are per-invocation decisions like `--dry-run`;
   a persisted default would silently change what gets submitted.
-  CLI + README touchpoints only (deliberate exception to the five-touchpoint rule).
+  CLI + README touchpoints only (deliberate exception to the four-touchpoint rule).
 - **Generic `Jj<R: JjRunner>`** — zero-cost dispatch, edition 2024 async traits.
 - **Three-phase submission** — analyze (pure) → plan (queries forge) → execute.
   All repo mutations (bookmark creation, pushes) live in execute, so `--dry-run` —
