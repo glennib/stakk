@@ -8,7 +8,9 @@ cargo-binstall = "1.21.1"
 "cargo:cargo-nextest" = "0.9.143"
 "cargo:release-plz" = "0.3.160"
 cargo-insta = "latest"
-rumdl = "latest"
+# Pinned: `md:check` gates CI, so a new rumdl release must not fail the build
+# out of nowhere.
+rumdl = "0.2.54"
 
 [tasks.fmt]
 description = "Format code"
@@ -25,6 +27,14 @@ run = "cargo +nightly fmt --all"
 [tasks."fmt:check:nightly"]
 description = "Check code formatting with nightly"
 run = "cargo +nightly fmt --all -- --check"
+
+[tasks."md"]
+description = "Format Markdown"
+run = "rumdl fmt ."
+
+[tasks."md:check"]
+description = "Check Markdown formatting"
+run = "rumdl check ."
 
 [tasks.clippy]
 description = "Run clippy lints"
@@ -44,7 +54,7 @@ run = "cargo build"
 
 [tasks.ci]
 description = "Run all CI checks"
-depends = ["fmt:check", "clippy", "test", "build:debug"]
+depends = ["fmt:check", "md:check", "clippy", "test", "build:debug"]
 
 [tasks.record-demo]
 description = "Re-record the README demo gif (resets the playground repo!)"

@@ -150,17 +150,18 @@ There is intentionally no `git/` module.
 
 ### Markdown
 
-- **Always run `rumdl fmt .` after modifying any Markdown file**, then re-read what it changed —
-  it rewrites line breaks.
-  `rumdl check .` reports without fixing.
+- **Always run `mise run md` (`rumdl fmt .`) after modifying any Markdown file**,
+  then re-read what it changed — it rewrites line breaks.
 - [`.rumdl.toml`](.rumdl.toml) is the authority on settings and scope: 120-column lines,
   semantic line breaks (one clause per line), and an `exclude` list.
 - Nothing under `src/` is formatted.
   Markdown there is payload, not prose — `forge/default_comment.md.jinja` and Markdown test fixtures —
   and reflowing it would change what stakk writes to GitHub or what the tests assert.
   `CHANGELOG.md` is excluded too; release-plz owns it.
-- `rumdl` is not part of `mise run ci`, so unformatted Markdown will not fail the build —
-  it just shows up as churn in the next docs diff.
+- `mise run md` formats, `mise run md:check` reports, and `md:check` is part of `mise run ci` —
+  unformatted Markdown fails the build.
+- `rumdl` is version-pinned in `mise.toml` because it gates CI; bump it deliberately,
+  and run `mise run md` in the same change so the reformat does not land as unrelated churn.
 - Semantic line breaks mean prose edits should stay on their own line rather than re-wrapping a paragraph;
   it keeps docs diffs readable.
 
