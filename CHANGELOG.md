@@ -7,6 +7,168 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.0](https://github.com/glennib/stakk/compare/v1.25.0...v2.0.0) - 2026-08-13
+
+v2 is a surface release.
+Nothing about how stakk talks to jj or to GitHub changed;
+what changed is what you are allowed to type, what the JSON says, and what any of it promises.
+
+Three things drove it.
+Issue [#202](https://github.com/glennib/stakk/issues/202) showed that the top-level flatten made subcommand names
+shadow bookmark names and let `stakk --draft show` silently open real pull requests.
+The `--format=json` document had grown into something an agent pays for on every discovery call.
+And the project had never said, out loud, which parts of its surface a script may rely on.
+
+Every worthwhile break was collected into this one release, and the result is smaller than v1 in every direction:
+one parse path, one phase-1 constructor, one draft knob, one selection language in which **every PR boundary is named
+on the command line**.
+
+`stakk` and `stakk submit` still mean the TUI. If that is how you use it, nothing below applies to you.
+
+### Migrating from v1
+
+| v1                                            | v2                                                                                     |
+| --------------------------------------------- | -------------------------------------------------------------------------------------- |
+| `stakk`                                       | unchanged — TUI                                                                        |
+| `stakk submit`                                | unchanged — TUI                                                                        |
+| `stakk <bookmark>` / `stakk -- <bookmark>`    | `stakk submit --keep <b1> … --keep <bookmark>`                                          |
+| `stakk submit <bookmark>`                     | same as above                                                                          |
+| `stakk submit --keep-all`                     | enumerate the boundaries; `stakk docs scripting` has a jq idiom that generates them     |
+| `stakk --dry-run …` (flags before subcommand) | `stakk submit --dry-run …`                                                             |
+| `--draft` / `STAKK_DRAFT`                     | `--pr-mode draft` / `STAKK_PR_MODE=draft` / `pr_mode = "draft"`                          |
+| `--template` / `STAKK_TEMPLATE` / `template`  | `--template-path` / `STAKK_TEMPLATE_PATH` / `template_path`                              |
+| `stakk show --format=json` (full document)    | `stakk show --format=json-full` — sparse is the new `json`                               |
+| `.segments[].bookmark_names[]`                | `.segments[].bookmarks[].name`, now with a `remote_state` beside it                      |
+| `.excluded_bookmark_count`                    | `.excluded_bookmarks[]` and `.excluded_head_count`                                       |
+| `GITHUB_TOKEN` beats `GH_TOKEN` (no gh)       | `GH_TOKEN` beats `GITHUB_TOKEN`, matching the GitHub CLI                                 |
+| `stakk auth setup`                            | `stakk docs auth`                                                                       |
+| `stakk auth test`                             | `gh auth status --hostname <host>`, or `stakk submit --dry-run` *with selection flags*   |
+
+A stale `stakk.toml` key fails loudly — `Config` denies unknown fields.
+A stale `STAKK_DRAFT` or `STAKK_TEMPLATE` in your shell profile now warns on stderr and names its replacement;
+see **Added** below for why that one was worth building.
+
+Removed diagnostic codes, for anything matching on them:
+`stakk::submit::bookmark_not_found`, `stakk::selection::keep_all_ambiguous`, `stakk::selection::no_marks`.
+
+### Breaking
+
+- **The positional bookmark is gone.**
+  No `stakk <bookmark>`, no `stakk submit <bookmark>`, no `stakk -- <bookmark>`.
+  Every submission goes through selection: no flags means the TUI, and `--keep`/`--new`/`--new-auto`/`--new-command`
+  spell a non-interactive one explicitly.
+  Replace `stakk submit BM` with `stakk submit --keep b1 … --keep BM`, naming every bookmarked boundary from trunk
+  through `BM` — the same PR set, with colinearity validated instead of the positional's silent first-stack pick.
+  This ends the subcommand-shadowing constraint: subcommand and alias names are no longer a compatibility surface,
+  because there is no bare form left for a bookmark name to collide with.
+- **Submit flags no longer parse before a subcommand.**
+  `Cli` no longer flattens `SubmitArgs` at the top level, and `args_conflicts_with_subcommands` went with it.
+  `stakk --dry-run` and `stakk --dry-run show` now fail with clap's stock "unexpected argument";
+  spell them `stakk submit --dry-run`.
+  All three defects in #202 are gone by construction rather than by guard.
+  Bare `stakk` is unchanged and still picks up `STAKK_*` variables and config-injected defaults, because its arguments
+  come from a real clap parse of the synthetic argv `stakk submit` rather than a hand-built struct.
+  The global flags gained placement freedom as a side effect: `--config` and `--github-host` now parse on either side of
+  the subcommand, so `stakk --github-host X show` works where it used to hit the conflict error.
+- **`--keep-all` is removed.**
+  It was the last implicit construct in the selection language and carried the most spec debt: the bare-form ambiguity
+  rule, two diagnostics that existed only to report it, and the explicit-beats-bulk skip rule.
+  Submitting a whole stack non-interactively is now a `stakk show --format=json` plus `jq` idiom, documented in
+  `stakk docs scripting` — one mark per *segment*, not per bookmark name.
+  Removal is the safe direction for a major release: re-adding a bulk flag later, this shape or a better one, is free.
+- **`--draft` and `STAKK_DRAFT` are removed.**
+  The flag duplicated `--pr-mode=draft` with a special override rule — draft-ness won from whichever source set it, even
+  over an explicit `--pr-mode regular` — which made `STAKK_DRAFT` impossible to override, only to unset.
+  One knob remains, with ordinary CLI > env > config precedence.
+- **`--template` is now `--template-path`**, `STAKK_TEMPLATE` is `STAKK_TEMPLATE_PATH`, and the `template` TOML key is
+  `template_path`.
+  The option takes a path; the old name read as inline template content.
+  The rename frees `template` for a possible future inline-template option.
+- **`stakk auth` is removed** — `auth setup` was a static wall of `println!`s and `auth test` was a connectivity probe.
+  `stakk docs auth` takes over the prose and gains formatting, runtime reflow and a place in the docs index for free.
+  To check a token: `gh auth status --hostname <host>`, which resolves it the same way stakk does, or
+  `stakk submit --dry-run` *with selection flags* for the whole remote → token → API chain read-only.
+  Token *resolution* is untouched; only the subcommand went.
+- **`stakk show --format=json` is now a sparse projection**, and `--format=json-full` is the previous document.
+  Commit bodies, author blocks and `files[]` dominated the document, and none of them are needed to pinpoint a segment
+  and feed `stakk submit`: measured on this repository when the change landed, the full document was 30,665 bytes
+  against 5,082 for the sparse projection of the same graph.
+  Sparse omits `commit_id`, `description`, `author` and `files[]` per commit; it omits them rather than nulling them.
+  Sparse is a strict subset of full *by construction* — one struct whose full-only fields are `Option` with
+  `skip_serializing_if`, so there is no second serializer that could drift — and three tests pin the subset, the exact
+  key set and the field order.
+  `schema_version` is now `2` in both projections.
+- **github.com token precedence follows the GitHub CLI.**
+  `gh help environment` documents `GH_TOKEN` before `GITHUB_TOKEN`; stakk followed that for Enterprise hosts but
+  inverted it for github.com.
+  With both variables exported, `gh auth token` returned one and stakk's fallback returned the other, so the same
+  environment resolved to two different tokens depending on whether gh happened to be installed.
+  The change is visible only when both variables are set *and* gh is absent or unauthenticated for the host; where gh
+  answers, its answer already decided.
+
+### Added
+
+- **A stability contract**, in the README rather than a doc topic — because doc-topic text is exactly what it declares
+  unstable.
+  Semver-guarded: subcommand names and flags, `STAKK_` variables, config keys and their defaults, the `stakk show` JSON
+  under its `schema_version`, the `--bookmark-command` payload under its own, diagnostic codes, and exit codes.
+  Not guarded: rendered `docs`/`--help` text, pretty output, TUI layout and keybindings, advisory warnings, error
+  *wording* (the codes are the contract), and the order of `stacks[]`.
+  Raising `MIN_SUPPORTED_JJ_VERSION` is explicitly *not* breaking — the check is warn-only — so a bump can land in the
+  release that actually adopts a newer jj. It stays at 0.39.0 here; v2 changes no jj invocation.
+- **A warning when a removed `STAKK_` variable is still set.**
+  The two halves of a removal fail very differently: a stale TOML key errors and lists the valid ones, while a stale
+  variable is simply not read.
+  That is worst where it costs most — someone with `STAKK_DRAFT=1` in a shell profile upgrades and opens
+  ready-for-review PRs instead of drafts, notifying reviewers, with nothing to undo.
+  A warning rather than an error, because stakk cannot know a `STAKK_` variable is still meant for stakk.
+  Gated to the paths that submit, so `show`, `docs` and `completions` pay nothing and their stdout stays byte-clean.
+- **`stakk show` reports push state.**
+  Each segment now carries `bookmarks: [{name, remote_state}]`, where `remote_state` is `unpushed`, `diverged` or
+  `synced`, derived offline.
+  jj's `synced()` alone cannot carry this — it is false only when a *tracked* remote disagrees, so a never-pushed
+  bookmark looks identical to an up-to-date one; the tiebreaker is whether a remote bookmark of the same name sits on
+  the segment's boundary commit.
+  It describes what a push would do, on *some* remote, and says nothing about pull requests.
+- **`committer_timestamp` on every commit, in both projections** — stack order is derived from it, and the document
+  previously carried only the *author* timestamp, and only in the full projection, asking consumers to trust an order
+  they had no field to reproduce or override.
+- **`excluded_bookmarks[]` and `excluded_head_count`** replace `excluded_bookmark_count`, which summed two different
+  things: bookmarks excluded by merge taint, and unbookmarked *heads* excluded the same way.
+  Heads have no name to report, so a consumer reading the count could not say which bookmarks it had lost.
+- **`title` on every commit** — the first line of the message, in both projections. `description` still carries the
+  whole message.
+- **A `stakk docs auth` topic**, documenting token resolution as what it actually is: delegation-first.
+  stakk asks gh; its own environment read is the fallback for when gh is absent or unauthenticated, not a
+  lower-priority alternative.
+- The non-interactive documentation is split into three topics — `stakk docs agents`, `scripting` and `show` — with a
+  worked Python example alongside the jq shortcut.
+
+### Fixed
+
+- **Stacks are ordered by instant, not by timestamp string.**
+  `stacks[]` was sorted by lexicographic comparison of RFC 3339 committer timestamps, which carry a UTC offset, so
+  `2026-01-01T09:00:00+02:00` and `2026-01-01T08:00:00+01:00` are the same instant and compare unequal — and a later
+  instant can sort earlier.
+  Any repository with mixed offsets was affected: a laptop that travelled, a CI box in UTC beside local commits,
+  collaborators in different zones.
+  The TUI already parsed these correctly, which is why only the JSON was wrong.
+- **`--format=pretty` no longer hides the exclusion footers when no stack survives.**
+  `render_pretty` returned early on an empty `stacks`, so in the one state where the footer *is* the answer — every
+  bookmark's history contains a merge — it printed "No bookmark stacks found." and never said why.
+- `--format`'s help omitted `committer_timestamp` from the sparse field list, in the first place an agent looks.
+- `--keep`'s help and the selection module doc stated only the fold half of the selection rule; commits *above* the
+  topmost mark are dropped from the submission, not folded into it.
+- `docs/scripting.md`'s Python example printed its own lines after stakk's whenever stdout was a pipe.
+
+### Other
+
+- Documentation says how stack comments are actually identified, that a repo-supplied `stakk.toml` runs with your
+  privileges, and what a submission includes, along with ordering and exit codes.
+- Internal planning documents and other repo-only files are kept out of the published crate.
+- Dead code deleted, and the rule for when a dead-code suppression is legitimate is now written down.
+- *(deps)* update dependency uv to v0.12.4 ([#208](https://github.com/glennib/stakk/pull/208))
+
 ## [1.25.0](https://github.com/glennib/stakk/compare/v1.24.0...v1.25.0) - 2026-08-13
 
 ### Added
