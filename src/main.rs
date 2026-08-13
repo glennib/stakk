@@ -334,10 +334,10 @@ async fn show_status(args: &ShowArgs, github_host: Option<&str>) -> Result<(), S
         graph: &change_graph,
         github_host,
     };
-    match show::json_projection(args.format) {
-        None => print!("{}", show::render_pretty(&data, console::colors_enabled())),
-        Some(projection) => print!("{}", show::render_json(&data, projection)),
-    }
+    print!(
+        "{}",
+        show::render(&data, args.format, console::colors_enabled())
+    );
 
     Ok(())
 }

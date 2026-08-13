@@ -54,13 +54,23 @@ pub enum JsonProjection {
     Full,
 }
 
+/// Render `data` in the format the caller asked for (trailing newline
+/// included). `colors` enables ANSI styling and applies to the
+/// human-readable format only; pass false when stdout is not a terminal.
+///
+/// This is the module's only entry point: the format decision belongs with
+/// the renderer, so `main` prints what it is handed and cannot pair a
+/// `--format` value with the wrong projection.
+pub fn render(data: &ShowData, format: ShowFormat, colors: bool) -> String {
+    match json_projection(format) {
+        None => render_pretty(data, colors),
+        Some(projection) => render_json(data, projection),
+    }
+}
+
 /// The JSON projection a `--format` value selects, or `None` for the
 /// human-readable format, which is not the JSON document at all.
-///
-/// The mapping lives here rather than inline in `main` so it is testable:
-/// `--format=json` emitting the full document would undo the whole point of
-/// the split without failing anything else.
-pub fn json_projection(format: ShowFormat) -> Option<JsonProjection> {
+fn json_projection(format: ShowFormat) -> Option<JsonProjection> {
     match format {
         ShowFormat::Pretty => None,
         ShowFormat::Json => Some(JsonProjection::Sparse),
@@ -143,7 +153,7 @@ struct AuthorReport<'a> {
 }
 
 /// Render the machine-readable JSON document (trailing newline included).
-pub fn render_json(data: &ShowData, projection: JsonProjection) -> String {
+fn render_json(data: &ShowData, projection: JsonProjection) -> String {
     let report = build_report(data, projection);
     let mut out = serde_json::to_string_pretty(&report).expect("ShowReport is always serializable");
     out.push('\n');
@@ -231,7 +241,7 @@ fn segment_report(
 /// Render the human-readable graph view.
 ///
 /// `colors` enables ANSI styling; pass false when stdout is not a terminal.
-pub fn render_pretty(data: &ShowData, colors: bool) -> String {
+fn render_pretty(data: &ShowData, colors: bool) -> String {
     let mut out = String::new();
 
     let _ = writeln!(out, "Default branch: {}", data.default_branch);
@@ -514,6 +524,22 @@ mod tests {
         serde_json::from_str(&render_json(&data, projection)).unwrap()
     }
 
+    /// The same document, reached the way the binary reaches it: through a
+    /// `ShowFormat` value, with the projection chosen inside [`render`].
+    /// `sample_json` takes the projection as an argument and so pins the
+    /// document's shape but nothing about which `--format` produces it.
+    fn sample_json_via_format(format: ShowFormat) -> serde_json::Value {
+        let graph = sample_graph();
+        let remotes = sample_remotes();
+        let data = ShowData {
+            default_branch: "main",
+            remotes: &remotes,
+            graph: &graph,
+            github_host: None,
+        };
+        serde_json::from_str(&render(&data, format, false)).unwrap()
+    }
+
     #[test]
     fn json_snapshot() {
         let graph = sample_graph();
@@ -762,6 +788,75 @@ mod tests {
         assert_eq!(
             sample_json(JsonProjection::Sparse)["stacks"][0]["segments"][1]["commits"][1]["title"],
             ""
+        );
+    }
+
+    /// Which commit fields each `--format` value actually emits, asserted
+    /// through [`render`] — the entry point the binary calls — rather than
+    /// through a projection the test picks itself. A test that names a
+    /// `JsonProjection` cannot tell a correct mapping from one that emits
+    /// the full document for every format.
+    ///
+    /// Key sets are sorted here because `serde_json::Map` sorts them;
+    /// `sparse_field_order_matches_full` pins the emitted order.
+    #[test]
+    fn render_emits_the_projection_the_format_selects() {
+        let sparse_keys = [
+            "change_id",
+            "is_boundary",
+            "is_immutable",
+            "is_leaf",
+            "local_bookmark_names",
+            "short_change_id",
+            "title",
+        ];
+        let full_keys = [
+            "author",
+            "change_id",
+            "commit_id",
+            "description",
+            "files",
+            "is_boundary",
+            "is_immutable",
+            "is_leaf",
+            "local_bookmark_names",
+            "short_change_id",
+            "title",
+        ];
+
+        for (format, expected) in [
+            (ShowFormat::Json, sparse_keys.as_slice()),
+            (ShowFormat::JsonFull, full_keys.as_slice()),
+        ] {
+            let v = sample_json_via_format(format);
+            let commits = all_commits(&v);
+            assert_eq!(
+                commits.len(),
+                SAMPLE_COMMIT_COUNT,
+                "{format:?}: no commits inspected"
+            );
+            for (i, commit) in commits.iter().enumerate() {
+                assert_eq!(
+                    commit.keys().collect::<Vec<_>>(),
+                    expected.iter().collect::<Vec<_>>(),
+                    "{format:?} commit {i}",
+                );
+            }
+        }
+
+        // Pretty is not the JSON document at all.
+        let graph = sample_graph();
+        let remotes = sample_remotes();
+        let data = ShowData {
+            default_branch: "main",
+            remotes: &remotes,
+            graph: &graph,
+            github_host: None,
+        };
+        let pretty = render(&data, ShowFormat::Pretty, false);
+        assert!(
+            pretty.starts_with("Default branch: main\n"),
+            "pretty rendered as: {pretty}"
         );
     }
 

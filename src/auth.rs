@@ -44,11 +44,47 @@ pub struct AuthToken {
         not(test),
         expect(
             dead_code,
-            reason = "the resolution tests read it to pin which token environment variable wins \
-                      for a given host"
+            reason = "the resolution tests read it to pin that gh's answer beats the environment, \
+                      and which token environment variable wins for a given host"
         )
     )]
     pub source: TokenSource,
+}
+
+/// What a `gh` invocation returned: whether it exited zero, and what it
+/// wrote to stdout. Nothing else about the process is consulted.
+struct GhOutput {
+    success: bool,
+    stdout: String,
+}
+
+/// Trait for running `gh` commands, mirroring [`crate::jj::runner::JjRunner`].
+///
+/// The seam is at the argv, not at "get a token for this host", because the
+/// argv is the part that has to be right: `gh auth token` without
+/// `--hostname` answers for a different host than the one asked about, and a
+/// trait that builds the argv internally cannot be observed doing so.
+trait GhRunner: Send + Sync {
+    fn run_gh(
+        &self,
+        args: &[&str],
+    ) -> impl std::future::Future<Output = Result<GhOutput, std::io::Error>> + Send;
+}
+
+/// Runs `gh` commands via `tokio::process::Command`.
+struct RealGhRunner;
+
+impl GhRunner for RealGhRunner {
+    async fn run_gh(&self, args: &[&str]) -> Result<GhOutput, std::io::Error> {
+        let output = tokio::process::Command::new("gh")
+            .args(args)
+            .output()
+            .await?;
+        Ok(GhOutput {
+            success: output.status.success(),
+            stdout: String::from_utf8_lossy(&output.stdout).to_string(),
+        })
+    }
 }
 
 /// Errors from authentication resolution.
@@ -125,14 +161,25 @@ fn token_from_env(host: &str, lookup: impl Fn(&str) -> Option<String>) -> Option
 /// This does NOT validate the token against the GitHub API: an expired or
 /// revoked token resolves fine and fails at the first API call.
 pub async fn resolve_token(host: &str) -> Result<AuthToken, AuthError> {
-    if let Some(token) = try_gh_cli(host).await? {
+    resolve_token_with(host, &RealGhRunner, |name| std::env::var(name).ok()).await
+}
+
+/// [`resolve_token`] with the `gh` invocation and the environment lookup
+/// injected, so the precedence between them is testable without a `gh`
+/// binary or a mutated process environment.
+async fn resolve_token_with(
+    host: &str,
+    gh: &impl GhRunner,
+    lookup: impl Fn(&str) -> Option<String>,
+) -> Result<AuthToken, AuthError> {
+    if let Some(token) = try_gh_cli(host, gh).await? {
         return Ok(AuthToken {
             token,
             source: TokenSource::GitHubCli,
         });
     }
 
-    token_from_env(host, |name| std::env::var(name).ok()).ok_or_else(|| AuthError::NoAuthFound {
+    token_from_env(host, lookup).ok_or_else(|| AuthError::NoAuthFound {
         host: host.to_string(),
     })
 }
@@ -145,15 +192,12 @@ pub async fn resolve_token(host: &str) -> Result<AuthToken, AuthError> {
 ///
 /// Returns `Ok(None)` if gh is not installed or not authenticated for the host.
 /// Returns `Err` only for unexpected I/O failures.
-async fn try_gh_cli(host: &str) -> Result<Option<String>, AuthError> {
-    let result = tokio::process::Command::new("gh")
-        .args(["auth", "token", "--hostname", host])
-        .output()
-        .await;
+async fn try_gh_cli(host: &str, gh: &impl GhRunner) -> Result<Option<String>, AuthError> {
+    let result = gh.run_gh(&["auth", "token", "--hostname", host]).await;
 
     match result {
-        Ok(output) if output.status.success() => {
-            let token = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        Ok(output) if output.success => {
+            let token = output.stdout.trim().to_string();
             if token.is_empty() {
                 Ok(None)
             } else {
@@ -168,9 +212,94 @@ async fn try_gh_cli(host: &str) -> Result<Option<String>, AuthError> {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+    use std::sync::Mutex;
+
     use super::*;
 
     const ENTERPRISE: &str = "github.example.com";
+
+    /// A `GhRunner` that records the argv it is handed and answers with a
+    /// fixed canned output. Recording is the observation: it captures the
+    /// slice at the boundary, so a dropped `--hostname` shows up here and
+    /// nowhere else.
+    struct RecordingGhRunner {
+        calls: Arc<Mutex<Vec<Vec<String>>>>,
+        success: bool,
+        stdout: String,
+    }
+
+    impl RecordingGhRunner {
+        fn new(success: bool, stdout: &str) -> Self {
+            Self {
+                calls: Arc::new(Mutex::new(Vec::new())),
+                success,
+                stdout: stdout.to_string(),
+            }
+        }
+
+        fn calls(&self) -> Vec<Vec<String>> {
+            self.calls.lock().unwrap().clone()
+        }
+    }
+
+    impl GhRunner for RecordingGhRunner {
+        fn run_gh(
+            &self,
+            args: &[&str],
+        ) -> impl std::future::Future<Output = Result<GhOutput, std::io::Error>> + Send {
+            self.calls
+                .lock()
+                .unwrap()
+                .push(args.iter().map(|arg| (*arg).to_string()).collect());
+            let output = GhOutput {
+                success: self.success,
+                stdout: self.stdout.clone(),
+            };
+            async move { Ok(output) }
+        }
+    }
+
+    /// gh answers first, even when the host's environment variables are set.
+    /// gh reads those variables itself, so consulting them here first would
+    /// be indistinguishable in the common case — hence a fixture where the
+    /// two disagree, which is the only one that can tell the orders apart.
+    #[tokio::test]
+    async fn gh_cli_wins_over_the_environment() {
+        let gh = RecordingGhRunner::new(true, "gh-token\n");
+        let found = resolve_token_with(GITHUB_COM, &gh, env(&[("GH_TOKEN", "env-token")]))
+            .await
+            .expect("a token should be found");
+        assert_eq!(found.token, "gh-token");
+        assert_eq!(found.source, TokenSource::GitHubCli);
+    }
+
+    /// The environment is the fallback for a gh that has nothing for the
+    /// host, not a lower-priority alternative: a non-zero exit hands over,
+    /// and whatever gh printed on the way out is not a token.
+    #[tokio::test]
+    async fn a_failed_gh_falls_back_to_the_environment() {
+        let gh = RecordingGhRunner::new(false, "gh-token\n");
+        let found = resolve_token_with(GITHUB_COM, &gh, env(&[("GH_TOKEN", "env-token")]))
+            .await
+            .expect("a token should be found");
+        assert_eq!(found.token, "env-token");
+        assert_eq!(found.source, TokenSource::GhTokenEnv);
+    }
+
+    /// `--hostname` reaches gh with the host being resolved. Without it gh
+    /// answers for whichever host its own config names, so an Enterprise
+    /// token can end up addressed to github.com.
+    #[tokio::test]
+    async fn gh_is_asked_about_the_host_being_resolved() {
+        let gh = RecordingGhRunner::new(true, "gh-token\n");
+        // The resolution outcome is not the assertion — the argv is.
+        let _ = resolve_token_with(ENTERPRISE, &gh, env(&[])).await;
+        assert_eq!(
+            gh.calls(),
+            vec![vec!["auth", "token", "--hostname", ENTERPRISE]]
+        );
+    }
 
     /// A `lookup` that resolves exactly the given name/value pairs.
     fn env<'a>(pairs: &'a [(&'a str, &'a str)]) -> impl Fn(&str) -> Option<String> + 'a {
