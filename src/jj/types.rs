@@ -94,17 +94,9 @@ pub struct Bookmark {
     pub change_id: String,
     /// Whether the local bookmark matches its remote tracking target.
     ///
-    /// This is what gives `BookmarkEntryRaw::synced` — a field with no
-    /// `#[serde(default)]`, so `BOOKMARK_TEMPLATE` dropping it would fail the
-    /// parse loudly — its production reader.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "`parse_bookmarks_single` pins that the template's `synced` field reaches \
-                      the parsed bookmark"
-        )
-    )]
+    /// False only when a *tracked* remote disagrees, so a never-pushed
+    /// bookmark is `true` just like an up-to-date one.
+    /// `graph::derive_remote_states` separates the two.
     pub synced: bool,
 }
 

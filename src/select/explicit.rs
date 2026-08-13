@@ -635,6 +635,7 @@ mod tests {
             files: vec![format!("src/{change_id}.rs")],
             is_immutable: false,
             local_bookmark_names: vec![],
+            remote_bookmark_names: vec![],
         }
     }
 
@@ -656,7 +657,9 @@ mod tests {
             stack_leaves: std::collections::HashSet::new(),
             segments: HashMap::new(),
             tainted_change_ids: std::collections::HashSet::new(),
-            excluded_bookmark_count: 0,
+            bookmark_remote_states: HashMap::new(),
+            excluded_bookmarks: Vec::new(),
+            excluded_head_count: 0,
             stacks,
         }
     }

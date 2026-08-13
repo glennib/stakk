@@ -14,4 +14,5 @@ Remote: mirror https://gitlab.com/x/y.git
  ○  mnrq  "add base"
  ◆  trunk
 
-(1 bookmark(s) excluded due to merge commits)
+(merged-work excluded due to merge commits)
+(1 unbookmarked head(s) excluded due to merge commits)

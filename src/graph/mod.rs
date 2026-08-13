@@ -14,10 +14,12 @@ use jiff::Timestamp;
 use self::types::BookmarkSegment;
 use self::types::BranchStack;
 use self::types::ChangeGraph;
+use self::types::RemoteState;
 use self::types::SegmentCommit;
 use crate::error::StakkError;
 use crate::jj::Jj;
 use crate::jj::runner::JjRunner;
+use crate::jj::types::Bookmark;
 
 /// Result of traversing from one bookmark toward trunk.
 struct TraversalResult {
@@ -50,7 +52,8 @@ pub async fn build_change_graph<R: JjRunner>(
     let mut adjacency_list: HashMap<String, String> = HashMap::new();
     let mut segments: HashMap<String, BookmarkSegment> = HashMap::new();
     let mut tainted_change_ids: HashSet<String> = HashSet::new();
-    let mut excluded_bookmark_count: usize = 0;
+    let mut excluded_bookmarks: Vec<String> = Vec::new();
+    let mut excluded_head_count: usize = 0;
 
     for bookmark in &bookmarks {
         if fully_collected.contains(&bookmark.name) {
@@ -67,7 +70,7 @@ pub async fn build_change_graph<R: JjRunner>(
         .await?;
 
         if result.excluded {
-            excluded_bookmark_count += 1;
+            excluded_bookmarks.push(bookmark.name.clone());
             continue;
         }
 
@@ -104,7 +107,7 @@ pub async fn build_change_graph<R: JjRunner>(
         .await?;
 
         if result.excluded {
-            excluded_bookmark_count += 1;
+            excluded_head_count += 1;
             continue;
         }
 
@@ -137,13 +140,72 @@ pub async fn build_change_graph<R: JjRunner>(
         }
     }
 
+    let bookmark_remote_states = derive_remote_states(&bookmarks, &stacks);
+
     Ok(ChangeGraph {
         adjacency_list,
         stack_leaves,
         segments,
         tainted_change_ids,
-        excluded_bookmark_count,
+        bookmark_remote_states,
+        excluded_bookmarks,
+        excluded_head_count,
         stacks,
+    })
+}
+
+/// Classify every bookmark that reached a segment as unpushed, diverged or
+/// synced.
+///
+/// Two facts decide it, and neither is enough alone. `jj`'s `synced()` is
+/// false only when a *tracked* remote disagrees with the local bookmark, so a
+/// never-pushed bookmark reports `synced = true` exactly like an up-to-date
+/// one. What separates those two is whether a remote bookmark of the same
+/// name sits on the segment's boundary commit — which is where it must be if
+/// the two agree.
+///
+/// The internal `name@git` remote is not a real remote and is skipped: it
+/// tracks the colocated git repo, not anything a push would reach.
+fn derive_remote_states(
+    bookmarks: &[Bookmark],
+    stacks: &[BranchStack],
+) -> HashMap<String, RemoteState> {
+    let synced: HashMap<&str, bool> = bookmarks
+        .iter()
+        .map(|b| (b.name.as_str(), b.synced))
+        .collect();
+
+    let mut states = HashMap::new();
+    for stack in stacks {
+        for segment in &stack.segments {
+            // The boundary commit is the one the bookmarks point at, stored
+            // first because segment commits are newest-first.
+            let Some(boundary) = segment.commits.first() else {
+                continue;
+            };
+            for name in &segment.bookmark_names {
+                let state = if !synced.get(name.as_str()).copied().unwrap_or(true) {
+                    RemoteState::Diverged
+                } else if has_real_remote(&boundary.remote_bookmark_names, name) {
+                    RemoteState::Synced
+                } else {
+                    RemoteState::Unpushed
+                };
+                states.insert(name.clone(), state);
+            }
+        }
+    }
+    states
+}
+
+/// Whether `remote_names` contains `<name>@<remote>` for a remote other than
+/// jj's internal `git`.
+fn has_real_remote(remote_names: &[String], name: &str) -> bool {
+    remote_names.iter().any(|entry| {
+        entry
+            .strip_prefix(name)
+            .and_then(|rest| rest.strip_prefix('@'))
+            .is_some_and(|remote| remote != "git")
     })
 }
 
@@ -287,6 +349,7 @@ async fn traverse_and_discover_segments<R: JjRunner>(
                     files: vec![],
                     is_immutable: change.immutable,
                     local_bookmark_names: change.local_bookmark_names.clone(),
+                    remote_bookmark_names: change.remote_bookmark_names.clone(),
                 });
             }
         }
@@ -655,7 +718,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(graph.stacks.len(), 0);
-        assert_eq!(graph.excluded_bookmark_count, 1);
+        assert_eq!(graph.excluded_bookmarks, vec!["bm_merge"]);
         assert!(graph.tainted_change_ids.contains("ch_merge"));
     }
 
@@ -704,7 +767,7 @@ mod tests {
 
         assert_eq!(graph.stacks.len(), 0);
         // bm_b excluded because its traversal hit a merge.
-        assert_eq!(graph.excluded_bookmark_count, 1);
+        assert_eq!(graph.excluded_bookmarks, vec!["bm_b"]);
         assert!(graph.tainted_change_ids.contains("ch_a"));
         assert!(graph.tainted_change_ids.contains("ch_b"));
 
@@ -763,7 +826,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(graph.stacks.len(), 0);
-        assert_eq!(graph.excluded_bookmark_count, 2);
+        assert_eq!(graph.excluded_bookmarks, vec!["bm_merge", "bm_child"]);
         assert!(graph.tainted_change_ids.contains("ch_merge"));
         assert!(graph.tainted_change_ids.contains("ch_child"));
     }
@@ -844,7 +907,8 @@ mod tests {
         assert!(graph.segments.is_empty());
         assert!(graph.stacks.is_empty());
         assert!(graph.stack_leaves.is_empty());
-        assert_eq!(graph.excluded_bookmark_count, 0);
+        assert!(graph.excluded_bookmarks.is_empty());
+        assert_eq!(graph.excluded_head_count, 0);
     }
 
     /// Multi-commit segment: unbookmarked commits between bookmarks are
@@ -1100,6 +1164,7 @@ mod tests {
                         files: vec![],
                         is_immutable: false,
                         local_bookmark_names: vec![],
+                        remote_bookmark_names: vec![],
                     }],
                 },
             );
@@ -1153,6 +1218,7 @@ mod tests {
                         files: vec![],
                         is_immutable: false,
                         local_bookmark_names: vec![],
+                        remote_bookmark_names: vec![],
                     }],
                 },
             );
@@ -1585,5 +1651,109 @@ mod tests {
         assert_eq!(stack.segments.len(), 2);
         assert_eq!(stack.segments[0].change_id, "ch_mid");
         assert_eq!(stack.segments[1].change_id, "ch_head");
+    }
+
+    // -- push state --
+
+    fn bookmark(name: &str, synced: bool) -> Bookmark {
+        Bookmark {
+            name: name.to_string(),
+            commit_id: format!("c_{name}"),
+            change_id: format!("ch_{name}"),
+            synced,
+        }
+    }
+
+    /// One stack, one segment, one bookmark, whose boundary commit carries
+    /// `remotes`.
+    fn stack_with(name: &str, remotes: &[&str]) -> BranchStack {
+        BranchStack {
+            segments: vec![BookmarkSegment {
+                bookmark_names: vec![name.to_string()],
+                change_id: format!("ch_{name}"),
+                commits: vec![SegmentCommit {
+                    commit_id: format!("c_{name}"),
+                    change_id: format!("ch_{name}"),
+                    description: String::new(),
+                    author: test_signature(),
+                    committer: test_signature(),
+                    short_change_id: "ch".to_string(),
+                    files: vec![],
+                    is_immutable: false,
+                    local_bookmark_names: vec![name.to_string()],
+                    remote_bookmark_names: remotes.iter().map(ToString::to_string).collect(),
+                }],
+            }],
+        }
+    }
+
+    fn test_signature() -> crate::jj::types::Signature {
+        crate::jj::types::Signature {
+            name: "T".to_string(),
+            email: "t@t.t".to_string(),
+            timestamp: "2026-01-01T00:00:00Z".to_string(),
+        }
+    }
+
+    /// A never-pushed bookmark and an up-to-date one are both `synced` as far
+    /// as jj is concerned. Only the remote ref on the boundary commit tells
+    /// them apart, and getting this backwards would report every new stack as
+    /// already pushed.
+    #[test]
+    fn synced_alone_does_not_separate_unpushed_from_synced() {
+        let states = derive_remote_states(
+            &[bookmark("fresh", true), bookmark("live", true)],
+            &[
+                stack_with("fresh", &[]),
+                stack_with("live", &["live@origin"]),
+            ],
+        );
+
+        assert_eq!(states["fresh"], RemoteState::Unpushed);
+        assert_eq!(states["live"], RemoteState::Synced);
+    }
+
+    /// After a rebase the remote ref stays on the old commit, so it is absent
+    /// from the boundary commit — `synced == false` is what catches it.
+    #[test]
+    fn an_out_of_date_remote_is_diverged() {
+        let states = derive_remote_states(&[bookmark("moved", false)], &[stack_with("moved", &[])]);
+
+        assert_eq!(states["moved"], RemoteState::Diverged);
+    }
+
+    /// jj's internal `@git` remote is not a push target, so a bookmark that
+    /// only exists there has never been pushed anywhere real.
+    #[test]
+    fn the_internal_git_remote_does_not_count_as_pushed() {
+        let states = derive_remote_states(
+            &[bookmark("local", true)],
+            &[stack_with("local", &["local@git"])],
+        );
+
+        assert_eq!(states["local"], RemoteState::Unpushed);
+    }
+
+    /// A remote bookmark whose name merely starts with ours is a different
+    /// bookmark; matching on a bare prefix would call `feat` synced because
+    /// `feat-2@origin` is on the commit.
+    #[test]
+    fn a_longer_bookmark_name_is_not_a_match() {
+        let states = derive_remote_states(
+            &[bookmark("feat", true)],
+            &[stack_with("feat", &["feat-2@origin"])],
+        );
+
+        assert_eq!(states["feat"], RemoteState::Unpushed);
+    }
+
+    /// The unbookmarked head segment contributes no entry rather than an
+    /// empty-named one.
+    #[test]
+    fn an_unbookmarked_segment_contributes_nothing() {
+        let mut stack = stack_with("head", &[]);
+        stack.segments[0].bookmark_names.clear();
+
+        assert!(derive_remote_states(&[], &[stack]).is_empty());
     }
 }

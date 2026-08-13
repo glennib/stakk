@@ -17,19 +17,26 @@ expression: "render_json(&data, JsonProjection::Sparse)"
       "github": null
     }
   ],
-  "excluded_bookmark_count": 1,
+  "excluded_bookmarks": [
+    "merged-work"
+  ],
+  "excluded_head_count": 1,
   "stacks": [
     {
       "segments": [
         {
-          "bookmark_names": [
-            "base"
+          "bookmarks": [
+            {
+              "name": "base",
+              "remote_state": "synced"
+            }
           ],
           "commits": [
             {
               "change_id": "mnrqxtvo",
               "short_change_id": "mnrq",
               "title": "add base",
+              "committer_timestamp": "2026-01-01T00:00:00Z",
               "is_immutable": false,
               "local_bookmark_names": [],
               "is_boundary": false,
@@ -39,6 +46,7 @@ expression: "render_json(&data, JsonProjection::Sparse)"
               "change_id": "qzvsmyxk",
               "short_change_id": "qzvs",
               "title": "extend base",
+              "committer_timestamp": "2026-01-01T00:00:00Z",
               "is_immutable": false,
               "local_bookmark_names": [
                 "base"
@@ -49,14 +57,18 @@ expression: "render_json(&data, JsonProjection::Sparse)"
           ]
         },
         {
-          "bookmark_names": [
-            "feat-a"
+          "bookmarks": [
+            {
+              "name": "feat-a",
+              "remote_state": "unpushed"
+            }
           ],
           "commits": [
             {
               "change_id": "ptszrkwu",
               "short_change_id": "ptsz",
               "title": "feat a work",
+              "committer_timestamp": "2026-03-01T00:00:00Z",
               "is_immutable": false,
               "local_bookmark_names": [],
               "is_boundary": false,
@@ -66,6 +78,7 @@ expression: "render_json(&data, JsonProjection::Sparse)"
               "change_id": "wmtkoylq",
               "short_change_id": "wmtk",
               "title": "",
+              "committer_timestamp": "2026-03-01T00:00:00Z",
               "is_immutable": false,
               "local_bookmark_names": [
                 "feat-a"
@@ -80,14 +93,18 @@ expression: "render_json(&data, JsonProjection::Sparse)"
     {
       "segments": [
         {
-          "bookmark_names": [
-            "base"
+          "bookmarks": [
+            {
+              "name": "base",
+              "remote_state": "synced"
+            }
           ],
           "commits": [
             {
               "change_id": "mnrqxtvo",
               "short_change_id": "mnrq",
               "title": "add base",
+              "committer_timestamp": "2026-01-01T00:00:00Z",
               "is_immutable": false,
               "local_bookmark_names": [],
               "is_boundary": false,
@@ -97,6 +114,7 @@ expression: "render_json(&data, JsonProjection::Sparse)"
               "change_id": "qzvsmyxk",
               "short_change_id": "qzvs",
               "title": "extend base",
+              "committer_timestamp": "2026-01-01T00:00:00Z",
               "is_immutable": false,
               "local_bookmark_names": [
                 "base"
@@ -107,14 +125,18 @@ expression: "render_json(&data, JsonProjection::Sparse)"
           ]
         },
         {
-          "bookmark_names": [
-            "feat-b"
+          "bookmarks": [
+            {
+              "name": "feat-b",
+              "remote_state": "diverged"
+            }
           ],
           "commits": [
             {
               "change_id": "rlkvnnup",
               "short_change_id": "rlkv",
               "title": "feat b work",
+              "committer_timestamp": "2026-02-01T00:00:00Z",
               "is_immutable": true,
               "local_bookmark_names": [
                 "feat-b",

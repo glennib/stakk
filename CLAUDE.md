@@ -350,12 +350,12 @@ If you change any of the following, update `scripts/record-demo.py` in the same 
   It is legitimate in exactly two situations, and everything else is dead code to delete:
   1. A test reads the item as an *observable for logic that runs in production*.
      `AuthToken::source` (which token env var wins per host), `ChangeGraph`'s four construction maps
-     (stacking, leaves, segment grouping, merge taint) and `Bookmark::change_id`/`synced` are the surviving cases.
-     The two `Bookmark` fields are what `parse_bookmarks_single` reads to pin production's `jj bookmark list` parse:
-     that `change_id` comes from the nested `CommitData` in `BookmarkEntryRaw::target`
-     (`BOOKMARK_TEMPLATE` emits only `name`, `synced` and `target`, so there is no change-ID field to take it from),
-     and that `synced` reaches the parsed bookmark — which is also what keeps `BookmarkEntryRaw::synced`,
-     a situation-2 field, read in production instead of suppressed.
+     (stacking, leaves, segment grouping, merge taint) and `Bookmark::change_id` are the surviving cases.
+     `Bookmark::change_id` is what `parse_bookmarks_single` reads to pin production's `jj bookmark list` parse:
+     it comes from the nested `CommitData` in `BookmarkEntryRaw::target`
+     (`BOOKMARK_TEMPLATE` emits only `name`, `synced` and `target`, so there is no change-ID field to take it from).
+     `Bookmark::synced` is *not* on this list — `graph::derive_remote_states` reads it in production,
+     which is also what keeps `BookmarkEntryRaw::synced` read rather than suppressed.
      A stack-roots set is *not* on this list: roots are the changes absent from `adjacency_list`,
      so a field recording them is a second copy of a fact production already derives,
      and nothing but its own tests read it.
@@ -535,6 +535,21 @@ If you change any of the following, update `scripts/record-demo.py` in the same 
   `show::json_projection` maps `--format` to the projection so the wiring is testable rather than inline in `main`.
   `title` is the first line of `description`; `description` stays the full message.
   Both projections report the same `SCHEMA_VERSION`.
+  `committer_timestamp` is in *both* projections on purpose: stack order is derived from the committer timestamp
+  (`group_segments_into_stacks`), not the author one, so without it in sparse a consumer cannot reproduce or override
+  the order it is being handed.
+- Each segment reports `bookmarks: [{name, remote_state}]`,
+  where `remote_state` is `unpushed` / `diverged` / `synced` from `graph::derive_remote_states`.
+  Two facts are needed and neither suffices alone: jj's `synced()` is false only when a *tracked* remote disagrees,
+  so a never-pushed bookmark reports `synced = true` exactly like an up-to-date one.
+  The tiebreaker is whether a remote bookmark of the same name sits on the segment's boundary commit.
+  Match the name exactly up to the `@` — a bare prefix test calls `feat` synced when `feat-2@origin` is on the commit —
+  and skip jj's internal `name@git`, which is not a push target.
+  The state is offline and says nothing about pull requests, only about what a push would do.
+- `excluded_bookmarks` (names) and `excluded_head_count` are separate
+  because the old single counter conflated bookmarks excluded by merge taint with unbookmarked *heads* excluded the same
+  way.
+  Heads have no name to report, so a consumer reading only a count could not say what it lost.
 - Reserved bookmark names: `Jj::get_local_bookmark_names`
   (`jj bookmark list` with *no* `-r`) is the single source of truth for "this name is taken".
   The change graph is not — it cannot see trunk's own bookmark

@@ -17,13 +17,19 @@ expression: "render_json(&data, JsonProjection::Full)"
       "github": null
     }
   ],
-  "excluded_bookmark_count": 1,
+  "excluded_bookmarks": [
+    "merged-work"
+  ],
+  "excluded_head_count": 1,
   "stacks": [
     {
       "segments": [
         {
-          "bookmark_names": [
-            "base"
+          "bookmarks": [
+            {
+              "name": "base",
+              "remote_state": "synced"
+            }
           ],
           "commits": [
             {
@@ -37,6 +43,7 @@ expression: "render_json(&data, JsonProjection::Full)"
                 "email": "test@test.com",
                 "timestamp": "2026-01-01T00:00:00Z"
               },
+              "committer_timestamp": "2026-01-01T00:00:00Z",
               "files": [
                 "src/mnrqxtvo.rs"
               ],
@@ -56,6 +63,7 @@ expression: "render_json(&data, JsonProjection::Full)"
                 "email": "test@test.com",
                 "timestamp": "2026-01-01T00:00:00Z"
               },
+              "committer_timestamp": "2026-01-01T00:00:00Z",
               "files": [
                 "src/qzvsmyxk.rs"
               ],
@@ -69,8 +77,11 @@ expression: "render_json(&data, JsonProjection::Full)"
           ]
         },
         {
-          "bookmark_names": [
-            "feat-a"
+          "bookmarks": [
+            {
+              "name": "feat-a",
+              "remote_state": "unpushed"
+            }
           ],
           "commits": [
             {
@@ -84,6 +95,7 @@ expression: "render_json(&data, JsonProjection::Full)"
                 "email": "test@test.com",
                 "timestamp": "2026-01-01T00:00:00Z"
               },
+              "committer_timestamp": "2026-03-01T00:00:00Z",
               "files": [
                 "src/ptszrkwu.rs"
               ],
@@ -103,6 +115,7 @@ expression: "render_json(&data, JsonProjection::Full)"
                 "email": "test@test.com",
                 "timestamp": "2026-01-01T00:00:00Z"
               },
+              "committer_timestamp": "2026-03-01T00:00:00Z",
               "files": [
                 "src/wmtkoylq.rs"
               ],
@@ -120,8 +133,11 @@ expression: "render_json(&data, JsonProjection::Full)"
     {
       "segments": [
         {
-          "bookmark_names": [
-            "base"
+          "bookmarks": [
+            {
+              "name": "base",
+              "remote_state": "synced"
+            }
           ],
           "commits": [
             {
@@ -135,6 +151,7 @@ expression: "render_json(&data, JsonProjection::Full)"
                 "email": "test@test.com",
                 "timestamp": "2026-01-01T00:00:00Z"
               },
+              "committer_timestamp": "2026-01-01T00:00:00Z",
               "files": [
                 "src/mnrqxtvo.rs"
               ],
@@ -154,6 +171,7 @@ expression: "render_json(&data, JsonProjection::Full)"
                 "email": "test@test.com",
                 "timestamp": "2026-01-01T00:00:00Z"
               },
+              "committer_timestamp": "2026-01-01T00:00:00Z",
               "files": [
                 "src/qzvsmyxk.rs"
               ],
@@ -167,8 +185,11 @@ expression: "render_json(&data, JsonProjection::Full)"
           ]
         },
         {
-          "bookmark_names": [
-            "feat-b"
+          "bookmarks": [
+            {
+              "name": "feat-b",
+              "remote_state": "diverged"
+            }
           ],
           "commits": [
             {
@@ -182,6 +203,7 @@ expression: "render_json(&data, JsonProjection::Full)"
                 "email": "test@test.com",
                 "timestamp": "2026-01-01T00:00:00Z"
               },
+              "committer_timestamp": "2026-02-01T00:00:00Z",
               "files": [
                 "src/rlkvnnup.rs"
               ],

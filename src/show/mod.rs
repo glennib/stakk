@@ -12,6 +12,7 @@
 //! `Option`s skipped when absent, so sparse is a strict subset of full by
 //! construction: same names, same types, same values, same order.
 
+use std::collections::HashMap;
 use std::fmt::Write as _;
 
 use serde::Serialize;
@@ -27,6 +28,7 @@ use crate::graph::layout::TRUNK_CHAR;
 use crate::graph::layout::build_layout;
 use crate::graph::types::BookmarkSegment;
 use crate::graph::types::ChangeGraph;
+use crate::graph::types::RemoteState;
 use crate::jj::remote::parse_github_url;
 use crate::jj::types::GitRemote;
 
@@ -87,9 +89,13 @@ struct ShowReport<'a> {
     schema_version: u32,
     default_branch: &'a str,
     remotes: Vec<RemoteReport<'a>>,
-    /// Bookmarks excluded from the graph due to merge commits in their
-    /// history.
-    excluded_bookmark_count: usize,
+    /// Names of bookmarks excluded from the graph because of merge commits
+    /// in their history.
+    excluded_bookmarks: &'a [String],
+    /// Unbookmarked heads excluded for the same reason. Separate from
+    /// `excluded_bookmarks` because they have no name to report, so a
+    /// consumer can say which bookmarks it lost and how many nameless heads.
+    excluded_head_count: usize,
     /// One stack per leaf, trunk-to-leaf. Shared ancestor segments are
     /// repeated in every stack that contains them.
     stacks: Vec<StackReport<'a>>,
@@ -110,10 +116,20 @@ struct StackReport<'a> {
 
 #[derive(Serialize)]
 struct SegmentReport<'a> {
-    bookmark_names: &'a [String],
+    /// The bookmarks on this segment's boundary commit, each with the push
+    /// state a `stakk submit` would act on. Empty for the unbookmarked head.
+    bookmarks: Vec<SegmentBookmarkReport<'a>>,
     /// Commits oldest-first (trunk side first), matching the
     /// `--bookmark-command` payload convention.
     commits: Vec<CommitReport<'a>>,
+}
+
+#[derive(Serialize)]
+struct SegmentBookmarkReport<'a> {
+    name: &'a str,
+    /// `unpushed`, `diverged` or `synced`. Derived from jj alone, so it
+    /// describes what a push would do, never whether a PR exists.
+    remote_state: &'static str,
 }
 
 /// One commit. Fields typed `Option` are full-only: they are omitted, not
@@ -132,6 +148,10 @@ struct CommitReport<'a> {
     description: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     author: Option<AuthorReport<'a>>,
+    /// The committer timestamp, in both projections because it is the key
+    /// stack order is derived from: a consumer that wants a different order,
+    /// or wants to verify this one, needs it without paying for `json-full`.
+    committer_timestamp: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
     files: Option<&'a [String]>,
     is_immutable: bool,
@@ -173,7 +193,8 @@ fn build_report<'a>(data: &ShowData<'a>, projection: JsonProjection) -> ShowRepo
                 github: parse_github_url(&r.url, data.github_host).map(|g| g.to_string()),
             })
             .collect(),
-        excluded_bookmark_count: data.graph.excluded_bookmark_count,
+        excluded_bookmarks: &data.graph.excluded_bookmarks,
+        excluded_head_count: data.graph.excluded_head_count,
         stacks: data
             .graph
             .stacks
@@ -184,7 +205,12 @@ fn build_report<'a>(data: &ShowData<'a>, projection: JsonProjection) -> ShowRepo
                     .iter()
                     .enumerate()
                     .map(|(seg_idx, segment)| {
-                        segment_report(segment, seg_idx == stack.segments.len() - 1, projection)
+                        segment_report(
+                            segment,
+                            seg_idx == stack.segments.len() - 1,
+                            &data.graph.bookmark_remote_states,
+                            projection,
+                        )
                     })
                     .collect(),
             })
@@ -192,15 +218,30 @@ fn build_report<'a>(data: &ShowData<'a>, projection: JsonProjection) -> ShowRepo
     }
 }
 
-fn segment_report(
-    segment: &BookmarkSegment,
+fn segment_report<'a>(
+    segment: &'a BookmarkSegment,
     is_last_segment: bool,
+    remote_states: &HashMap<String, RemoteState>,
     projection: JsonProjection,
-) -> SegmentReport<'_> {
+) -> SegmentReport<'a> {
     let full = projection == JsonProjection::Full;
     let commit_count = segment.commits.len();
     SegmentReport {
-        bookmark_names: &segment.bookmark_names,
+        bookmarks: segment
+            .bookmark_names
+            .iter()
+            .map(|name| SegmentBookmarkReport {
+                name,
+                // A bookmark always reaches the state map via this same
+                // segment list, so the fallback is unreachable; it stays
+                // rather than panicking on a graph built by hand in a test.
+                remote_state: remote_states
+                    .get(name)
+                    .copied()
+                    .unwrap_or(RemoteState::Unpushed)
+                    .as_str(),
+            })
+            .collect(),
         // Internal order is newest-first; the document is oldest-first.
         commits: segment
             .commits
@@ -223,6 +264,7 @@ fn segment_report(
                         email: &commit.author.email,
                         timestamp: &commit.author.timestamp,
                     }),
+                    committer_timestamp: &commit.committer.timestamp,
                     files: full.then_some(commit.files.as_slice()),
                     is_immutable: commit.is_immutable,
                     local_bookmark_names: &commit.local_bookmark_names,
@@ -264,12 +306,22 @@ fn render_pretty(data: &ShowData, colors: bool) -> String {
         out.push('\n');
     }
 
-    if data.graph.excluded_bookmark_count > 0 {
+    if !data.graph.excluded_bookmarks.is_empty() {
         out.push('\n');
         let _ = writeln!(
             out,
-            "({} bookmark(s) excluded due to merge commits)",
-            data.graph.excluded_bookmark_count,
+            "({} excluded due to merge commits)",
+            data.graph.excluded_bookmarks.join(", "),
+        );
+    }
+    if data.graph.excluded_head_count > 0 {
+        if data.graph.excluded_bookmarks.is_empty() {
+            out.push('\n');
+        }
+        let _ = writeln!(
+            out,
+            "({} unbookmarked head(s) excluded due to merge commits)",
+            data.graph.excluded_head_count,
         );
     }
 
@@ -375,7 +427,9 @@ mod tests {
             stack_leaves: HashSet::new(),
             segments: HashMap::new(),
             tainted_change_ids: HashSet::new(),
-            excluded_bookmark_count: 0,
+            bookmark_remote_states: HashMap::new(),
+            excluded_bookmarks: Vec::new(),
+            excluded_head_count: 0,
             stacks,
         }
     }
@@ -421,6 +475,7 @@ mod tests {
                     } else {
                         vec![]
                     },
+                    remote_bookmark_names: vec![],
                 })
                 .collect(),
         }
@@ -433,7 +488,8 @@ mod tests {
 
     /// Two stacks sharing a two-commit base segment, plus a commit with no
     /// description, a commit with a multi-line description, and an immutable
-    /// commit carrying an excluded bookmark.
+    /// commit carrying an excluded bookmark. One bookmark of each push state,
+    /// so both projections render all three.
     fn sample_graph() -> ChangeGraph {
         let base = make_segment_at(
             &["base"],
@@ -459,6 +515,11 @@ mod tests {
             .local_bookmark_names
             .push("old-mark".to_string());
 
+        let mut base = base;
+        base.commits[0]
+            .remote_bookmark_names
+            .push("base@origin".to_string());
+
         let mut graph = make_graph(vec![
             BranchStack {
                 segments: vec![base.clone(), feat_a],
@@ -467,7 +528,13 @@ mod tests {
                 segments: vec![base, feat_b],
             },
         ]);
-        graph.excluded_bookmark_count = 1;
+        graph.bookmark_remote_states = HashMap::from([
+            ("base".to_string(), RemoteState::Synced),
+            ("feat-a".to_string(), RemoteState::Unpushed),
+            ("feat-b".to_string(), RemoteState::Diverged),
+        ]);
+        graph.excluded_bookmarks = vec!["merged-work".to_string()];
+        graph.excluded_head_count = 1;
         graph
     }
 
@@ -620,7 +687,8 @@ mod tests {
         assert_eq!(v["schema_version"], 2);
         assert_eq!(v["default_branch"], "main");
         assert_eq!(v["remotes"][0]["github"], "glennib/stakk");
-        assert_eq!(v["excluded_bookmark_count"], 1);
+        assert_eq!(v["excluded_bookmarks"][0], "merged-work");
+        assert_eq!(v["excluded_head_count"], 1);
 
         // Checked on every commit, not just the first: a full-only field
         // gated on `is_leaf` or immutability would otherwise slip through.
@@ -641,6 +709,7 @@ mod tests {
                 commit.keys().collect::<Vec<_>>(),
                 vec![
                     "change_id",
+                    "committer_timestamp",
                     "is_boundary",
                     "is_immutable",
                     "is_leaf",
@@ -654,10 +723,11 @@ mod tests {
     }
 
     /// Emitted field order of a sparse commit object.
-    const SPARSE_COMMIT_FIELDS: [&str; 7] = [
+    const SPARSE_COMMIT_FIELDS: [&str; 8] = [
         "\"change_id\"",
         "\"short_change_id\"",
         "\"title\"",
+        "\"committer_timestamp\"",
         "\"is_immutable\"",
         "\"local_bookmark_names\"",
         "\"is_boundary\"",
@@ -665,13 +735,14 @@ mod tests {
     ];
 
     /// Emitted field order of a full commit object.
-    const FULL_COMMIT_FIELDS: [&str; 11] = [
+    const FULL_COMMIT_FIELDS: [&str; 12] = [
         "\"change_id\"",
         "\"short_change_id\"",
         "\"commit_id\"",
         "\"title\"",
         "\"description\"",
         "\"author\"",
+        "\"committer_timestamp\"",
         "\"files\"",
         "\"is_immutable\"",
         "\"local_bookmark_names\"",
@@ -803,6 +874,7 @@ mod tests {
     fn render_emits_the_projection_the_format_selects() {
         let sparse_keys = [
             "change_id",
+            "committer_timestamp",
             "is_boundary",
             "is_immutable",
             "is_leaf",
@@ -814,6 +886,7 @@ mod tests {
             "author",
             "change_id",
             "commit_id",
+            "committer_timestamp",
             "description",
             "files",
             "is_boundary",
@@ -886,10 +959,27 @@ mod tests {
         assert_eq!(v["remotes"][0]["github"], "glennib/stakk");
         assert!(v["remotes"][1]["github"].is_null());
 
-        assert_eq!(v["excluded_bookmark_count"], 1);
+        assert_eq!(v["excluded_bookmarks"][0], "merged-work");
+        assert_eq!(v["excluded_head_count"], 1);
 
         let stacks = v["stacks"].as_array().unwrap();
         assert_eq!(stacks.len(), 2);
+
+        // Each segment names its bookmarks with the push state a submission
+        // would act on. All three states appear in the fixture.
+        assert_eq!(stacks[0]["segments"][0]["bookmarks"][0]["name"], "base");
+        assert_eq!(
+            stacks[0]["segments"][0]["bookmarks"][0]["remote_state"],
+            "synced"
+        );
+        assert_eq!(
+            stacks[0]["segments"][1]["bookmarks"][0]["remote_state"],
+            "unpushed"
+        );
+        assert_eq!(
+            stacks[1]["segments"][1]["bookmarks"][0]["remote_state"],
+            "diverged"
+        );
 
         // Commits are oldest-first: the base segment's trunk-side commit
         // comes first, the bookmarked commit last.
@@ -904,6 +994,23 @@ mod tests {
         // The tip of each stack is a leaf.
         let feat_a_commits = stacks[0]["segments"][1]["commits"].as_array().unwrap();
         assert_eq!(feat_a_commits[1]["is_leaf"], true);
+
+        // `committer_timestamp` is the committer's, not the author's: the
+        // fixture gives every commit the same author timestamp and a
+        // per-segment committer timestamp, and stack order follows the
+        // latter.
+        assert_eq!(
+            base_commits[1]["author"]["timestamp"],
+            "2026-01-01T00:00:00Z"
+        );
+        assert_eq!(
+            feat_a_commits[1]["author"]["timestamp"],
+            "2026-01-01T00:00:00Z"
+        );
+        assert_eq!(
+            feat_a_commits[1]["committer_timestamp"],
+            "2026-03-01T00:00:00Z"
+        );
 
         // Full identifiers and metadata are present.
         assert_eq!(base_commits[1]["change_id"], "qzvsmyxk");
