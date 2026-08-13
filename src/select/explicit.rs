@@ -152,7 +152,10 @@ pub enum ExplicitSelectionError {
     #[error("bookmark {name:?} already exists")]
     #[diagnostic(
         code(stakk::selection::name_exists),
-        help("choose another name, or pass --keep with the existing name instead")
+        help(
+            "choose another name, or pass --keep with the existing name instead — `jj bookmark \
+             list` shows every local bookmark, including ones outside the selectable stacks"
+        )
     )]
     NewNameExists { name: String },
 
@@ -282,11 +285,17 @@ struct Mark {
 /// Pure with respect to the repository: reads the graph, returns the
 /// assignments and the selected trunk-to-tip path. `async` only because
 /// `--new-command` awaits the external command.
+///
+/// `reserved` is every local bookmark name in the repo
+/// ([`crate::jj::Jj::get_local_bookmark_names`]). New names are checked
+/// against it rather than against the graph, which cannot see trunk's own
+/// bookmark or anything the bookmarks revset filtered out.
 pub async fn resolve_bookmarks_explicitly(
     graph: &ChangeGraph,
     spec: &SelectionSpec,
     auto_prefix: Option<&str>,
     bookmark_command: Option<&str>,
+    reserved: &HashSet<String>,
 ) -> Result<SelectionResult, ExplicitSelectionError> {
     if !spec.new_command.is_empty() && bookmark_command.is_none() {
         return Err(ExplicitSelectionError::BookmarkCommandNotConfigured);
@@ -405,12 +414,6 @@ pub async fn resolve_bookmarks_explicitly(
 
     // Name checks that don't need generation: duplicates among explicit
     // names, and --new names colliding with any existing local bookmark.
-    let existing_names: HashSet<&str> = linearized
-        .iter()
-        .flatten()
-        .flat_map(|c| c.local_bookmark_names.iter())
-        .map(String::as_str)
-        .collect();
     {
         let mut seen: HashSet<&str> = HashSet::new();
         for mark in &marks {
@@ -425,7 +428,7 @@ pub async fn resolve_bookmarks_explicitly(
                     name: name.to_string(),
                 });
             }
-            if matches!(mark.kind, MarkKind::New { .. }) && existing_names.contains(name) {
+            if matches!(mark.kind, MarkKind::New { .. }) && reserved.contains(name) {
                 return Err(ExplicitSelectionError::NewNameExists {
                     name: name.to_string(),
                 });
@@ -472,7 +475,7 @@ pub async fn resolve_bookmarks_explicitly(
                 (bookmark_gen::default_bookmark_name(&commit.change_id), true)
             }
             MarkKind::NewAuto => {
-                let taken = |n: &str| existing_names.contains(n) || used_names.contains(n);
+                let taken = |n: &str| reserved.contains(n) || used_names.contains(n);
                 (
                     auto_name(&segment, &commit.change_id, auto_prefix, taken),
                     true,
@@ -498,7 +501,7 @@ pub async fn resolve_bookmarks_explicitly(
         // No new name may shadow an existing bookmark. Explicit
         // `--new REV=NAME` names were already checked before generation;
         // re-checking them here is harmless and keeps the condition simple.
-        if is_new && existing_names.contains(name.as_str()) {
+        if is_new && reserved.contains(name.as_str()) {
             return Err(ExplicitSelectionError::NewNameExists { name });
         }
         assignments.push(BookmarkAssignment {
@@ -805,11 +808,33 @@ mod tests {
         s
     }
 
+    /// Every local bookmark name visible on the graph's stacks. Production
+    /// passes a superset of this (the repo-wide list from jj); tests that do
+    /// not care about the difference use it as a stand-in.
+    fn reserved_from_graph(graph: &ChangeGraph) -> HashSet<String> {
+        graph
+            .stacks
+            .iter()
+            .flat_map(BranchStack::commits_trunk_to_tip)
+            .flat_map(|c| c.local_bookmark_names.iter())
+            .cloned()
+            .collect()
+    }
+
     async fn resolve(
         graph: &ChangeGraph,
         s: &SelectionSpec,
     ) -> Result<SelectionResult, ExplicitSelectionError> {
-        resolve_bookmarks_explicitly(graph, s, None, None).await
+        let reserved = reserved_from_graph(graph);
+        resolve_with_reserved(graph, s, &reserved).await
+    }
+
+    async fn resolve_with_reserved(
+        graph: &ChangeGraph,
+        s: &SelectionSpec,
+        reserved: &HashSet<String>,
+    ) -> Result<SelectionResult, ExplicitSelectionError> {
+        resolve_bookmarks_explicitly(graph, s, None, None, reserved).await
     }
 
     fn names(result: &SelectionResult) -> Vec<(&str, bool)> {
@@ -1107,7 +1132,8 @@ mod tests {
         graph.stacks[0].segments[1].commits[0].description = "login page styling".into();
         // Mark only mid: its dynamic segment is base+mid (both folded in).
         let s = spec(|s| s.new_auto = vec!["bbbb".into()]);
-        let result = resolve_bookmarks_explicitly(&graph, &s, Some("gb-"), None)
+        let reserved = reserved_from_graph(&graph);
+        let result = resolve_bookmarks_explicitly(&graph, &s, Some("gb-"), None, &reserved)
             .await
             .unwrap();
         let name = &result.assignments[0].bookmark_name;
@@ -1240,6 +1266,92 @@ mod tests {
         );
     }
 
+    // -- reserved names outside the graph --
+
+    /// The collision check must use the repo-wide bookmark list, not the
+    /// graph: trunk's own bookmark is dropped by the default bookmarks
+    /// revset (`~ trunk()`) and trunk commits are outside the traversal
+    /// range, so it is never visible on a stack.
+    #[tokio::test]
+    async fn new_name_colliding_with_bookmark_outside_the_graph_errors() {
+        let graph = single_stack_graph();
+        assert!(
+            !reserved_from_graph(&graph).contains("main"),
+            "precondition: trunk's bookmark is invisible to the graph",
+        );
+        let mut reserved = reserved_from_graph(&graph);
+        reserved.insert("main".to_string());
+
+        let s = spec(|s| {
+            s.new = vec![NewBookmarkSpec {
+                rev: "bbbb".into(),
+                name: Some("main".into()),
+            }];
+        });
+        let err = resolve_with_reserved(&graph, &s, &reserved)
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            ExplicitSelectionError::NewNameExists { name } if name == "main"
+        ));
+    }
+
+    /// The same applies to the `stakk-<change_id>` default name.
+    #[tokio::test]
+    async fn new_default_name_colliding_outside_the_graph_errors() {
+        let graph = single_stack_graph();
+        let mut reserved = reserved_from_graph(&graph);
+        reserved.insert(bookmark_gen::default_bookmark_name("bbbb2222"));
+
+        let s = spec(|s| {
+            s.new = vec![NewBookmarkSpec {
+                rev: "bbbb".into(),
+                name: None,
+            }];
+        });
+        let err = resolve_with_reserved(&graph, &s, &reserved)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, ExplicitSelectionError::NewNameExists { .. }));
+    }
+
+    /// An auto mark falls back to its default name when the TF-IDF name is
+    /// taken by a bookmark the graph cannot see.
+    #[tokio::test]
+    async fn auto_mark_colliding_outside_the_graph_falls_back() {
+        let mut graph = single_stack_graph();
+        graph.stacks[0].segments[1].commits[0].description = "database caching layer".into();
+        graph.stacks[0].segments[1].commits[0].files = vec![];
+        let s = spec(|s| s.new_auto = vec!["bbbb".into()]);
+        let derived = resolve(&graph, &s)
+            .await
+            .unwrap()
+            .assignments
+            .swap_remove(0)
+            .bookmark_name;
+
+        let mut reserved = reserved_from_graph(&graph);
+        reserved.insert(derived);
+        let result = resolve_with_reserved(&graph, &s, &reserved).await.unwrap();
+        assert_eq!(
+            result.assignments[0].bookmark_name,
+            bookmark_gen::default_bookmark_name("bbbb2222"),
+        );
+    }
+
+    /// `--keep` is unaffected: keeping a bookmark that exists is the point,
+    /// and the name is resolved against the graph, not the reserved set.
+    #[tokio::test]
+    async fn keep_is_not_blocked_by_the_reserved_set() {
+        let graph = single_stack_graph();
+        let reserved = reserved_from_graph(&graph);
+        assert!(reserved.contains("leaf"));
+        let s = spec(|s| s.keep = vec!["leaf".into()]);
+        let result = resolve_with_reserved(&graph, &s, &reserved).await.unwrap();
+        assert_eq!(names(&result), vec![("leaf", false)]);
+    }
+
     // -- bookmark command --
 
     #[tokio::test]
@@ -1258,10 +1370,30 @@ mod tests {
     async fn new_command_runs_and_names() {
         let graph = single_stack_graph();
         let s = spec(|s| s.new_command = vec!["bbbb".into()]);
-        let result = resolve_bookmarks_explicitly(&graph, &s, None, Some("echo from-command"))
-            .await
-            .unwrap();
+        let reserved = reserved_from_graph(&graph);
+        let result =
+            resolve_bookmarks_explicitly(&graph, &s, None, Some("echo from-command"), &reserved)
+                .await
+                .unwrap();
         assert_eq!(names(&result), vec![("from-command", true)]);
+    }
+
+    /// A name from the external command is new like any other, so it is
+    /// checked against the reserved set too.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn new_command_name_colliding_outside_the_graph_errors() {
+        let graph = single_stack_graph();
+        let mut reserved = reserved_from_graph(&graph);
+        reserved.insert("main".to_string());
+        let s = spec(|s| s.new_command = vec!["bbbb".into()]);
+        let err = resolve_bookmarks_explicitly(&graph, &s, None, Some("echo main"), &reserved)
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            ExplicitSelectionError::NewNameExists { name } if name == "main"
+        ));
     }
 
     #[cfg(unix)]
@@ -1269,7 +1401,8 @@ mod tests {
     async fn new_command_failure_propagates() {
         let graph = single_stack_graph();
         let s = spec(|s| s.new_command = vec!["bbbb".into()]);
-        let err = resolve_bookmarks_explicitly(&graph, &s, None, Some("false"))
+        let reserved = reserved_from_graph(&graph);
+        let err = resolve_bookmarks_explicitly(&graph, &s, None, Some("false"), &reserved)
             .await
             .unwrap_err();
         assert!(matches!(
@@ -1296,11 +1429,13 @@ mod tests {
 
         // Mark mid: the dynamic segment is base + mid, oldest first.
         let s = spec(|s| s.new_command = vec!["bbbb".into()]);
+        let reserved = reserved_from_graph(&graph);
         let result = resolve_bookmarks_explicitly(
             &graph,
             &s,
             None,
             Some(&format!("sh {}", script.display())),
+            &reserved,
         )
         .await
         .unwrap();

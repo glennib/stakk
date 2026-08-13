@@ -3,6 +3,7 @@
 //! Two screens: `GraphView` (pick a branch) → `BookmarkAssignment` (toggle
 //! bookmarks). Uses ratatui's inline viewport (not fullscreen).
 
+use std::collections::HashSet;
 use std::io;
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -75,6 +76,7 @@ pub fn run_tui(
     graph: &ChangeGraph,
     bookmark_command: Option<&str>,
     auto_prefix: Option<&str>,
+    reserved: &HashSet<String>,
 ) -> Result<Option<SelectionResult>, StakkError> {
     let layout = build_layout(graph);
     let has_bookmark_command = bookmark_command.is_some();
@@ -104,6 +106,7 @@ pub fn run_tui(
         bookmark_command,
         auto_prefix,
         &bookmark_cache,
+        reserved,
     );
 
     // Collapse the inline viewport: erase it and park the cursor at its top,
@@ -220,6 +223,7 @@ fn run_event_loop(
     bookmark_command: Option<&str>,
     auto_prefix: Option<&str>,
     bookmark_cache: &Arc<Mutex<BookmarkNameCache>>,
+    reserved: &HashSet<String>,
 ) -> Result<Option<SelectionResult>, StakkError> {
     let mut pending: Vec<PendingCommand> = Vec::new();
     let mut spinner_tick: usize = 0;
@@ -332,6 +336,7 @@ fn run_event_loop(
                                 &path,
                                 has_bookmark_command,
                                 auto_prefix,
+                                reserved,
                             );
                             replace_viewport(terminal, viewport_height_for(state.rows.len())?)?;
                             *bookmark_state = Some(state);
@@ -423,6 +428,10 @@ fn run_event_loop(
                                 Err(SelectionError::DuplicateName(name)) => {
                                     error_message =
                                         Some(format!("Duplicate bookmark name: {name}"));
+                                }
+                                Err(SelectionError::NameExists(name)) => {
+                                    error_message =
+                                        Some(format!("Bookmark already exists: {name}"));
                                 }
                                 Err(SelectionError::StillLoading) => {
                                     error_message =

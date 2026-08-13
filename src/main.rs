@@ -170,11 +170,17 @@ async fn submit_bookmark(args: &SubmitArgs) -> Result<(), StakkError> {
         (analysis, Vec::new())
     } else {
         let spec = select::explicit::SelectionSpec::from_args(args)?;
+        // Every local bookmark name in the repo, not just the ones on the
+        // graph: a new bookmark must not collide with trunk's own bookmark or
+        // with anything the bookmarks revset filtered out. Only the selection
+        // paths create bookmarks, so the positional path skips this.
+        let reserved_names = jj.get_local_bookmark_names().await?;
         let selection = if spec.is_empty() {
             select::resolve_bookmark_interactively(
                 &change_graph,
                 args.bookmark_command.as_deref(),
                 args.auto_prefix.as_deref(),
+                &reserved_names,
             )?
         } else {
             Some(
@@ -183,6 +189,7 @@ async fn submit_bookmark(args: &SubmitArgs) -> Result<(), StakkError> {
                     &spec,
                     args.auto_prefix.as_deref(),
                     args.bookmark_command.as_deref(),
+                    &reserved_names,
                 )
                 .await?,
             )

@@ -205,9 +205,12 @@ Each non-trunk row cycles through state *types* via Space (forward) / `b`
 | `[*]`    | UseCustom        | cyan, bold   | External `--bookmark-command` with async spinner            |
 | `[ ]`    | Unchecked        | dark gray    | No PR of its own; the commit is included in the PR above it |
 
-States are **skipped** when they would produce no name or a duplicate of
-another state's name (e.g., UseTfidf skipped if it matches an existing
-bookmark; UseGenerated skipped if it matches an existing one).
+States are **skipped** when they would produce no name or a name that is
+already taken — by another state on the row, or by *any* local bookmark in
+the repo (the reserved set; see Patterns & Gotchas). UseTfidf, UseGenerated
+and UseCustom all follow this rule. Confirming re-checks it: a new name in
+the reserved set fails with `Bookmark already exists: <name>`, and a typed
+name renders red while it collides.
 
 ### Locked Rows (immutable commits)
 
@@ -239,7 +242,10 @@ row unlocks as a boundary.
 
 The "dynamic segment" for a row = all included (toggled-on) commits from
 trunk up to that row. Toggling a row recomputes UseTfidf names for all
-subsequent rows in the stack.
+subsequent rows in the stack. A row whose recomputed name is empty *or
+already taken* falls back to `[ ]` Unchecked — the same skip rule the
+state cycle applies, so a toggle can never park a row on a name
+`jj bookmark create` would reject.
 
 ### Edit Mode
 
@@ -354,17 +360,34 @@ following, update `scripts/record-demo.py` in the same change:
   `--keep-all` needs the stacks to agree on their bookmarks; anchored, it
   expands on the marked path, skipping commits with explicit marks
   (explicit beats bulk). Errors are `stakk::selection::*` diagnostics
-  pointing at `stakk show`. Known limitation: the `name_exists` pre-check
-  sees only bookmarks on submittable stacks — a collision with any other
-  bookmark (e.g. trunk's `main`) surfaces at execution as
-  `stakk::submit::bookmark_create_failed`.
+  pointing at `stakk show`.
+- Reserved bookmark names: `Jj::get_local_bookmark_names` (`jj bookmark
+  list` with *no* `-r`) is the single source of truth for "this name is
+  taken". The change graph is not — it cannot see trunk's own bookmark
+  (`~ trunk()` plus the `trunk()..to` traversal range), other people's
+  (`mine()`), bookmarks on off-stack immutable commits, or anything a
+  custom `--bookmarks-revset` filtered out. `main.rs` fetches the set once
+  per selection-based `submit` and hands it to both
+  `resolve_bookmarks_explicitly` and `resolve_bookmark_interactively`;
+  both reject new names in it (`stakk::selection::name_exists` /
+  `SelectionError::NameExists`) and skip TF-IDF/generated/custom states
+  that would produce one. Kept bookmarks are exempt — reusing them is the
+  point. The names-only template is parsed by `parse_bookmark_names`, not
+  `parse_bookmarks`, which drops conflicted bookmarks (`target: null`)
+  whose names are still taken. Deleted-but-tracked bookmarks are included
+  for the same reason: `jj bookmark create` rejects them too. Untracked
+  remote-only bookmarks (`foo@origin`, no local `foo`) do *not* block
+  creation, so the query deliberately omits `--all-remotes`.
 - New bookmarks are created by `execute_submission_plan`
   (`SubmissionPlan::bookmark_creations`, before the push loop), not at
   selection time — so `--dry-run` never mutates the repo and the plan
   prints `Create bookmark <name> at <short_change_id>` lines instead.
+  Execute re-queries the reserved names and fails with
+  `stakk::submit::bookmark_names_taken` *before* creating anything, so a
+  name that appeared between selection and execution cannot leave a
+  half-applied plan. The query is skipped when there is nothing to create.
   Accepted limitation: nothing checks a new bookmark's name against the
-  bookmarks revset anymore (the old post-creation rebuild + excluded-guard
-  did, erroring after the bookmark was already created). Under a custom
+  bookmarks revset (only against existing names). Under a custom
   `--bookmarks-revset` that excludes the new name, the submission succeeds
   but subsequent runs will not see or manage that bookmark's PR.
 - Stack reorder safety: bookmarks must be pushed one-at-a-time with immediate

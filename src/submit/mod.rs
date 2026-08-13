@@ -96,6 +96,28 @@ pub enum SubmitError {
     )]
     DivergentChange { change_id: String },
 
+    /// Failed to list local bookmarks before creating new ones.
+    #[error("failed to list local bookmarks")]
+    #[diagnostic(
+        code(stakk::submit::bookmark_list_failed),
+        help("check that `jj bookmark list` runs in this repo")
+    )]
+    BookmarkListFailed {
+        #[source]
+        source: JjError,
+    },
+
+    /// One or more planned bookmark names are already taken.
+    #[error("bookmark(s) already exist: {}", bookmarks.join(", "))]
+    #[diagnostic(
+        code(stakk::submit::bookmark_names_taken),
+        help(
+            "the names were free when the selection was made — another bookmark has appeared \
+             since; rename with --new REV=NAME, or reuse the existing bookmark with --keep NAME"
+        )
+    )]
+    BookmarkNamesTaken { bookmarks: Vec<String> },
+
     /// Failed to create a local bookmark during execution.
     #[error("failed to create bookmark '{bookmark}'")]
     #[diagnostic(
@@ -688,6 +710,28 @@ pub async fn execute_submission_plan<R: JjRunner, F: Forge>(
     pb.enable_steady_tick(std::time::Duration::from_millis(120));
 
     let effective = resolve_placement(placement);
+
+    // Check every pending name against the repo before creating any of them.
+    // Selection already rejects taken names, but the repo can change in
+    // between — and a mid-loop failure would leave some bookmarks created and
+    // nothing pushed. Skipped when there is nothing to create, so plans
+    // without new bookmarks cost no extra jj call.
+    if !plan.bookmark_creations.is_empty() {
+        pb.set_message("Checking bookmark names...");
+        let reserved = jj
+            .get_local_bookmark_names()
+            .await
+            .map_err(|source| SubmitError::BookmarkListFailed { source })?;
+        let taken: Vec<String> = plan
+            .bookmark_creations
+            .iter()
+            .map(|c| c.bookmark_name.clone())
+            .filter(|name| reserved.contains(name))
+            .collect();
+        if !taken.is_empty() {
+            return Err(SubmitError::BookmarkNamesTaken { bookmarks: taken });
+        }
+    }
 
     // Create pending local bookmarks first — pushes below require them to
     // exist. Creation is local-only, so the one-at-a-time interleaving rule
@@ -1362,6 +1406,8 @@ mod tests {
     struct MockJjRunner {
         push_calls: PushLog,
         ops: Option<OpLog>,
+        /// Local bookmark names the repo reports for `jj bookmark list`.
+        local_bookmarks: Vec<String>,
     }
 
     impl MockJjRunner {
@@ -1371,6 +1417,7 @@ mod tests {
                 Self {
                     push_calls: Arc::clone(&calls),
                     ops: None,
+                    local_bookmarks: Vec::new(),
                 },
                 calls,
             )
@@ -1382,9 +1429,15 @@ mod tests {
                 Self {
                     push_calls: Arc::clone(&calls),
                     ops: Some(ops),
+                    local_bookmarks: Vec::new(),
                 },
                 calls,
             )
+        }
+
+        fn with_local_bookmarks(mut self, names: &[&str]) -> Self {
+            self.local_bookmarks = names.iter().map(ToString::to_string).collect();
+            self
         }
     }
 
@@ -1393,6 +1446,14 @@ mod tests {
             &self,
             args: &[&str],
         ) -> impl std::future::Future<Output = Result<String, JjError>> + Send {
+            let mut output = String::new();
+            if args[0] == "bookmark" && args[1] == "list" {
+                for name in &self.local_bookmarks {
+                    output.push('"');
+                    output.push_str(name);
+                    output.push_str("\"\n");
+                }
+            }
             if args[0] == "bookmark"
                 && args[1] == "create"
                 && let Some(ops) = &self.ops
@@ -1417,7 +1478,7 @@ mod tests {
                 }
                 self.push_calls.lock().unwrap().push((bookmark, remote));
             }
-            async { Ok(String::new()) }
+            async move { Ok(output) }
         }
     }
 
@@ -2294,6 +2355,104 @@ mod tests {
         let ops = ops.lock().unwrap();
         assert_eq!(
             *ops,
+            vec![
+                Op::CreateBookmark("feat-new".to_string()),
+                Op::Push("feat-new".to_string()),
+                Op::CreatePr("feat-new".to_string()),
+            ],
+        );
+    }
+
+    /// A name taken since selection aborts the run before anything is
+    /// created or pushed — no half-applied plan.
+    #[tokio::test]
+    async fn execute_rejects_taken_bookmark_names_before_mutating() {
+        let ops: OpLog = Arc::new(Mutex::new(Vec::new()));
+        let plan = SubmissionPlan {
+            bookmark_creations: vec![
+                BookmarkCreation {
+                    bookmark_name: "feat-free".to_string(),
+                    change_id: "ch_a".to_string(),
+                    short_change_id: "ch_a".to_string(),
+                },
+                BookmarkCreation {
+                    bookmark_name: "feat-taken".to_string(),
+                    change_id: "ch_b".to_string(),
+                    short_change_id: "ch_b".to_string(),
+                },
+            ],
+            bookmark_plans: vec![BookmarkPlan {
+                bookmark_name: "feat-free".to_string(),
+                base: "main".to_string(),
+                title: "new feature".to_string(),
+                body: None,
+                existing_pr: None,
+                needs_push: true,
+                needs_create: true,
+                needs_base_update: false,
+                needs_title_sync: false,
+                needs_body_sync: false,
+            }],
+            remote: "origin".to_string(),
+            pr_mode: PrMode::Regular,
+            default_branch: "main".to_string(),
+        };
+
+        let (runner, _push_calls) = MockJjRunner::new_with_ops(Arc::clone(&ops));
+        // "feat-taken" appeared between selection and execution.
+        let jj = Jj::new(runner.with_local_bookmarks(&["main", "feat-taken"]));
+        let forge = MockForge::new().with_ops(Arc::clone(&ops));
+        let env = test_comment_env();
+
+        let err = execute_submission_plan(&plan, &jj, &forge, &env, StackPlacement::Comment)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(&err, SubmitError::BookmarkNamesTaken { bookmarks } if bookmarks == &["feat-taken"]),
+            "unexpected error: {err:?}",
+        );
+        // The earlier, still-free bookmark must not have been created.
+        assert!(ops.lock().unwrap().is_empty(), "repo was mutated: {ops:?}");
+    }
+
+    /// Names that are free pass the pre-flight check untouched.
+    #[tokio::test]
+    async fn execute_accepts_free_bookmark_names() {
+        let ops: OpLog = Arc::new(Mutex::new(Vec::new()));
+        let plan = SubmissionPlan {
+            bookmark_creations: vec![BookmarkCreation {
+                bookmark_name: "feat-new".to_string(),
+                change_id: "ch_new".to_string(),
+                short_change_id: "ch_n".to_string(),
+            }],
+            bookmark_plans: vec![BookmarkPlan {
+                bookmark_name: "feat-new".to_string(),
+                base: "main".to_string(),
+                title: "new feature".to_string(),
+                body: None,
+                existing_pr: None,
+                needs_push: true,
+                needs_create: true,
+                needs_base_update: false,
+                needs_title_sync: false,
+                needs_body_sync: false,
+            }],
+            remote: "origin".to_string(),
+            pr_mode: PrMode::Regular,
+            default_branch: "main".to_string(),
+        };
+
+        let (runner, _push_calls) = MockJjRunner::new_with_ops(Arc::clone(&ops));
+        let jj = Jj::new(runner.with_local_bookmarks(&["main", "other"]));
+        let forge = MockForge::new().with_ops(Arc::clone(&ops));
+        let env = test_comment_env();
+
+        execute_submission_plan(&plan, &jj, &forge, &env, StackPlacement::Comment)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            *ops.lock().unwrap(),
             vec![
                 Op::CreateBookmark("feat-new".to_string()),
                 Op::Push("feat-new".to_string()),

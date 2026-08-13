@@ -11,6 +11,7 @@ pub(crate) mod explicit;
 mod graph_widget;
 mod tfidf;
 
+use std::collections::HashSet;
 use std::io::IsTerminal;
 
 use crate::error::StakkError;
@@ -38,10 +39,15 @@ pub struct SelectionResult {
 ///
 /// Returns `StakkError::NotInteractive` if stdin is not a terminal.
 /// Returns `StakkError::PromptCancelled` if the user presses Escape/q.
+///
+/// `reserved` is every local bookmark name in the repo
+/// ([`crate::jj::Jj::get_local_bookmark_names`]); new names are rejected
+/// against it.
 pub fn resolve_bookmark_interactively(
     graph: &ChangeGraph,
     bookmark_command: Option<&str>,
     auto_prefix: Option<&str>,
+    reserved: &HashSet<String>,
 ) -> Result<Option<SelectionResult>, StakkError> {
     if graph.stacks.is_empty() {
         eprintln!("No bookmark stacks found.");
@@ -52,7 +58,7 @@ pub fn resolve_bookmark_interactively(
         return Err(StakkError::NotInteractive);
     }
 
-    app::run_tui(graph, bookmark_command, auto_prefix)
+    app::run_tui(graph, bookmark_command, auto_prefix, reserved)
 }
 
 // ---------------------------------------------------------------------------
@@ -82,7 +88,7 @@ mod tests {
     #[test]
     fn resolve_no_stacks() {
         let graph = make_graph_empty();
-        let result = resolve_bookmark_interactively(&graph, None, None).unwrap();
+        let result = resolve_bookmark_interactively(&graph, None, None, &HashSet::new()).unwrap();
         assert_eq!(result, None);
     }
 

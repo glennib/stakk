@@ -9,6 +9,8 @@ pub mod runner;
 pub mod types;
 pub mod version;
 
+use std::collections::HashSet;
+
 use miette::Diagnostic;
 use thiserror::Error;
 
@@ -62,6 +64,11 @@ pub enum JjError {
 // Template for `jj bookmark list`: produces one JSON object per line.
 const BOOKMARK_TEMPLATE: &str = r#""{\"name\":" ++ json(self.name()) ++ ",\"synced\":" ++ json(self.synced()) ++ ",\"target\":" ++ json(self.normal_target()) ++ "}\n""#;
 
+// Template for `jj bookmark list` when only names matter: one JSON string per
+// line. Deliberately does not go through `BOOKMARK_TEMPLATE`, whose parser
+// drops conflicted bookmarks (no normal target) — those names are still taken.
+const BOOKMARK_NAME_TEMPLATE: &str = r#"json(self.name()) ++ "\n""#;
+
 // Template for `jj log`: produces one JSON object per line with commit +
 // bookmarks + shortest unique change ID prefix.
 const LOG_TEMPLATE: &str = r#""{\"commit\":" ++ json(self) ++ ",\"local_bookmarks\":" ++ json(local_bookmarks) ++ ",\"remote_bookmarks\":" ++ json(remote_bookmarks) ++ ",\"immutable\":" ++ immutable ++ ",\"short_change_id\":\"" ++ change_id.shortest() ++ "\"}\n""#;
@@ -94,6 +101,23 @@ impl<R: JjRunner> Jj<R> {
             .await?;
 
         parse_bookmarks(&output)
+    }
+
+    /// Every local bookmark name in the repo — the set of names
+    /// `jj bookmark create` rejects.
+    ///
+    /// Unlike [`Jj::get_my_bookmarks`], this takes no revset: it includes
+    /// trunk's bookmark, other people's bookmarks, bookmarks on immutable
+    /// commits, conflicted bookmarks, and bookmarks deleted locally but still
+    /// tracked on a remote. All of those collide on creation, and none of
+    /// them are necessarily visible in the change graph.
+    pub async fn get_local_bookmark_names(&self) -> Result<HashSet<String>, JjError> {
+        let output = self
+            .runner
+            .run_jj(&["bookmark", "list", "-T", BOOKMARK_NAME_TEMPLATE])
+            .await?;
+
+        parse_bookmark_names(&output)
     }
 
     /// Get log entries for a revision range, paginated.
@@ -261,6 +285,27 @@ fn parse_bookmarks(output: &str) -> Result<Vec<Bookmark>, JjError> {
     Ok(bookmarks)
 }
 
+/// Parse the output of [`BOOKMARK_NAME_TEMPLATE`]: one JSON string per line.
+///
+/// A bookmark can appear more than once (unsynced bookmarks emit a local and a
+/// remote entry, deleted-but-tracked ones only remote entries); the set
+/// collapses those.
+fn parse_bookmark_names(output: &str) -> Result<HashSet<String>, JjError> {
+    let mut names = HashSet::new();
+    for line in output.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let name: String = serde_json::from_str(line).map_err(|e| JjError::ParseError {
+            context: "bookmark name list".to_string(),
+            source: e,
+        })?;
+        names.insert(name);
+    }
+    Ok(names)
+}
+
 fn parse_log_entries(output: &str) -> Result<Vec<LogEntry>, JjError> {
     let mut entries = Vec::new();
     for line in output.lines() {
@@ -367,6 +412,67 @@ mod tests {
         assert_eq!(bookmarks.len(), 1);
         assert_eq!(bookmarks[0].name, "feat");
         assert_eq!(bookmarks[0].commit_id, "new");
+    }
+
+    // -- parse_bookmark_names tests --
+
+    #[test]
+    fn parse_bookmark_names_collects_and_dedupes() {
+        // A deleted-but-tracked bookmark emits one line per remote entry, so
+        // the same name can repeat.
+        let input = "\"main\"\n\"feat\"\n\"feat\"\n";
+        let names = parse_bookmark_names(input).unwrap();
+        assert_eq!(
+            names,
+            HashSet::from(["main".to_string(), "feat".to_string()])
+        );
+    }
+
+    #[test]
+    fn parse_bookmark_names_keeps_conflicted_bookmarks() {
+        // Conflicted bookmarks have no normal target and are dropped by
+        // `parse_bookmarks`, but their names are still taken.
+        let conflicted = r#"{"name":"conflict","synced":false,"target":null}"#;
+        assert!(parse_bookmarks(conflicted).unwrap().is_empty());
+        assert!(
+            parse_bookmark_names("\"conflict\"\n")
+                .unwrap()
+                .contains("conflict")
+        );
+    }
+
+    #[test]
+    fn parse_bookmark_names_handles_quoting_and_empty_input() {
+        assert!(parse_bookmark_names("").unwrap().is_empty());
+        let names = parse_bookmark_names("\"weird\\\"name\"\n").unwrap();
+        assert!(names.contains("weird\"name"));
+    }
+
+    #[test]
+    fn parse_bookmark_names_rejects_malformed_output() {
+        let err = parse_bookmark_names("not-json\n").unwrap_err();
+        assert!(matches!(err, JjError::ParseError { .. }));
+    }
+
+    #[tokio::test]
+    async fn get_local_bookmark_names_passes_no_revset() {
+        let runner = MockJjRunner {
+            handler: |args: &[&str]| {
+                assert_eq!(args[0], "bookmark");
+                assert_eq!(args[1], "list");
+                // No `-r`: the reserved-name set must not be narrowed by any
+                // revset.
+                assert!(!args.contains(&"-r"), "unexpected revset: {args:?}");
+                assert_eq!(args[2], "-T");
+                Ok("\"main\"\n\"feat\"\n".to_string())
+            },
+        };
+        let jj = Jj::new(runner);
+        let names = jj.get_local_bookmark_names().await.unwrap();
+        assert_eq!(
+            names,
+            HashSet::from(["main".to_string(), "feat".to_string()])
+        );
     }
 
     // -- parse_log_entries tests --
