@@ -334,10 +334,12 @@ following, update `scripts/record-demo.py` in the same change:
 - `SegmentCommit::local_bookmark_names` carries the *unfiltered* local
   bookmark names from jj log — unlike `BookmarkSegment::bookmark_names`,
   it includes bookmarks the bookmarks revset excluded (e.g. on immutable
-  commits). Used to diagnose excluded selections and label locked TUI rows.
+  commits). Feeds `excluded_bookmarks` in the graph layout, which labels
+  locked TUI rows.
 - Two phase-1 constructors: the positional `stakk submit <bookmark>` path
-  uses `analyze_submission(..., None)` — every boundary from trunk through
-  the target is its own stacked PR, no folding (issue #184). Selection-based
+  uses `analyze_submission` — every boundary from trunk through
+  the target is its own stacked PR, no folding (issue #184). Folding lives
+  only in the selection constructor. Selection-based
   paths (the TUI and the explicit flags via `select::explicit`) use
   `analysis_from_selection(path, assignments, ...)`:
   boundaries are matched by change ID on the selected trunk→tip path, so new
@@ -356,10 +358,6 @@ following, update `scripts/record-demo.py` in the same change:
   sees only bookmarks on submittable stacks — a collision with any other
   bookmark (e.g. trunk's `main`) surfaces at execution as
   `stakk::submit::bookmark_create_failed`.
-- `analyze_submission`'s `Option<&HashSet<String>>` folding arm and its
-  `stakk::submit::selected_bookmarks_excluded` guard are exercised only by
-  tests now — production selection flows go through
-  `analysis_from_selection` instead.
 - New bookmarks are created by `execute_submission_plan`
   (`SubmissionPlan::bookmark_creations`, before the push loop), not at
   selection time — so `--dry-run` never mutates the repo and the plan

@@ -166,7 +166,7 @@ async fn submit_bookmark(args: &SubmitArgs) -> Result<(), StakkError> {
     // created in the execute phase, which keeps --dry-run free of side
     // effects.
     let (analysis, bookmark_creations) = if let Some(name) = &args.bookmark {
-        let analysis = submit::analyze_submission(name, &change_graph, &default_branch, None)?;
+        let analysis = submit::analyze_submission(name, &change_graph, &default_branch)?;
         (analysis, Vec::new())
     } else {
         let spec = select::explicit::SelectionSpec::from_args(args)?;

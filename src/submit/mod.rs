@@ -52,33 +52,6 @@ pub enum SubmitError {
     )]
     BookmarkNotFound { bookmark: String },
 
-    /// Selected bookmarks were never consumed by any segment in the target
-    /// stack — typically because their commits are immutable in jj, so the
-    /// bookmarks revset excluded them from the change graph.
-    #[error(
-        "selected bookmark(s) not in the submission stack: {} ({} on immutable commit(s))",
-        missing.join(", "),
-        if immutable.is_empty() { "none".to_string() } else { immutable.join(", ") }
-    )]
-    #[diagnostic(
-        code(stakk::submit::selected_bookmarks_excluded),
-        help(
-            "the bookmark(s) exist and point at the right commits, but the commits are immutable \
-             in jj, so the default --bookmarks-revset (mine() ~ trunk() ~ immutable()) excludes \
-             them from the graph — usually caused by stale untracked remote bookmarks pinning the \
-             commits. Fix the cause with `jj bookmark forget --include-remotes 'glob:<pattern>'`, \
-             or include immutable commits for one run with `--bookmarks-revset 'mine() ~ \
-             trunk()'` (env: STAKK_BOOKMARKS_REVSET)"
-        )
-    )]
-    SelectedBookmarksExcluded {
-        /// Selected names not consumed by any segment (sorted).
-        missing: Vec<String>,
-        /// Subset of `missing` found on immutable commits in the stack
-        /// (sorted).
-        immutable: Vec<String>,
-    },
-
     /// A segment in the change graph has no bookmark name.
     #[error("segment for change {change_id} has no bookmark name")]
     #[diagnostic(
@@ -340,18 +313,15 @@ pub struct SubmissionResult {
 /// Find the segments relevant to submitting the target bookmark.
 ///
 /// Locates the stack containing `target_bookmark` in the change graph and
-/// returns all segments from trunk to the target (inclusive).
-///
-/// `selected_bookmarks` controls which segment boundaries survive as their
-/// own PR: segments whose bookmarks are all unselected fold their commits
-/// into the next selected segment. `None` selects every boundary — the
-/// explicit `stakk submit <bookmark>` path, where the whole ancestor chain
-/// is submitted as stacked PRs.
+/// returns all segments from trunk to the target (inclusive). Every segment
+/// boundary becomes its own stacked PR — the `stakk submit <bookmark>` path,
+/// where the whole ancestor chain is submitted. Selection-driven paths, which
+/// fold commits between chosen boundaries, go through
+/// [`analysis_from_selection`] instead.
 pub fn analyze_submission(
     target_bookmark: &str,
     change_graph: &ChangeGraph,
     default_branch: &str,
-    selected_bookmarks: Option<&HashSet<String>>,
 ) -> Result<SubmissionAnalysis, SubmitError> {
     let stack = change_graph
         .stacks
@@ -371,64 +341,14 @@ pub fn analyze_submission(
         .position(|seg| seg.bookmark_names.contains(&target_bookmark.to_string()))
         .expect("bookmark was found in stack above");
 
-    let mut segments = Vec::new();
-    let mut accumulated_commits: Vec<SegmentCommit> = Vec::new();
-
-    for seg in &stack.segments[..=target_index] {
-        let is_selected = selected_bookmarks.is_none_or(|selected| {
-            seg.bookmark_names
-                .iter()
-                .any(|name| selected.contains(name))
-        });
-
-        if is_selected {
-            let mut commits = seg.commits.clone();
-            commits.append(&mut accumulated_commits);
-            segments.push(BookmarkSegment {
-                bookmark_names: seg.bookmark_names.clone(),
-                change_id: seg.change_id.clone(),
-                commits,
-            });
-        } else {
-            accumulated_commits.extend(seg.commits.iter().cloned());
-        }
-    }
-
-    // Every selected bookmark must be a segment boundary somewhere in the
-    // stack. A selected name matching no segment means the graph excluded it
-    // (its commit is in the stack, but the bookmarks revset filtered the
-    // bookmark — typically because the commit is immutable). Silently folding
-    // it away would submit fewer PRs than the user selected. Selected names
-    // above the target are fine: they're boundaries, just not part of this
-    // submission.
-    if let Some(selected) = selected_bookmarks {
-        let known: HashSet<&str> = stack
-            .segments
-            .iter()
-            .flat_map(|s| &s.bookmark_names)
-            .map(String::as_str)
-            .collect();
-        let mut missing: Vec<String> = selected
-            .iter()
-            .filter(|name| !known.contains(name.as_str()))
-            .cloned()
-            .collect();
-        if !missing.is_empty() {
-            missing.sort_unstable();
-            let immutable: Vec<String> = missing
-                .iter()
-                .filter(|name| {
-                    stack
-                        .segments
-                        .iter()
-                        .flat_map(|s| &s.commits)
-                        .any(|c| c.is_immutable && c.local_bookmark_names.contains(name))
-                })
-                .cloned()
-                .collect();
-            return Err(SubmitError::SelectedBookmarksExcluded { missing, immutable });
-        }
-    }
+    let segments = stack.segments[..=target_index]
+        .iter()
+        .map(|seg| BookmarkSegment {
+            bookmark_names: seg.bookmark_names.clone(),
+            change_id: seg.change_id.clone(),
+            commits: seg.commits.clone(),
+        })
+        .collect();
 
     Ok(SubmissionAnalysis {
         segments,
@@ -1512,7 +1432,7 @@ mod tests {
             segments: vec![seg],
         }]);
 
-        let result = analyze_submission("feat-a", &graph, "main", None).unwrap();
+        let result = analyze_submission("feat-a", &graph, "main").unwrap();
         assert_eq!(result.segments.len(), 1);
         assert_eq!(result.segments[0].bookmark_names, vec!["feat-a"]);
 
@@ -1528,7 +1448,7 @@ mod tests {
             segments: vec![seg_a, seg_b, seg_c],
         }]);
 
-        let result = analyze_submission("feat-b", &graph, "main", None).unwrap();
+        let result = analyze_submission("feat-b", &graph, "main").unwrap();
         assert_eq!(result.segments.len(), 2);
         assert_eq!(result.segments[0].bookmark_names, vec!["feat-a"]);
         assert_eq!(result.segments[1].bookmark_names, vec!["feat-b"]);
@@ -1542,7 +1462,7 @@ mod tests {
             segments: vec![seg_a, seg_b],
         }]);
 
-        let result = analyze_submission("feat-b", &graph, "main", None).unwrap();
+        let result = analyze_submission("feat-b", &graph, "main").unwrap();
         assert_eq!(result.segments.len(), 2);
     }
 
@@ -1553,7 +1473,7 @@ mod tests {
             segments: vec![seg],
         }]);
 
-        let result = analyze_submission("nonexistent", &graph, "main", None);
+        let result = analyze_submission("nonexistent", &graph, "main");
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(
@@ -1575,109 +1495,10 @@ mod tests {
         };
         let graph = make_graph(vec![stack1, stack2]);
 
-        let result = analyze_submission("gamma", &graph, "main", None).unwrap();
+        let result = analyze_submission("gamma", &graph, "main").unwrap();
         assert_eq!(result.segments.len(), 2);
         assert_eq!(result.segments[0].bookmark_names, vec!["beta"]);
         assert_eq!(result.segments[1].bookmark_names, vec!["gamma"]);
-    }
-
-    #[test]
-    fn analyze_filters_unselected_bookmarks() {
-        let seg_a = make_segment(&["feat-a"], "ch_a", "feature a");
-        let seg_b = make_segment(&["feat-b"], "ch_b", "feature b");
-        let seg_c = make_segment(&["feat-c"], "ch_c", "feature c");
-        let graph = make_graph(vec![BranchStack {
-            segments: vec![seg_a, seg_b, seg_c],
-        }]);
-
-        // Only select the leaf — intermediate bookmarks should be excluded,
-        // but their commits fold into the next retained segment.
-        let selected = HashSet::from(["feat-c".to_string()]);
-        let result = analyze_submission("feat-c", &graph, "main", Some(&selected)).unwrap();
-        assert_eq!(result.segments.len(), 1);
-        assert_eq!(result.segments[0].bookmark_names, vec!["feat-c"]);
-        assert_eq!(result.segments[0].commits.len(), 3); // C's own + B's + A's
-    }
-
-    #[test]
-    fn analyze_filters_keeps_selected_subset() {
-        let seg_a = make_segment(&["feat-a"], "ch_a", "feature a");
-        let seg_b = make_segment(&["feat-b"], "ch_b", "feature b");
-        let seg_c = make_segment(&["feat-c"], "ch_c", "feature c");
-        let graph = make_graph(vec![BranchStack {
-            segments: vec![seg_a, seg_b, seg_c],
-        }]);
-
-        // Select first and last — middle should be excluded,
-        // and middle's commits fold into the next retained segment.
-        let selected = HashSet::from(["feat-a".to_string(), "feat-c".to_string()]);
-        let result = analyze_submission("feat-c", &graph, "main", Some(&selected)).unwrap();
-        assert_eq!(result.segments.len(), 2);
-        assert_eq!(result.segments[0].bookmark_names, vec!["feat-a"]);
-        assert_eq!(result.segments[0].commits.len(), 1); // A's own only
-        assert_eq!(result.segments[1].bookmark_names, vec!["feat-c"]);
-        assert_eq!(result.segments[1].commits.len(), 2); // C's own + B's inherited
-    }
-
-    /// A selected bookmark that never becomes a segment boundary must error
-    /// loudly, with immutable-commit diagnosis from the graph data.
-    #[test]
-    fn analyze_errors_when_selected_bookmark_excluded() {
-        let seg_a = make_segment(&["feat-a"], "ch_a", "feature a");
-        // feat-a's segment contains an immutable mid-segment commit carrying
-        // the filtered-out bookmark "ghost".
-        let mut seg_b = make_segment(&["feat-b"], "ch_b", "feature b");
-        seg_b.commits[0].is_immutable = true;
-        seg_b.commits[0].local_bookmark_names = vec!["ghost".to_string()];
-        let graph = make_graph(vec![BranchStack {
-            segments: vec![seg_a, seg_b],
-        }]);
-
-        let selected = HashSet::from(["feat-b".to_string(), "ghost".to_string()]);
-        let result = analyze_submission("feat-b", &graph, "main", Some(&selected));
-        match result {
-            Err(SubmitError::SelectedBookmarksExcluded { missing, immutable }) => {
-                assert_eq!(missing, vec!["ghost"]);
-                assert_eq!(immutable, vec!["ghost"]);
-            }
-            other => panic!("expected SelectedBookmarksExcluded, got {other:?}"),
-        }
-    }
-
-    /// A missing selected name on no known commit still errors, but without
-    /// the immutable diagnosis.
-    #[test]
-    fn analyze_excluded_error_distinguishes_non_immutable_missing() {
-        let seg_a = make_segment(&["feat-a"], "ch_a", "feature a");
-        let graph = make_graph(vec![BranchStack {
-            segments: vec![seg_a],
-        }]);
-
-        let selected = HashSet::from(["feat-a".to_string(), "vanished".to_string()]);
-        let result = analyze_submission("feat-a", &graph, "main", Some(&selected));
-        match result {
-            Err(SubmitError::SelectedBookmarksExcluded { missing, immutable }) => {
-                assert_eq!(missing, vec!["vanished"]);
-                assert!(immutable.is_empty());
-            }
-            other => panic!("expected SelectedBookmarksExcluded, got {other:?}"),
-        }
-    }
-
-    /// An interactive selection of only the target (selected == {target})
-    /// can never trigger the excluded-bookmarks guard.
-    #[test]
-    fn analyze_selected_single_bookmark_never_triggers_guard() {
-        let seg_a = make_segment(&["feat-a"], "ch_a", "feature a");
-        let seg_b = make_segment(&["feat-b"], "ch_b", "feature b");
-        let graph = make_graph(vec![BranchStack {
-            segments: vec![seg_a, seg_b],
-        }]);
-
-        let selected = HashSet::from(["feat-b".to_string()]);
-        let result = analyze_submission("feat-b", &graph, "main", Some(&selected)).unwrap();
-        assert_eq!(result.segments.len(), 1);
-        assert_eq!(result.segments[0].bookmark_names, vec!["feat-b"]);
     }
 
     /// Regression test for <https://github.com/glennib/stakk/issues/184>:
@@ -1693,7 +1514,7 @@ mod tests {
             segments: vec![seg_a, seg_b, seg_c],
         }]);
 
-        let result = analyze_submission("feat-c", &graph, "main", None).unwrap();
+        let result = analyze_submission("feat-c", &graph, "main").unwrap();
         assert_eq!(result.segments.len(), 3);
         assert_eq!(result.segments[0].bookmark_names, vec!["feat-a"]);
         assert_eq!(result.segments[1].bookmark_names, vec!["feat-b"]);
@@ -1738,10 +1559,19 @@ mod tests {
         stack.commits_trunk_to_tip().cloned().collect()
     }
 
-    /// Leaf-only selection matches `analyze_submission` with the same
-    /// selected set: the folded ancestor joins the leaf PR.
+    /// Change IDs of a segment's commits, in stored order.
+    fn commit_ids(segment: &BookmarkSegment) -> Vec<&str> {
+        segment
+            .commits
+            .iter()
+            .map(|c| c.change_id.as_str())
+            .collect()
+    }
+
+    /// A leaf-only selection yields one PR whose commits include the folded
+    /// ancestor below it.
     #[test]
-    fn from_selection_parity_leaf_only() {
+    fn from_selection_leaf_only_folds_ancestor() {
         let stack = BranchStack {
             segments: vec![
                 make_segment(&["feat-a"], "ch_a", "feature a"),
@@ -1749,22 +1579,21 @@ mod tests {
             ],
         };
         let path = path_of(&stack);
-        let graph = make_graph(vec![stack]);
-
-        let selected = HashSet::from(["feat-b".to_string()]);
-        let reference = analyze_submission("feat-b", &graph, "main", Some(&selected)).unwrap();
 
         let direct =
             analysis_from_selection(&path, &[make_assignment("ch_b", "feat-b", false)], "main")
                 .unwrap();
 
-        assert_eq!(direct, reference);
+        assert_eq!(direct.default_branch, "main");
+        assert_eq!(direct.segments.len(), 1);
+        assert_eq!(direct.segments[0].bookmark_names, vec!["feat-b"]);
+        assert_eq!(direct.segments[0].change_id, "ch_b");
+        assert_eq!(commit_ids(&direct.segments[0]), vec!["ch_b", "ch_a"]);
     }
 
-    /// Keeping a subset folds the unkept middle segment into the one above,
-    /// exactly like `analyze_submission`.
+    /// Keeping a subset folds the unkept middle segment into the one above.
     #[test]
-    fn from_selection_parity_subset() {
+    fn from_selection_subset_folds_unkept_middle() {
         let stack = BranchStack {
             segments: vec![
                 make_segment(&["feat-a"], "ch_a", "feature a"),
@@ -1773,10 +1602,6 @@ mod tests {
             ],
         };
         let path = path_of(&stack);
-        let graph = make_graph(vec![stack]);
-
-        let selected = HashSet::from(["feat-a".to_string(), "feat-c".to_string()]);
-        let reference = analyze_submission("feat-c", &graph, "main", Some(&selected)).unwrap();
 
         let direct = analysis_from_selection(
             &path,
@@ -1788,12 +1613,20 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(direct, reference);
+        assert_eq!(direct.default_branch, "main");
+        assert_eq!(direct.segments.len(), 2);
+        assert_eq!(direct.segments[0].bookmark_names, vec!["feat-a"]);
+        assert_eq!(direct.segments[0].change_id, "ch_a");
+        assert_eq!(commit_ids(&direct.segments[0]), vec!["ch_a"]);
+        assert_eq!(direct.segments[1].bookmark_names, vec!["feat-c"]);
+        assert_eq!(direct.segments[1].change_id, "ch_c");
+        assert_eq!(commit_ids(&direct.segments[1]), vec!["ch_c", "ch_b"]);
     }
 
-    /// Selecting every boundary matches the positional no-folding path.
+    /// Marking every boundary folds nothing — each segment keeps exactly its
+    /// own commit, the same shape `stakk submit <bookmark>` produces.
     #[test]
-    fn from_selection_parity_all_boundaries() {
+    fn from_selection_all_boundaries_no_folding() {
         let stack = BranchStack {
             segments: vec![
                 make_segment(&["feat-a"], "ch_a", "feature a"),
@@ -1801,9 +1634,6 @@ mod tests {
             ],
         };
         let path = path_of(&stack);
-        let graph = make_graph(vec![stack]);
-
-        let reference = analyze_submission("feat-b", &graph, "main", None).unwrap();
 
         let direct = analysis_from_selection(
             &path,
@@ -1815,7 +1645,12 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(direct, reference);
+        assert_eq!(direct.default_branch, "main");
+        assert_eq!(direct.segments.len(), 2);
+        assert_eq!(direct.segments[0].bookmark_names, vec!["feat-a"]);
+        assert_eq!(commit_ids(&direct.segments[0]), vec!["ch_a"]);
+        assert_eq!(direct.segments[1].bookmark_names, vec!["feat-b"]);
+        assert_eq!(commit_ids(&direct.segments[1]), vec!["ch_b"]);
     }
 
     /// A new bookmark on a mid-segment commit splits the segment — possible
@@ -1873,9 +1708,7 @@ mod tests {
     }
 
     /// Segment commits stay newest-first even when several folded segments
-    /// accumulate. (`analyze_submission` interleaves folded segments in
-    /// trunk-to-leaf order here — a quirk this constructor does not copy;
-    /// same commit set, stated convention for the order.)
+    /// accumulate into one PR.
     #[test]
     fn from_selection_multi_fold_orders_newest_first() {
         let stack = BranchStack {
@@ -1887,33 +1720,16 @@ mod tests {
             ],
         };
         let path = path_of(&stack);
-        let graph = make_graph(vec![stack]);
 
         let direct =
             analysis_from_selection(&path, &[make_assignment("ch_d", "feat-d", false)], "main")
                 .unwrap();
 
         assert_eq!(direct.segments.len(), 1);
-        let ids: Vec<&str> = direct.segments[0]
-            .commits
-            .iter()
-            .map(|c| c.change_id.as_str())
-            .collect();
-        assert_eq!(ids, vec!["ch_d", "ch_c", "ch_b", "ch_a"]);
-
-        // Same commit set as the analyze path, ordering aside.
-        let selected = HashSet::from(["feat-d".to_string()]);
-        let reference = analyze_submission("feat-d", &graph, "main", Some(&selected)).unwrap();
-        let mut reference_ids: Vec<String> = reference.segments[0]
-            .commits
-            .iter()
-            .map(|c| c.change_id.clone())
-            .collect();
-        let mut direct_ids: Vec<String> =
-            ids.iter().map(std::string::ToString::to_string).collect();
-        reference_ids.sort_unstable();
-        direct_ids.sort_unstable();
-        assert_eq!(direct_ids, reference_ids);
+        assert_eq!(
+            commit_ids(&direct.segments[0]),
+            vec!["ch_d", "ch_c", "ch_b", "ch_a"]
+        );
     }
 
     /// An assignment whose change ID is not on the path is a hard error —
