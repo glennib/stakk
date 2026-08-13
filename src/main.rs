@@ -26,8 +26,17 @@ use crate::forge::Forge;
 use crate::forge::comment::StackPlacement;
 use crate::jj::Jj;
 use crate::jj::remote::parse_github_url;
+use crate::jj::remote::parse_remote_url;
 use crate::jj::runner::RealJjRunner;
 use crate::jj::version::MIN_SUPPORTED_JJ_VERSION;
+
+/// The public GitHub host, always accepted without configuration.
+///
+/// Lives at the crate root because it is neither a VCS nor a forge concept:
+/// `jj::remote` uses it to gate remote hosts, `auth` to pick which token
+/// environment variables apply. Either module owning it would make the other
+/// depend on it for no reason.
+pub const GITHUB_COM: &str = "github.com";
 
 #[tokio::main]
 async fn main() {
@@ -57,20 +66,29 @@ async fn run() -> Result<(), StakkError> {
         warn_if_jj_too_old().await;
     }
 
+    // The extra host to treat as GitHub. CLI, STAKK_GITHUB_HOST and the config
+    // file are resolved by clap; GH_HOST is the last resort so an existing
+    // GitHub CLI setup needs no stakk-specific configuration.
+    let github_host = cli
+        .github_host
+        .clone()
+        .or_else(|| std::env::var("GH_HOST").ok().filter(|h| !h.is_empty()));
+    let github_host = github_host.as_deref();
+
     match cli.command {
         Some(Commands::Submit(args)) => {
-            submit_bookmark(&args).await?;
+            submit_bookmark(&args, github_host).await?;
         }
         Some(Commands::Auth(args)) => match args.command {
             AuthCommands::Test => {
-                auth_test().await?;
+                auth_test(github_host).await?;
             }
             AuthCommands::Setup => {
                 auth_setup();
             }
         },
         Some(Commands::Show(args)) => {
-            show_status(&args).await?;
+            show_status(&args, github_host).await?;
         }
         Some(Commands::Completions { shell }) => {
             clap_complete::generate(shell, &mut Cli::command(), "stakk", &mut std::io::stdout());
@@ -79,7 +97,7 @@ async fn run() -> Result<(), StakkError> {
             docs::print(topic);
         }
         None => {
-            submit_bookmark(&cli.submit_args).await?;
+            submit_bookmark(&cli.submit_args, github_host).await?;
         }
     }
 
@@ -104,14 +122,20 @@ async fn warn_if_jj_too_old() {
     }
 }
 
-async fn auth_test() -> Result<(), StakkError> {
-    let auth_token = auth::resolve_token().await?;
+async fn auth_test(github_host: Option<&str>) -> Result<(), StakkError> {
+    // The remote comes first: its host decides which token to ask for.
+    let (_, github_repo) = resolve_github_remote(None, github_host).await?;
+    println!("Host: {}", github_repo.host);
+
+    let auth_token = auth::resolve_token(&github_repo.host).await?;
     println!("Authentication source: {}", auth_token.source);
 
-    let (_, github_repo) = resolve_github_remote(None).await?;
-
-    let forge =
-        forge::github::GitHubForge::new(&auth_token.token, github_repo.owner, github_repo.repo)?;
+    let forge = forge::github::GitHubForge::new(
+        &auth_token.token,
+        github_repo.owner.clone(),
+        github_repo.repo.clone(),
+        github_repo.api_base_uri().as_deref(),
+    )?;
 
     let username = forge.get_authenticated_user().await?;
     println!("Authenticated as: {username}");
@@ -120,35 +144,43 @@ async fn auth_test() -> Result<(), StakkError> {
 }
 
 fn auth_setup() {
-    println!("stakk resolves GitHub authentication in this order:\n");
+    println!("stakk resolves a GitHub token for the host your remote points at.\n");
+    println!("For github.com, in this order:\n");
     println!("  1. GitHub CLI:    Run `gh auth login` to authenticate.");
     println!("                    This is the recommended method.\n");
     println!("  2. GITHUB_TOKEN:  Set the GITHUB_TOKEN environment variable");
     println!("                    to a personal access token with `repo` scope.\n");
     println!("  3. GH_TOKEN:      Set the GH_TOKEN environment variable");
     println!("                    (same as GITHUB_TOKEN, alternative name).\n");
+    println!("For a GitHub Enterprise Server host, name the host first with");
+    println!("--github-host, STAKK_GITHUB_HOST, github_host in stakk.toml, or");
+    println!("GH_HOST. stakk then resolves the token in this order:\n");
+    println!("  1. GitHub CLI:    Run `gh auth login --hostname <host>`.\n");
+    println!("  2. GH_ENTERPRISE_TOKEN, then GITHUB_ENTERPRISE_TOKEN.\n");
     println!("To verify: run `stakk auth test`");
 }
 
 /// Submits a bookmark as a stacked pull request using the three-phase pipeline:
 /// analyze, plan, execute.
-async fn submit_bookmark(args: &SubmitArgs) -> Result<(), StakkError> {
+async fn submit_bookmark(args: &SubmitArgs, github_host: Option<&str>) -> Result<(), StakkError> {
     let pb = indicatif::ProgressBar::new_spinner();
     pb.enable_steady_tick(std::time::Duration::from_millis(120));
 
-    pb.set_message("Resolving authentication...");
     let jj = Jj::new(RealJjRunner);
 
-    // Resolve auth and remote.
-    let auth_token = auth::resolve_token().await?;
-
+    // Resolve the remote before the token: its host decides which token to ask
+    // for.
     pb.set_message("Resolving GitHub remote...");
-    let (remote_name, github_repo) = resolve_github_remote(Some(&args.remote)).await?;
+    let (remote_name, github_repo) = resolve_github_remote(Some(&args.remote), github_host).await?;
+
+    pb.set_message("Resolving authentication...");
+    let auth_token = auth::resolve_token(&github_repo.host).await?;
 
     let forge = forge::github::GitHubForge::new(
         &auth_token.token,
         github_repo.owner.clone(),
         github_repo.repo.clone(),
+        github_repo.api_base_uri().as_deref(),
     )?;
 
     // Build the change graph.
@@ -280,17 +312,29 @@ async fn submit_bookmark(args: &SubmitArgs) -> Result<(), StakkError> {
 /// If `preferred` is given, looks for that specific remote name. Otherwise,
 /// falls back to the first remote with a GitHub URL.
 ///
+/// `github_host` is an extra host to accept besides github.com.
+///
 /// Returns the remote name and parsed `GitHubRepo`.
 async fn resolve_github_remote(
     preferred: Option<&str>,
+    github_host: Option<&str>,
 ) -> Result<(String, jj::remote::GitHubRepo), StakkError> {
     let jj = Jj::new(RealJjRunner);
     let remotes = jj.get_git_remote_list().await?;
 
     if let Some(name) = preferred {
         if let Some(remote) = remotes.iter().find(|r| r.name == name) {
-            if let Some(repo) = parse_github_url(&remote.url) {
+            if let Some(repo) = parse_github_url(&remote.url, github_host) {
                 return Ok((remote.name.clone(), repo));
+            }
+            // An owner/repo URL on an unconfigured host gets a diagnostic that
+            // names the host, rather than the generic "not a GitHub URL".
+            if let Some(parsed) = parse_remote_url(&remote.url) {
+                return Err(StakkError::RemoteHostNotConfigured {
+                    name: name.to_string(),
+                    url: remote.url.clone(),
+                    host: parsed.host,
+                });
             }
             return Err(StakkError::RemoteNotGithub {
                 name: name.to_string(),
@@ -303,7 +347,7 @@ async fn resolve_github_remote(
     }
 
     for remote in &remotes {
-        if let Some(repo) = parse_github_url(&remote.url) {
+        if let Some(repo) = parse_github_url(&remote.url, github_host) {
             return Ok((remote.name.clone(), repo));
         }
     }
@@ -311,7 +355,7 @@ async fn resolve_github_remote(
     Err(StakkError::NoGithubRemote)
 }
 
-async fn show_status(args: &ShowArgs) -> Result<(), StakkError> {
+async fn show_status(args: &ShowArgs, github_host: Option<&str>) -> Result<(), StakkError> {
     // No spinner in json mode: machine-readable output stays quiet.
     let spinner = matches!(args.format, ShowFormat::Pretty).then(|| {
         let pb = indicatif::ProgressBar::new_spinner();
@@ -338,6 +382,7 @@ async fn show_status(args: &ShowArgs) -> Result<(), StakkError> {
         default_branch: &default_branch,
         remotes: &remotes,
         graph: &change_graph,
+        github_host,
     };
     match args.format {
         ShowFormat::Pretty => print!("{}", show::render_pretty(&data, console::colors_enabled())),

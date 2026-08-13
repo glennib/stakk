@@ -50,9 +50,28 @@ pub enum StakkError {
     #[error("remote '{name}' is not a GitHub URL: {url}")]
     #[diagnostic(
         code(stakk::remote::not_github),
-        help("stakk only supports GitHub remotes (github.com URLs)")
+        help(
+            "stakk expects an owner/repo remote URL, e.g. git@github.com:owner/repo.git; for a \
+             GitHub Enterprise Server host, also set --github-host"
+        )
     )]
     RemoteNotGithub { name: String, url: String },
+
+    /// The remote is an owner/repo URL, but on a host stakk has not been told
+    /// to treat as GitHub.
+    #[error("remote '{name}' is on host '{host}', which is not a configured GitHub host: {url}")]
+    #[diagnostic(
+        code(stakk::remote::host_not_configured),
+        help(
+            "if {host} is a GitHub Enterprise Server host, name it with --github-host {host}, \
+             STAKK_GITHUB_HOST, github_host in stakk.toml, or GH_HOST"
+        )
+    )]
+    RemoteHostNotConfigured {
+        name: String,
+        url: String,
+        host: String,
+    },
 
     /// The specified remote was not found.
     #[error("remote '{name}' not found")]
@@ -66,7 +85,11 @@ pub enum StakkError {
     #[error("no GitHub remote found")]
     #[diagnostic(
         code(stakk::remote::no_github),
-        help("make sure this repository has a GitHub remote configured")
+        help(
+            "make sure this repository has a GitHub remote configured; for a GitHub Enterprise \
+             Server host, name it with --github-host, STAKK_GITHUB_HOST, github_host in \
+             stakk.toml, or GH_HOST"
+        )
     )]
     NoGithubRemote,
 

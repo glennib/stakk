@@ -63,7 +63,7 @@ stakk uses its own comment metadata format
 
 ### 8. CLI args, env vars, and config travel together
 
-Every user-facing `submit` arg has four touchpoints that must stay in sync.
+Every user-facing `submit` arg has five touchpoints that must stay in sync.
 When adding, renaming, or changing the default of one, update all of them in the same change:
 
 1. **`src/cli/submit.rs`** — the clap field with `#[arg(long, env = "STAKK_…",
@@ -75,6 +75,9 @@ When adding, renaming, or changing the default of one, update all of them in the
    via `set_default(...)`, and add tests mirroring the `sync_pr_content_*` set: `default`, `config_*`,
    `cli_overrides_config`.
    Extend `toml_deserialize_full`.
+   A `global = true` arg on `Cli` (like `--config` and `--github-host`) is defined on the *root* command only,
+   so its default goes through `apply_global_defaults`, not `apply_submit_defaults` —
+   `mut_arg` on a subcommand would panic with "Argument is undefined".
 4. **`README.md`** — three places:
    - the `stakk.toml` example block,
    - the **Environment variables** table,
@@ -85,6 +88,9 @@ When adding, renaming, or changing the default of one, update all of them in the
    Options with a prose section of their own need that section updated too:
    `--stack-placement` has the **Stack info placement** mode table,
    the selection flags have **Agent / scripting usage**.
+5. **`docs/config.md`** — the same three places again
+   (the full `stakk.toml` block, the **Environment variables** table, and any prose section),
+   since README only carries an abbreviated version and links here.
 
 A change that lands in only some of these will silently drop config-file support, fail to appear in `--help` defaults,
 or stay invisible in the docs.
@@ -94,7 +100,7 @@ or stay invisible in the docs.
 ```text
 src/
 ├── main.rs          # CLI entry point (clap)
-├── auth.rs          # GitHub token resolution (gh CLI, env vars)
+├── auth.rs          # Per-host GitHub token resolution (gh CLI, env vars)
 ├── cli/             # clap subcommand definitions (Cli, SubmitArgs, ShowArgs, GraphArgs, AuthArgs, DocTopic)
 ├── config/          # TOML config discovery, merging, and clap-default injection
 ├── docs/            # `stakk docs` — include_str!s docs/*.md, renders them, generates the topic index
@@ -105,7 +111,7 @@ src/
 │   ├── mod.rs       # Jj<R: JjRunner> — every jj invocation
 │   ├── runner.rs    # JjRunner trait + real/mock runners
 │   ├── types.rs     # serde structs for jj template output
-│   ├── remote.rs    # GitHub remote URL parsing (GitHubRepo)
+│   ├── remote.rs    # Remote URL parsing + GitHub host gate (GitHubRepo, api_base_uri)
 │   └── version.rs   # jj version parsing + minimum supported version
 ├── forge/           # Forge trait + GitHub implementation (octocrab)
 │   ├── mod.rs       # Forge trait, forge-agnostic types, ForgeError
@@ -338,7 +344,7 @@ If you change any of the following, update `scripts/record-demo.py` in the same 
   The variant doc comments are load-bearing:
   clap prints them as possible-value help *and* `docs::index` reads them back.
   `DocTopic` has no `Default` on purpose — `None` means "print the index", not "print a default topic".
-  `stakk docs` is exempt from the four-touchpoint rule (§8): no env var, no config key,
+  `stakk docs` is exempt from the five-touchpoint rule (§8): no env var, no config key,
   so README is the only other touchpoint.
   Add it to the `runs_jj` false-arm in `main.rs` alongside `Completions`,
   or the `_ => true` fallthrough makes it shell out to jj for a version check it does not need.
@@ -351,6 +357,21 @@ If you change any of the following, update `scripts/record-demo.py` in the same 
   Fenced blocks pass through the wrapper unwrapped
   (a folded shell command is a broken one),
   so a test caps fenced lines in `docs/*.md` at 76 chars — rumdl formats at 120 and will not catch it.
+- Remote host handling: `jj::remote::parse_remote_url` parses `<host>/<owner>/<repo>` for *any* host;
+  `parse_github_url` layers the gate on top, accepting `GITHUB_COM` plus one configured host
+  (`--github-host` / `STAKK_GITHUB_HOST` / `github_host` / `GH_HOST`, resolved once in `run()`).
+  The URL is the source of truth for the host — the setting only says which hosts are allowed,
+  so a repo with both a github.com and an Enterprise remote still works.
+  SSH ports are dropped (they say nothing about the API) and HTTP(S) ports are kept (they are the API port).
+  `GitHubRepo::api_base_uri()` returns `None` for github.com,
+  so octocrab keeps its own `https://api.github.com` default, and `https://<host>/api/v3` otherwise —
+  the two are not one template.
+  Always `https`, even for an `http://` remote.
+- The remote must be resolved *before* the token:
+  `auth::resolve_token(host)` picks `GITHUB_TOKEN`/`GH_TOKEN` for github.com
+  and `GH_ENTERPRISE_TOKEN`/`GITHUB_ENTERPRISE_TOKEN` otherwise, and passes `--hostname` to `gh auth token`.
+  Without `--hostname`, gh answers for whatever `GH_HOST` names, which need not be this repo's host.
+  `env_sources`/`token_from_env` take the lookup as a closure so tests never mutate the process environment.
 - jj JSON output uses NDJSON (one JSON object per line).
   Parse with `lines()` plus a per-line `serde_json::from_str`.
 - `jj git remote list` outputs plain text, not JSON.
@@ -495,7 +516,7 @@ If you change any of the following, update `scripts/record-demo.py` in the same 
 - **Selection flags not in env vars/config** — `--keep`, `--keep-all`, `--new`, `--new-auto`,
   `--new-command` are per-invocation decisions like `--dry-run`;
   a persisted default would silently change what gets submitted.
-  CLI + README touchpoints only (deliberate exception to the four-touchpoint rule).
+  CLI + README touchpoints only (deliberate exception to the five-touchpoint rule).
 - **Generic `Jj<R: JjRunner>`** — zero-cost dispatch, edition 2024 async traits.
 - **Three-phase submission** — analyze (pure) → plan (queries forge) → execute.
   All repo mutations (bookmark creation, pushes) live in execute, so `--dry-run` —

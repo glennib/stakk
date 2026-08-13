@@ -191,10 +191,27 @@ auto_prefix = "gb-"
 Every config key, the `inherit` field, worked examples, and the full environment variable table:
 [docs/config.md](docs/config.md), or run `stakk docs config`.
 
+### GitHub Enterprise Server
+
+github.com works out of the box.
+For a GitHub Enterprise Server host, name the host with `--github-host`, `STAKK_GITHUB_HOST`,
+`github_host` in `stakk.toml`, or `GH_HOST` —
+stakk then accepts remotes on that host and uses its API at `https://<host>/api/v3`.
+Tokens are resolved per host, mirroring the GitHub CLI, so an Enterprise token is never sent to github.com.
+
+```sh
+export GH_HOST=github.example.com
+gh auth login --hostname github.example.com
+stakk auth test
+```
+
+Details: [docs/config.md](docs/config.md), or run `stakk docs config`.
+
 ## Environment variables
 
 Every `submit` flag has a matching `STAKK_`-prefixed environment variable — `STAKK_REMOTE`, `STAKK_PR_MODE`,
-`STAKK_STACK_PLACEMENT`, and so on — plus `GITHUB_TOKEN` / `GH_TOKEN` for authentication.
+`STAKK_STACK_PLACEMENT`, and so on — plus `GITHUB_TOKEN` / `GH_TOKEN` for authentication
+(`GH_ENTERPRISE_TOKEN` / `GITHUB_ENTERPRISE_TOKEN` for a GitHub Enterprise Server host).
 CLI flags take precedence over environment variables, which take precedence over config files.
 
 `--dry-run` and the selection flags deliberately have no environment variables: they are per-invocation decisions.
@@ -208,8 +225,13 @@ Full table: [docs/config.md](docs/config.md), or run `stakk docs config`.
 | Flag | Env var | Description |
 |------|---------|-------------|
 | `--config <path>` | `STAKK_CONFIG` | Load this config file instead of discovering `stakk.toml` |
+| `--github-host <host>` | `STAKK_GITHUB_HOST` | Extra host to treat as GitHub, for GitHub Enterprise Server (falls back to `GH_HOST`) |
 | `--version` | | Print the stakk version |
 | `--help` | | Print help; `--help` on a subcommand shows its full flag documentation |
+
+`--config` and `--github-host` accept any subcommand, but they have to come *after* it —
+`stakk auth test --github-host <host>`, not `stakk --github-host <host> auth test`.
+Their environment variables work from either position.
 
 ### `stakk` (no arguments)
 
@@ -401,15 +423,19 @@ stakk completions fish > ~/.config/fish/completions/stakk.fish
 
 ### `stakk auth test`
 
-Validate that GitHub authentication is working and print the authenticated username.
+Validate that GitHub authentication is working, and print the resolved host and the authenticated username.
 
 ### `stakk auth setup`
 
-Print instructions for setting up authentication. stakk resolves a GitHub token in this order:
+Print instructions for setting up authentication. stakk resolves a GitHub token for the host the remote points at.
+For github.com, in this order:
 
 1. **GitHub CLI** (`gh auth token`) — recommended
 2. **`GITHUB_TOKEN`** environment variable
 3. **`GH_TOKEN`** environment variable
+
+For a GitHub Enterprise Server host, `gh auth token --hostname <host>`, then **`GH_ENTERPRISE_TOKEN`**,
+then **`GITHUB_ENTERPRISE_TOKEN`**.
 
 ## Design
 

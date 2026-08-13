@@ -40,6 +40,10 @@ Unknown fields cause a parse error, so typos are caught early.
 # Git remote to push to (default: "origin")
 remote = "origin"
 
+# Extra host to treat as GitHub, for GitHub Enterprise Server
+# (default: none — only github.com is accepted)
+github_host = "github.example.com"
+
 # PR creation mode: "regular" or "draft" (default: "regular")
 pr_mode = "draft"
 
@@ -133,12 +137,48 @@ pr_mode = "regular"
 stack_placement = "comment"
 ```
 
+## GitHub Enterprise Server
+
+github.com is always accepted.
+To work against a GitHub Enterprise Server host, name that host — stakk then accepts remotes on it,
+and talks to its REST API at `https://<host>/api/v3`.
+
+The host is resolved highest to lowest:
+
+1. `--github-host <host>` — must come after the subcommand, e.g. `stakk auth test --github-host <host>`
+2. `STAKK_GITHUB_HOST`
+3. `github_host` in `stakk.toml`
+4. `GH_HOST` — the GitHub CLI's own setting, so an existing `gh` setup needs no stakk configuration
+
+Any other host is rejected, so an unrelated forge is never mistaken for GitHub.
+
+The token is resolved for the host the remote actually points at, mirroring the GitHub CLI:
+
+| Host | Order |
+|------|-------|
+| `github.com` | `gh auth token --hostname github.com`, then `GITHUB_TOKEN`, then `GH_TOKEN` |
+| anything else | `gh auth token --hostname <host>`, then `GH_ENTERPRISE_TOKEN`, then `GITHUB_ENTERPRISE_TOKEN` |
+
+So a github.com token is never sent to an Enterprise host, or the other way around.
+
+```sh
+export GH_HOST=github.example.com
+gh auth login --hostname github.example.com
+stakk auth test
+```
+
+`stakk auth test` prints the host it resolved, so it is the quickest way to confirm the setup.
+
+Note that the API base is always `https`, even for an `http://` remote:
+an Enterprise Server reachable only over plain HTTP is not supported.
+
 ## Environment variables
 
 | Variable | Description |
 |----------|-------------|
 | `STAKK_CONFIG` | Path to config file, overrides automatic discovery (overridden by `--config`) |
 | `STAKK_REMOTE` | Default git remote to push to (overridden by `--remote`) |
+| `STAKK_GITHUB_HOST` | Extra host to treat as GitHub, for GitHub Enterprise Server (overridden by `--github-host`) |
 | `STAKK_PR_MODE` | PR creation mode: `regular` or `draft` (overridden by `--pr-mode`) |
 | `STAKK_DRAFT` | Set to `true` to always create draft PRs (overridden by `--draft`) |
 | `STAKK_TEMPLATE` | Path to a custom minijinja template for stack comments (overridden by `--template`) |
@@ -149,8 +189,11 @@ stack_placement = "comment"
 | `STAKK_BOOKMARK_COMMAND` | Shell command for generating custom bookmark names (overridden by `--bookmark-command`) |
 | `STAKK_BOOKMARKS_REVSET` | Revset for discovering bookmarks (overridden by `--bookmarks-revset`) |
 | `STAKK_HEADS_REVSET` | Revset for discovering unbookmarked heads (overridden by `--heads-revset`) |
-| `GITHUB_TOKEN` | GitHub personal access token (see `stakk auth setup`) |
+| `GH_HOST` | The GitHub CLI's host setting; used as the `github_host` fallback |
+| `GITHUB_TOKEN` | GitHub personal access token for github.com (see `stakk auth setup`) |
 | `GH_TOKEN` | Alternative to `GITHUB_TOKEN` |
+| `GH_ENTERPRISE_TOKEN` | Access token for a GitHub Enterprise Server host |
+| `GITHUB_ENTERPRISE_TOKEN` | Alternative to `GH_ENTERPRISE_TOKEN` |
 
 `--dry-run` and the selection flags (`--keep`, `--keep-all`, `--new`, `--new-auto`, `--new-command`) deliberately have
 no environment variables or config keys: they are per-invocation decisions, and a persisted default would be surprising.
