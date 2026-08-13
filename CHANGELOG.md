@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.24.0](https://github.com/glennib/stakk/compare/v1.23.0...v1.24.0) - 2026-08-13
+
+### Added
+
+- add `stakk docs` subcommand
+
+### Other
+
+- cache cargo artifacts and trim debug info
+
 ## [1.23.0](https://github.com/glennib/stakk/compare/v1.22.0...v1.23.0) - 2026-08-13
 
 ### Added
