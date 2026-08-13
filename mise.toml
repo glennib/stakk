@@ -8,6 +8,7 @@ cargo-binstall = "1.21.1"
 "cargo:cargo-nextest" = "0.9.143"
 "cargo:release-plz" = "0.3.160"
 cargo-insta = "latest"
+rumdl = "latest"
 
 [tasks.fmt]
 description = "Format code"

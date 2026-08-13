@@ -1,0 +1,10 @@
+[global]
+exclude = [
+    "CHANGELOG.md",
+    "src/",
+]
+
+[MD013]
+line-length = 120
+reflow = true
+reflow-mode = "semantic-line-breaks"
