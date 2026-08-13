@@ -9,6 +9,8 @@ pub mod types;
 use std::collections::HashMap;
 use std::collections::HashSet;
 
+use jiff::Timestamp;
+
 use self::types::BookmarkSegment;
 use self::types::BranchStack;
 use self::types::ChangeGraph;
@@ -371,10 +373,10 @@ fn group_segments_into_stacks(
     }
 
     // Sort stacks by committer timestamps: collect each stack's commit
-    // timestamps in descending order, then sort stacks so the one with the
-    // most recent timestamp comes first (leftmost column). Ties are broken
-    // by the next-most-recent timestamp, etc. Final tiebreaker is the leaf
-    // change_id for full determinism.
+    // timestamps as instants in descending order, then sort stacks so the one
+    // with the most recent instant comes first (leftmost column). Ties are
+    // broken by the next-most-recent instant, etc. Final tiebreaker is the
+    // leaf change_id for full determinism.
     stacks.sort_by(|a, b| {
         let ts_a = collect_timestamps_desc(a);
         let ts_b = collect_timestamps_desc(b);
@@ -393,13 +395,26 @@ fn group_segments_into_stacks(
     stacks
 }
 
-/// Collect all committer timestamps from a stack's commits, sorted descending.
-fn collect_timestamps_desc(stack: &BranchStack) -> Vec<&str> {
-    let mut timestamps: Vec<&str> = stack
+/// Collect all committer timestamps from a stack's commits as instants,
+/// sorted descending.
+///
+/// Timestamps are parsed with jiff so that the UTC offset in the RFC 3339
+/// string does not affect ordering: string comparison would place
+/// `12:30:00+02:00` after `12:00:00+00:00` even though it is the earlier
+/// instant. `graph::layout` compares the same timestamps the same way, so the
+/// JSON stack order and the TUI leaf order do not contradict each other.
+///
+/// Unparseable timestamps become `None`, which sorts as oldest — the same
+/// tolerance `graph::layout` applies. jj always emits RFC 3339, so this is a
+/// should-never-happen; failing here instead would make `stakk show` error out
+/// on input the TUI still renders, which is the divergence this parsing
+/// exists to remove.
+fn collect_timestamps_desc(stack: &BranchStack) -> Vec<Option<Timestamp>> {
+    let mut timestamps: Vec<Option<Timestamp>> = stack
         .segments
         .iter()
         .flat_map(|seg| seg.commits.iter())
-        .map(|c| c.committer.timestamp.as_str())
+        .map(|c| c.committer.timestamp.parse().ok())
         .collect();
     timestamps.sort_unstable_by(|a, b| b.cmp(a));
     timestamps
@@ -1094,6 +1109,57 @@ mod tests {
         assert_eq!(stacks[0].segments[0].change_id, "a_leaf"); // 2026-03-03
         assert_eq!(stacks[1].segments[0].change_id, "m_leaf"); // 2026-03-02
         assert_eq!(stacks[2].segments[0].change_id, "z_leaf"); // 2026-03-01
+    }
+
+    /// Stack order compares committer timestamps as instants, not as strings,
+    /// so a UTC offset cannot flip it. Mirrors
+    /// `layout::tests::sibling_order_uses_offset_aware_timestamps`.
+    #[test]
+    fn stacks_ordered_by_offset_aware_timestamps() {
+        use crate::jj::types::Signature;
+
+        let mut segments = HashMap::new();
+        let adjacency_list = HashMap::new();
+        let mut stack_leaves = HashSet::new();
+
+        let test_sig = |ts: &str| Signature {
+            name: "T".to_string(),
+            email: "t@t.t".to_string(),
+            timestamp: ts.to_string(),
+        };
+
+        // 12:00+00:00 is the *later* instant than 12:30+02:00 (= 10:30 UTC),
+        // but lexicographic string comparison would say otherwise.
+        for (id, ts) in [
+            ("utc", "2026-01-01T12:00:00+00:00"),
+            ("offset", "2026-01-01T12:30:00+02:00"),
+        ] {
+            segments.insert(
+                id.to_string(),
+                BookmarkSegment {
+                    bookmark_names: vec![id.to_string()],
+                    change_id: id.to_string(),
+                    commits: vec![SegmentCommit {
+                        commit_id: format!("c_{id}"),
+                        change_id: id.to_string(),
+                        description: String::new(),
+                        author: test_sig(ts),
+                        committer: test_sig(ts),
+                        short_change_id: id[..3].to_string(),
+                        files: vec![],
+                        is_immutable: false,
+                        local_bookmark_names: vec![],
+                    }],
+                },
+            );
+            stack_leaves.insert(id.to_string());
+        }
+
+        let stacks = group_segments_into_stacks(&stack_leaves, &adjacency_list, &segments);
+
+        assert_eq!(stacks.len(), 2);
+        assert_eq!(stacks[0].segments[0].change_id, "utc");
+        assert_eq!(stacks[1].segments[0].change_id, "offset");
     }
 
     /// Non-user bookmarks on a commit are filtered out; segment uses only
