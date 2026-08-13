@@ -147,29 +147,36 @@ and talks to its REST API at `https://<host>/api/v3`.
 The host is resolved highest to lowest:
 
 1. `--github-host <host>` — a global flag, so it works either side of the subcommand,
-   e.g. `stakk auth test --github-host <host>`
+   e.g. `stakk show --github-host <host>`
 2. `STAKK_GITHUB_HOST`
 3. `github_host` in `stakk.toml`
 4. `GH_HOST` — the GitHub CLI's own setting, so an existing `gh` setup needs no stakk configuration
 
 Any other host is rejected, so an unrelated forge is never mistaken for GitHub.
 
-The token is resolved for the host the remote actually points at, mirroring the GitHub CLI:
+The token is resolved for the host the remote actually points at,
+by asking `gh auth token --hostname <host>` first and reading the environment only if `gh` is unavailable
+or has no token for that host:
 
-| Host | Order |
-|------|-------|
-| `github.com` | `gh auth token --hostname github.com`, then `GITHUB_TOKEN`, then `GH_TOKEN` |
-| anything else | `gh auth token --hostname <host>`, then `GH_ENTERPRISE_TOKEN`, then `GITHUB_ENTERPRISE_TOKEN` |
+| Host | Environment variables |
+|------|-----------------------|
+| `github.com` | `GITHUB_TOKEN`, `GH_TOKEN` |
+| anything else | `GH_ENTERPRISE_TOKEN`, `GITHUB_ENTERPRISE_TOKEN` |
 
 So a github.com token is never sent to an Enterprise host, or the other way around.
 
 ```sh
 export GH_HOST=github.example.com
 gh auth login --hostname github.example.com
-stakk auth test
+gh auth status --hostname github.example.com
 ```
 
-`stakk auth test` prints the host it resolved, so it is the quickest way to confirm the setup.
+`gh auth status --hostname <host>` reports the token stakk will get, since stakk asks `gh` first,
+so it is the quickest way to confirm the setup.
+A `stakk submit --dry-run` *with selection flags* — for example `stakk submit --dry-run --keep <bookmark>` —
+exercises the whole remote → token → API chain read-only; without them it stops at the selection TUI,
+before the plan phase that queries the forge.
+Both are covered by `stakk docs auth`.
 
 Note that the API base is always `https`, even for an `http://` remote:
 an Enterprise Server reachable only over plain HTTP is not supported.
@@ -191,7 +198,7 @@ an Enterprise Server reachable only over plain HTTP is not supported.
 | `STAKK_BOOKMARKS_REVSET` | Revset for discovering bookmarks (overridden by `--bookmarks-revset`) |
 | `STAKK_HEADS_REVSET` | Revset for discovering unbookmarked heads (overridden by `--heads-revset`) |
 | `GH_HOST` | The GitHub CLI's host setting; used as the `github_host` fallback |
-| `GITHUB_TOKEN` | GitHub personal access token for github.com (see `stakk auth setup`) |
+| `GITHUB_TOKEN` | GitHub personal access token for github.com (see `stakk docs auth`) |
 | `GH_TOKEN` | Alternative to `GITHUB_TOKEN` |
 | `GH_ENTERPRISE_TOKEN` | Access token for a GitHub Enterprise Server host |
 | `GITHUB_ENTERPRISE_TOKEN` | Alternative to `GH_ENTERPRISE_TOKEN` |

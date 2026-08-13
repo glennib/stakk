@@ -169,11 +169,12 @@ Tokens are resolved per host, mirroring the GitHub CLI, so an Enterprise token i
 ```sh
 export GH_HOST=github.example.com
 gh auth login --hostname github.example.com
-stakk auth test
+gh auth status --hostname github.example.com
 ```
 
-Host resolution order, the per-host token order, and the API base: [docs/config.md](docs/config.md),
-or run `stakk docs config`.
+Host resolution order and the API base: [docs/config.md](docs/config.md), or run `stakk docs config`.
+The per-host token order, what to do when it fails, and how to check the setup: [docs/auth.md](docs/auth.md),
+or run `stakk docs auth`.
 
 ## Usage
 
@@ -304,22 +305,6 @@ stakk completions bash > ~/.local/share/bash-completion/completions/stakk
 # Fish
 stakk completions fish > ~/.config/fish/completions/stakk.fish
 ```
-
-### `stakk auth test`
-
-Validate that GitHub authentication is working, and print the resolved host and the authenticated username.
-
-### `stakk auth setup`
-
-Print instructions for setting up authentication. stakk resolves a GitHub token for the host the remote points at.
-For github.com, in this order:
-
-1. **GitHub CLI** (`gh auth token`) — recommended
-2. **`GITHUB_TOKEN`** environment variable
-3. **`GH_TOKEN`** environment variable
-
-For a GitHub Enterprise Server host, `gh auth token --hostname <host>`, then **`GH_ENTERPRISE_TOKEN`**,
-then **`GITHUB_ENTERPRISE_TOKEN`**.
 
 ## Design
 

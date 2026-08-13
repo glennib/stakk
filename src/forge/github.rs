@@ -59,16 +59,6 @@ impl GitHubForge {
 }
 
 impl Forge for GitHubForge {
-    async fn get_authenticated_user(&self) -> Result<String, ForgeError> {
-        let user = self
-            .client
-            .current()
-            .user()
-            .await
-            .map_err(map_octocrab_error)?;
-        Ok(user.login)
-    }
-
     async fn find_pr_for_branch(&self, head: &str) -> Result<Option<PullRequest>, ForgeError> {
         let qualified_head = format!("{}:{head}", self.owner);
         let pulls = self

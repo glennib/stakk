@@ -1,10 +1,14 @@
 //! GitHub authentication token resolution.
 //!
-//! Resolves a token for a specific host, in priority order:
-//! 1. `gh auth token --hostname <host>` (GitHub CLI)
+//! Resolves a token for a specific host by delegating to the GitHub CLI first:
+//! 1. `gh auth token --hostname <host>`. Note that gh reads the token
+//!    environment variables itself and hands their value back, so an exported
+//!    token wins over gh's stored credential without this module ever seeing
+//!    the variable.
 //! 2. the host's environment variables — `GITHUB_TOKEN`/`GH_TOKEN` for
 //!    github.com, `GH_ENTERPRISE_TOKEN`/`GITHUB_ENTERPRISE_TOKEN` for a GitHub
-//!    Enterprise Server host
+//!    Enterprise Server host. This is the fallback for when gh is absent or has
+//!    no token for the host, not a lower-priority alternative to it.
 //!
 //! The env-var split mirrors the GitHub CLI, so an enterprise token is never
 //! sent to github.com and vice versa.
@@ -29,24 +33,18 @@ pub enum TokenSource {
     GitHubEnterpriseTokenEnv,
 }
 
-impl std::fmt::Display for TokenSource {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::GitHubCli => write!(f, "GitHub CLI (gh auth token)"),
-            Self::GitHubTokenEnv => write!(f, "GITHUB_TOKEN environment variable"),
-            Self::GhTokenEnv => write!(f, "GH_TOKEN environment variable"),
-            Self::GhEnterpriseTokenEnv => write!(f, "GH_ENTERPRISE_TOKEN environment variable"),
-            Self::GitHubEnterpriseTokenEnv => {
-                write!(f, "GITHUB_ENTERPRISE_TOKEN environment variable")
-            }
-        }
-    }
-}
-
 /// A resolved authentication token with its source.
 #[derive(Debug, Clone)]
 pub struct AuthToken {
     pub token: String,
+    /// Which source the token came from. Nothing in the binary reads it —
+    /// submit needs only the token itself — but it is what the resolution
+    /// tests assert on, and it is the one piece of the resolution result that
+    /// is worth surfacing if a diagnostic ever needs to name the source.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "read by the resolution tests only")
+    )]
     pub source: TokenSource,
 }
 
@@ -63,7 +61,10 @@ pub enum AuthError {
     #[error("failed to run `gh auth token`: {0}")]
     #[diagnostic(
         code(stakk::auth::gh_cli_error),
-        help("install the `gh` CLI, or set a token environment variable to skip it")
+        help(
+            "repair the `gh` installation — a `gh` that cannot be started stops resolution before \
+             the token environment variables are read"
+        )
     )]
     GhCliError(std::io::Error),
 }
@@ -112,11 +113,13 @@ fn token_from_env(host: &str, lookup: impl Fn(&str) -> Option<String>) -> Option
 
 /// Resolve a GitHub authentication token for `host`.
 ///
-/// Tries the gh CLI first, then the host's environment variables. Returns the
-/// first token found, or `AuthError::NoAuthFound`.
+/// Asks the gh CLI first — which answers from the environment itself when a
+/// token for the host is set — and reads the host's environment variables here
+/// only when gh is absent or has nothing for the host. Returns the first token
+/// found, or `AuthError::NoAuthFound`.
 ///
-/// This does NOT validate the token against the GitHub API.
-/// Use `Forge::get_authenticated_user()` to validate.
+/// This does NOT validate the token against the GitHub API: an expired or
+/// revoked token resolves fine and fails at the first API call.
 pub async fn resolve_token(host: &str) -> Result<AuthToken, AuthError> {
     if let Some(token) = try_gh_cli(host).await? {
         return Ok(AuthToken {
@@ -173,42 +176,6 @@ mod tests {
                 .find(|(key, _)| *key == name)
                 .map(|(_, value)| (*value).to_string())
         }
-    }
-
-    #[test]
-    fn token_source_display_github_cli() {
-        assert_eq!(
-            TokenSource::GitHubCli.to_string(),
-            "GitHub CLI (gh auth token)"
-        );
-    }
-
-    #[test]
-    fn token_source_display_github_token_env() {
-        assert_eq!(
-            TokenSource::GitHubTokenEnv.to_string(),
-            "GITHUB_TOKEN environment variable"
-        );
-    }
-
-    #[test]
-    fn token_source_display_gh_token_env() {
-        assert_eq!(
-            TokenSource::GhTokenEnv.to_string(),
-            "GH_TOKEN environment variable"
-        );
-    }
-
-    #[test]
-    fn token_source_display_enterprise_env() {
-        assert_eq!(
-            TokenSource::GhEnterpriseTokenEnv.to_string(),
-            "GH_ENTERPRISE_TOKEN environment variable"
-        );
-        assert_eq!(
-            TokenSource::GitHubEnterpriseTokenEnv.to_string(),
-            "GITHUB_ENTERPRISE_TOKEN environment variable"
-        );
     }
 
     #[test]

@@ -20,6 +20,7 @@ use crate::markdown::wrap::wrap_markdown;
 const SCRIPTING: &str = include_str!("../../docs/scripting.md");
 const CONFIG: &str = include_str!("../../docs/config.md");
 const TEMPLATE: &str = include_str!("../../docs/template.md");
+const AUTH: &str = include_str!("../../docs/auth.md");
 
 /// Used when stdout is a terminal of unknown size.
 const FALLBACK_WIDTH: usize = 80;
@@ -32,6 +33,7 @@ pub(crate) fn source(topic: DocTopic) -> &'static str {
         DocTopic::Scripting => SCRIPTING,
         DocTopic::Config => CONFIG,
         DocTopic::Template => TEMPLATE,
+        DocTopic::Auth => AUTH,
     }
 }
 

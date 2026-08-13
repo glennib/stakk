@@ -83,11 +83,6 @@ pub struct CreatePrParams {
 /// All methods return forge-agnostic types. Implementations handle the
 /// translation to/from forge-specific APIs.
 pub trait Forge: Send + Sync {
-    /// Get the username of the authenticated user.
-    fn get_authenticated_user(
-        &self,
-    ) -> impl std::future::Future<Output = Result<String, ForgeError>> + Send;
-
     /// Find an open PR with the given head branch.
     fn find_pr_for_branch(
         &self,

@@ -18,11 +18,9 @@ use crate::cli::Cli;
 use crate::cli::Commands;
 use crate::cli::ShowArgs;
 use crate::cli::ShowFormat;
-use crate::cli::auth::AuthCommands;
 use crate::cli::submit::SubmitArgs;
 use crate::error::StakkError::Interrupted;
 use crate::error::StakkError::{self};
-use crate::forge::Forge;
 use crate::forge::comment::StackPlacement;
 use crate::jj::Jj;
 use crate::jj::remote::parse_github_url;
@@ -56,10 +54,9 @@ async fn run() -> Result<(), StakkError> {
     let cli = Cli::from_arg_matches(&cmd.get_matches())?;
 
     // Warn about an outdated jj for commands that shell out to it. Commands that
-    // never touch jj (completions, docs, `auth setup`) skip the check.
+    // never touch jj (completions, docs) skip the check.
     let runs_jj = match &cli.command {
         Some(Commands::Completions { .. } | Commands::Docs { .. }) => false,
-        Some(Commands::Auth(args)) => matches!(args.command, AuthCommands::Test),
         _ => true, // Submit, Show, and None (= submit) all use jj.
     };
     if runs_jj {
@@ -79,14 +76,6 @@ async fn run() -> Result<(), StakkError> {
         Some(Commands::Submit(args)) => {
             submit_bookmark(&args, github_host).await?;
         }
-        Some(Commands::Auth(args)) => match args.command {
-            AuthCommands::Test => {
-                auth_test(github_host).await?;
-            }
-            AuthCommands::Setup => {
-                auth_setup();
-            }
-        },
         Some(Commands::Show(args)) => {
             show_status(&args, github_host).await?;
         }
@@ -127,44 +116,6 @@ async fn warn_if_jj_too_old() {
              ({MIN_SUPPORTED_JJ_VERSION}). stakk may not work correctly — consider upgrading jj."
         );
     }
-}
-
-async fn auth_test(github_host: Option<&str>) -> Result<(), StakkError> {
-    // The remote comes first: its host decides which token to ask for.
-    let (_, github_repo) = resolve_github_remote(None, github_host).await?;
-    println!("Host: {}", github_repo.host);
-
-    let auth_token = auth::resolve_token(&github_repo.host).await?;
-    println!("Authentication source: {}", auth_token.source);
-
-    let forge = forge::github::GitHubForge::new(
-        &auth_token.token,
-        github_repo.owner.clone(),
-        github_repo.repo.clone(),
-        github_repo.api_base_uri().as_deref(),
-    )?;
-
-    let username = forge.get_authenticated_user().await?;
-    println!("Authenticated as: {username}");
-
-    Ok(())
-}
-
-fn auth_setup() {
-    println!("stakk resolves a GitHub token for the host your remote points at.\n");
-    println!("For github.com, in this order:\n");
-    println!("  1. GitHub CLI:    Run `gh auth login` to authenticate.");
-    println!("                    This is the recommended method.\n");
-    println!("  2. GITHUB_TOKEN:  Set the GITHUB_TOKEN environment variable");
-    println!("                    to a personal access token with `repo` scope.\n");
-    println!("  3. GH_TOKEN:      Set the GH_TOKEN environment variable");
-    println!("                    (same as GITHUB_TOKEN, alternative name).\n");
-    println!("For a GitHub Enterprise Server host, name the host first with");
-    println!("--github-host, STAKK_GITHUB_HOST, github_host in stakk.toml, or");
-    println!("GH_HOST. stakk then resolves the token in this order:\n");
-    println!("  1. GitHub CLI:    Run `gh auth login --hostname <host>`.\n");
-    println!("  2. GH_ENTERPRISE_TOKEN, then GITHUB_ENTERPRISE_TOKEN.\n");
-    println!("To verify: run `stakk auth test`");
 }
 
 /// Submits a selection of bookmarks as stacked pull requests using the

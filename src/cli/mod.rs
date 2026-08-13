@@ -1,4 +1,3 @@
-pub mod auth;
 pub mod graph;
 pub mod submit;
 
@@ -12,7 +11,6 @@ use clap::Parser;
 use clap::Subcommand;
 use clap_complete::Shell;
 
-use crate::cli::auth::AuthArgs;
 use crate::cli::graph::GraphArgs;
 use crate::cli::submit::SubmitArgs;
 use crate::config::Config;
@@ -53,8 +51,6 @@ pub enum Commands {
     // Boxed: SubmitArgs is by far the largest payload (clippy
     // large_enum_variant).
     Submit(Box<SubmitArgs>),
-    /// Manage authentication.
-    Auth(AuthArgs),
     /// Show repository status and bookmark stacks.
     Show(ShowArgs),
     /// Generate shell completions for the given shell.
@@ -81,6 +77,8 @@ pub enum DocTopic {
     Scripting,
     /// Config files, precedence, and environment variables.
     Config,
+    /// GitHub authentication: tokens, hosts, and troubleshooting.
+    Auth,
     /// Stack info placement and stack comment templates.
     Template,
 }
@@ -401,16 +399,6 @@ mod tests {
             ..Default::default()
         };
         let cli = parse_with_config(config, &["stakk", "show"]);
-        assert_eq!(cli.github_host.as_deref(), Some("github.example.com"));
-    }
-
-    #[test]
-    fn github_host_from_config_reaches_auth_test() {
-        let config = Config {
-            github_host: Some("github.example.com".into()),
-            ..Default::default()
-        };
-        let cli = parse_with_config(config, &["stakk", "auth", "test"]);
         assert_eq!(cli.github_host.as_deref(), Some("github.example.com"));
     }
 

@@ -103,7 +103,7 @@ and non-interactive submission is spelled with the `--keep`/`--new*` selection f
 src/
 ├── main.rs          # CLI entry point (clap)
 ├── auth.rs          # Per-host GitHub token resolution (gh CLI, env vars)
-├── cli/             # clap subcommand definitions (Cli, SubmitArgs, ShowArgs, GraphArgs, AuthArgs, DocTopic)
+├── cli/             # clap subcommand definitions (Cli, SubmitArgs, ShowArgs, GraphArgs, DocTopic)
 ├── config/          # TOML config discovery, merging, and clap-default injection
 ├── docs/            # `stakk docs` — include_str!s docs/*.md, renders them, generates the topic index
 ├── markdown/        # Markdown transforms shared by submit/ and docs/

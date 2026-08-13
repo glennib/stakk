@@ -1207,10 +1207,6 @@ mod tests {
     }
 
     impl Forge for MockForge {
-        async fn get_authenticated_user(&self) -> Result<String, ForgeError> {
-            Ok("test-user".to_string())
-        }
-
         fn find_pr_for_branch(
             &self,
             head: &str,
