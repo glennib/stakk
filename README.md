@@ -49,14 +49,6 @@ and idempotent updates.
 - **Forge-agnostic core** — GitHub is the first implementation, but the
   submission logic is decoupled behind a `Forge` trait.
 
-## Origins
-
-stakk is inspired by [jj-stack](https://github.com/keanemind/jj-stack),
-a TypeScript/ReScript CLI that does the same job. jj-stack's core algorithms — change graph construction,
-segment grouping, topological ordering — directly informed stakk's design.
-
-stakk reimplements these ideas in Rust to continue the development and to address new features and desired changes.
-
 ## Installation
 
 ### Requirements
