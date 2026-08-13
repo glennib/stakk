@@ -194,11 +194,14 @@ and the `stakk docs` index for free.
   (the `runs_jj` match loses its `Auth` arm).
   The `src/auth.rs` token-resolution module stays — submit uses it.
 - What `auth test` did is still reachable without it:
-  `gh auth status --hostname <host>` checks the token the same way stakk will resolve it,
-  and any `stakk submit --dry-run` exercises the full remote→token→API chain read-only
-  (the plan phase queries the forge).
-  `docs/auth.md` should say exactly this, since `docs/config.md` currently calls `stakk auth test`
-  "the quickest way to confirm the setup" — that guidance moves with it.
+  `gh auth status --hostname <host>` checks the token the same way stakk resolves it,
+  since stakk delegates to `gh auth token` first.
+  A `stakk submit --dry-run` **with selection flags** exercises the full remote→token→API chain read-only,
+  because the forge is queried in the plan phase.
+  Corrected from this plan's first draft, which said "any `stakk submit --dry-run`": a bare `--dry-run` reaches the TUI
+  (or `stakk::not_interactive`) before the plan phase, so it resolves the remote and token but never calls the API.
+  `docs/auth.md` says this, and takes over `docs/config.md`'s "the quickest way to confirm the setup" guidance from
+  `stakk auth test`.
 - New doc topic follows the established recipe: `DocTopic` variant, `docs::source` arm, the file.
 
 ### C7 — state that the jj floor is not semver-guarded (required)
