@@ -24,21 +24,26 @@ and idempotent updates.
   branches so each PR shows only its own diff.
 - **Stack-awareness comments** — adds a comment to every PR listing the full stack with links,
   updated in place on re-runs.
-  Optionally, the stack info can be placed in the PR body instead (`--stack-placement body`) or disabled entirely
-  (`--stack-placement none`, which also removes existing stack comments and body fences).
+  `--stack-placement` picks where the stack info goes: a PR `comment` (default), the PR `body`, `none`
+  (write nothing and remove what is already there), or `ignore` (write nothing and touch nothing).
+  See [Stack info placement](#stack-info-placement).
   Comments are rendered with [minijinja](https://github.com/mitsuhiko/minijinja) templates
   and can be customized with `--template` or the `STAKK_TEMPLATE` environment variable.
 - **Idempotent** — re-running `stakk submit` is always safe.
   Existing PRs are updated, never duplicated.
 - **Dry-run mode** — `--dry-run` shows exactly what would happen without
-  touching GitHub.
+  touching GitHub — or the repo: no bookmarks are created, nothing is pushed.
 - **Interactive TUI** — running `stakk` without arguments launches a ratatui TUI: a graph view shows all branch stacks,
   then a bookmark assignment screen lets you toggle bookmarks on unmarked commits before submitting.
-  Each commit cycles through: `[x]` existing → `[~]` auto → `[+]` generated `stakk-xxxx` → `[*]` custom command → `[ ]`
-  skip.
+  Each commit cycles through: `[x]` existing → `[~]` auto → `[>]` typed by hand → `[+]` generated `stakk-xxxx` → `[*]`
+  custom command → `[ ]` skip.
+- **Non-interactive selection** — `--keep`/`--keep-all`/`--new`/`--new-auto`/`--new-command` build the exact same
+  submission the TUI would, without a terminal.
+  Pair them with `stakk show --format=json` for scripts and coding agents.
 - **Draft PRs** — `--draft` creates new PRs as drafts.
 - **PR body from descriptions** — PR titles and bodies are populated from jj change descriptions.
-  Manually edited PR bodies are never overwritten.
+  By default they are only written when the PR is created, so manual edits on GitHub survive;
+  `--sync-pr-content` opts into keeping them in sync.
 - **No direct git usage** — all VCS operations go through `jj` commands, so
   workspaces and non-colocated repos work automatically.
 - **Forge-agnostic core** — GitHub is the first implementation, but the
@@ -145,6 +150,31 @@ Each PR shows only its own diff, and a stack comment on every PR links all relat
 
 Re-running `stakk submit` is always safe — it updates existing PRs rather than creating duplicates.
 
+## Stack info placement
+
+`--stack-placement` (or `stack_placement` in a config file, or `STAKK_STACK_PLACEMENT`) decides
+where the stack overview lives on each PR:
+
+| Mode | Writes | Removes existing stack comments/body fences |
+|------|--------|---------------------------------------------|
+| `comment` (default) | A separate PR comment, updated in place | Yes, when migrating from `body` |
+| `body` | A fenced section in the PR body (`STAKK_BODY_START` … `STAKK_BODY_END`) | Yes, when migrating from `comment` |
+| `none` | Nothing | Yes, on every submit |
+| `ignore` | Nothing | No — existing artifacts are left exactly as they are |
+
+Switching between `comment` and `body` migrates automatically.
+Content you write outside the body fences is preserved; the fenced section itself is overwritten on every run.
+
+`none` and `ignore` both write no stack info — the difference is what happens to whatever is already on the PR.
+Use `none` to retire stakk's stack comments cleanly (for example when moving to GitHub's own stacked-PR UI).
+Use `ignore` to leave the existing comments and fences frozen in place — handy while trying another tool,
+or when another process owns that part of the PR.
+Neither mode reads or compiles a custom `--template`,
+so a broken template cannot fail a submission that will not render it.
+
+A submission that produces a single PR is not a stack: no stack info is written, and stale artifacts from an earlier,
+larger stack are cleaned up (unless the mode is `ignore`).
+
 ## Configuration
 
 stakk loads settings from TOML config files, environment variables, and CLI flags.
@@ -192,9 +222,11 @@ pr_mode = "draft"
 # Path to a custom minijinja template for stack comments
 template = "/path/to/my-template.md.jinja"
 
-# Where to place stack info: "comment", "body", or "none" (default: "comment")
+# Where to place stack info: "comment", "body", "none", or "ignore"
+# (default: "comment")
 # "none" writes no stack info and removes existing stack comments/body fences
 # on the next submit (e.g. if you rely on GitHub's native stacked PRs).
+# "ignore" writes no stack info and leaves existing artifacts untouched.
 stack_placement = "body"
 
 # Prefix for auto-generated bookmark names (default: none)
@@ -286,11 +318,13 @@ stack_placement = "comment"
 | `STAKK_PR_MODE` | PR creation mode: `regular` or `draft` (overridden by `--pr-mode`) |
 | `STAKK_DRAFT` | Set to `true` to always create draft PRs (overridden by `--draft`) |
 | `STAKK_TEMPLATE` | Path to a custom minijinja template for stack comments (overridden by `--template`) |
-| `STAKK_STACK_PLACEMENT` | Where to place the stack info: `comment` (default), `body`, or `none` (overridden by `--stack-placement`) |
+| `STAKK_STACK_PLACEMENT` | Where to place the stack info: `comment` (default), `body`, `none`, or `ignore` (overridden by `--stack-placement`) |
 | `STAKK_AUTO_PREFIX` | Prefix for auto-generated bookmark names (overridden by `--auto-prefix`) |
 | `STAKK_SYNC_PR_CONTENT` | Sync PR title/body from commits: `none` (default), `title`, `body`, or `all` (overridden by `--sync-pr-content`) |
 | `STAKK_TRAILERS` | Whether to keep or strip git commit trailers in PR bodies: `keep` (default) or `strip` (overridden by `--trailers`) |
 | `STAKK_BOOKMARK_COMMAND` | Shell command for generating custom bookmark names (overridden by `--bookmark-command`) |
+| `STAKK_BOOKMARKS_REVSET` | Revset for discovering bookmarks (overridden by `--bookmarks-revset`) |
+| `STAKK_HEADS_REVSET` | Revset for discovering unbookmarked heads (overridden by `--heads-revset`) |
 | `GITHUB_TOKEN` | GitHub personal access token (see `stakk auth setup`) |
 | `GH_TOKEN` | Alternative to `GITHUB_TOKEN` |
 
@@ -298,6 +332,14 @@ CLI flags take precedence over environment variables, which take precedence over
 See [Configuration](#configuration) for the full precedence order.
 
 ## Usage
+
+### Global flags
+
+| Flag | Env var | Description |
+|------|---------|-------------|
+| `--config <path>` | `STAKK_CONFIG` | Load this config file instead of discovering `stakk.toml` |
+| `--version` | | Print the stakk version |
+| `--help` | | Print help; `--help` on a subcommand shows its full flag documentation |
 
 ### `stakk` (no arguments)
 
@@ -320,13 +362,17 @@ then assign bookmarks to any unmarked commits before submitting.
 | `--new <rev>[=<name>]` | | Non-interactive: new bookmark at `rev` — `stakk-<change_id>` by default, or `name` (repeatable) |
 | `--new-auto <rev>` | | Non-interactive: new TF-IDF-named bookmark at `rev`, honoring `--auto-prefix`; falls back to `stakk-<change_id>` when nothing can be derived or the name is taken (repeatable) |
 | `--new-command <rev>` | | Non-interactive: new bookmark at `rev` named by `--bookmark-command` (repeatable) |
-| `--draft` | `STAKK_DRAFT` | Create new PRs as drafts |
+| `--pr-mode <mode>` | `STAKK_PR_MODE` | Create new PRs as `regular` (default) or `draft` |
+| `--draft` | `STAKK_DRAFT` | Shortcut for `--pr-mode draft`; wins if both are given |
 | `--remote <name>` | `STAKK_REMOTE` | Push to a specific remote (default: `origin`) |
 | `--template <path>` | `STAKK_TEMPLATE` | Use a custom minijinja template for stack comments |
-| `--stack-placement <mode>` | `STAKK_STACK_PLACEMENT` | Place stack info as a PR `comment` (default), in the PR `body`, or write none at all with `none` |
+| `--stack-placement <mode>` | `STAKK_STACK_PLACEMENT` | Place stack info as a PR `comment` (default), in the PR `body`, or write none with `none`/`ignore` — see [Stack info placement](#stack-info-placement) |
 | `--auto-prefix <prefix>` | `STAKK_AUTO_PREFIX` | Prefix for `[~]auto` bookmark names (e.g. `gb-`) |
 | `--sync-pr-content <mode>` | `STAKK_SYNC_PR_CONTENT` | Sync PR title/body from commits: `none` (default), `title`, `body`, `all` |
 | `--trailers <mode>` | `STAKK_TRAILERS` | Keep or strip git commit trailers in PR bodies: `keep` (default), `strip` |
+| `--bookmark-command <cmd>` | `STAKK_BOOKMARK_COMMAND` | Shell command that names bookmarks, enabling the `[*]` TUI state and `--new-command` |
+| `--bookmarks-revset <revset>` | `STAKK_BOOKMARKS_REVSET` | Which bookmarks become stack segments (default: `mine() ~ trunk() ~ immutable()`) |
+| `--heads-revset <revset>` | `STAKK_HEADS_REVSET` | Which unbookmarked heads are discovered (default: `heads((mine() ~ empty() ~ immutable()) & trunk()..)`) |
 
 The selection flags (`--keep`, `--keep-all`, `--new`, `--new-auto`, `--new-command`) replace the TUI with a fully
 explicit, scriptable selection; they conflict with the positional bookmark argument and are deliberately CLI-only (no
@@ -355,12 +401,43 @@ stakk submit --keep base --new qzvs=my-feature --new-auto wmtk
 or changing anything — safe for validation before the real run.
 Selection errors carry machine-readable diagnostic codes (`stakk::selection::*`) and point back at `stakk show`.
 
+#### PR titles and bodies
+
 PR titles come from the first line of the jj change description.
 PR bodies are populated from the full description (everything after the title line).
 For segments with multiple commits, descriptions are joined with `---` separators.
 By default, titles and bodies are only set on PR creation — manually edited PR descriptions are never overwritten.
 Use `--sync-pr-content` to update existing PRs: `title` syncs only the title, `body` only the body, or `all` for both.
 Only fields that actually changed are updated.
+
+Descriptions are reflowed on the way into the PR body: hard-wrapped prose lines are joined into soft-wrapped paragraphs,
+so a commit message wrapped at 72 columns does not render as ragged lines on GitHub.
+Structural Markdown — headers, lists, tables, block quotes, fenced and indented code, thematic breaks —
+is passed through verbatim.
+
+`--trailers strip` removes the trailing key/value block
+(`Signed-off-by`, `Co-authored-by`, `Refs`, …) from the generated body; the default `keep` passes it through.
+
+#### Custom bookmark names
+
+`--bookmark-command` names bookmarks with an external program.
+The command is run through `sh -c` (Unix) or `cmd /C` (Windows),
+receives a JSON description of one segment of commits on stdin, and must print a single bookmark name on stdout.
+It powers the `[*]` state in the TUI and the `--new-command` selection flag.
+
+The full JSON schema, with a worked example, is in `stakk submit --help`.
+
+#### Immutable commits
+
+Commits that jj considers immutable cannot get a new bookmark: the default bookmarks revset excludes `immutable()`,
+so stakk would create a PR it could never see again on the next run.
+The TUI locks such rows to `[ ]` and explains why, `--new <rev>` on one fails with `stakk::selection::rev_immutable`,
+and the commits are annotated in `stakk show`.
+A row only unlocks when the commit is a real segment boundary —
+a bookmark exists on it *and* the bookmarks revset does not filter that bookmark out
+(the default `~ immutable()` term does).
+So if you really need a PR there, create the bookmark yourself and drop `~ immutable()` from `--bookmarks-revset`;
+otherwise move the work onto mutable commits.
 
 ### `stakk show`
 
@@ -370,6 +447,8 @@ Fully offline: only `jj` is queried, never GitHub — PR state is `stakk submit 
 | Flag | Env var | Description |
 |------|--------|-------------|
 | `--format <format>` | | Output format: `pretty` (default) or `json` |
+| `--bookmarks-revset <revset>` | `STAKK_BOOKMARKS_REVSET` | Which bookmarks become stack segments |
+| `--heads-revset <revset>` | `STAKK_HEADS_REVSET` | Which unbookmarked heads are discovered |
 
 The default `pretty` format renders a jj-log-style graph of all stacks, always fully expanded.
 Every commit row carries its short change id, bookmarks, and description summary;
@@ -387,6 +466,12 @@ Remote: origin git@github.com:you/repo.git (you/repo)
  ○  qzvt  "add base"
  ◆  trunk
 ```
+
+Bookmarks whose history contains a merge commit cannot be stacked and are left out of the graph; when that happens,
+`pretty` prints a `(N bookmark(s) excluded due to merge commits)` footer.
+
+`stakk show` and `stakk submit` build the graph the same way, so `--bookmarks-revset`/`--heads-revset`
+(and their config keys) apply to both — what `show` prints is what `submit` would work on.
 
 `--format=json` emits a schema-versioned JSON document for machine consumption (scripts, agents).
 Identifiers in the document — change id prefixes and bookmark names — can be passed directly to `stakk submit`.

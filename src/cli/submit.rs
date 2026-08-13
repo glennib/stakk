@@ -77,15 +77,20 @@ impl std::fmt::Display for TrailerHandling {
 #[derive(Debug, Args)]
 #[command(group = clap::ArgGroup::new("explicit_marks").multiple(true))]
 pub struct SubmitArgs {
-    /// The bookmark to submit as a pull request. If omitted, shows an
-    /// interactive selection (or uses the explicit selection flags
-    /// --keep/--keep-all/--new/--new-auto/--new-command, which conflict
-    /// with this argument).
-    #[arg(conflicts_with = "explicit_marks")]
+    /// The bookmark to submit as a pull request.
+    ///
+    /// Every bookmark between trunk and this one gets its own stacked
+    /// pull request. If omitted, shows an interactive selection (or uses
+    /// the explicit selection flags --keep/--keep-all/--new/--new-auto/
+    /// --new-command, which conflict with this argument).
+    #[arg(conflicts_with = "explicit_marks", verbatim_doc_comment)]
     pub bookmark: Option<String>,
 
     /// Show what would be done without actually doing it.
-    #[arg(long)]
+    ///
+    /// Fully inert: the plan is printed, but no bookmark is created,
+    /// nothing is pushed, and no pull request is touched.
+    #[arg(long, verbatim_doc_comment)]
     pub dry_run: bool,
 
     /// Keep an existing bookmark as a PR boundary (repeatable).
@@ -214,7 +219,7 @@ pub struct SubmitArgs {
     #[arg(long, env = "STAKK_TEMPLATE", verbatim_doc_comment)]
     pub template: Option<String>,
 
-    /// Where to place the stack comment on each pull request.
+    /// Where to place the stack overview on each pull request.
     ///
     /// In body mode the stack is written inside a fenced section
     /// (STAKK_BODY_START / STAKK_BODY_END) that is appended to the PR
@@ -226,9 +231,17 @@ pub struct SubmitArgs {
     /// comments and body fences are removed from each PR on submit, so
     /// the feature can be retired cleanly.
     ///
-    /// Switching modes migrates automatically: moving to body mode
-    /// deletes the old stack comment, and moving to comment mode strips
-    /// the fenced section from the PR body.
+    /// In ignore mode no stack info is written either, but existing
+    /// stack comments and body fences are left exactly as they are —
+    /// use it when something else owns that part of the PR.
+    ///
+    /// Switching between comment and body migrates automatically:
+    /// moving to body mode deletes the old stack comment, and moving to
+    /// comment mode strips the fenced section from the PR body.
+    ///
+    /// A submission that produces a single pull request is not a stack:
+    /// no stack info is written, and stale artifacts are cleaned up
+    /// unless the mode is ignore.
     #[arg(
         long,
         env = "STAKK_STACK_PLACEMENT",

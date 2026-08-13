@@ -7,8 +7,14 @@ It complements jj by turning local bookmark state into coherent GitHub PRs with 
 
 ## Current Status
 
-**v1.0.0** — All core features complete: stack detection, three-phase submission, interactive TUI selection,
-stack comment templating, env var config, and comprehensive error handling.
+**v1.22.0** — All core features complete: stack detection, three-phase submission, interactive TUI selection,
+non-interactive selection via `--keep`/`--new*`, offline `stakk show`
+(pretty graph + versioned JSON),
+four stack-placement modes, stack comment templating, layered config
+(CLI > env > repo/user TOML), and comprehensive error handling.
+
+Versions are managed by release-plz from conventional-commit messages.
+Never edit `CHANGELOG.md` or the `version` field by hand.
 
 ## Testing
 
@@ -73,6 +79,12 @@ When adding, renaming, or changing the default of one, update all of them in the
    - the `stakk.toml` example block,
    - the **Environment variables** table,
    - the per-subcommand flag table (e.g. under `stakk submit`).
+     `GraphArgs` flags (`--bookmarks-revset`, `--heads-revset`) appear in *two* tables —
+     `stakk submit` and `stakk show` — because both subcommands flatten them.
+
+   Options with a prose section of their own need that section updated too:
+   `--stack-placement` has the **Stack info placement** mode table,
+   the selection flags have **Agent / scripting usage**.
 
 A change that lands in only some of these will silently drop config-file support, fail to appear in `--help` defaults,
 or stay invisible in the docs.
@@ -83,14 +95,21 @@ or stay invisible in the docs.
 src/
 ├── main.rs          # CLI entry point (clap)
 ├── auth.rs          # GitHub token resolution (gh CLI, env vars)
-├── cli/             # clap subcommand definitions
+├── cli/             # clap subcommand definitions (Cli, SubmitArgs, ShowArgs, GraphArgs, AuthArgs)
+├── config/          # TOML config discovery, merging, and clap-default injection
 ├── jj/              # jj CLI interface — all VCS ops go here
+│   ├── mod.rs       # Jj<R: JjRunner> — every jj invocation
+│   ├── runner.rs    # JjRunner trait + real/mock runners
+│   ├── types.rs     # serde structs for jj template output
+│   ├── remote.rs    # GitHub remote URL parsing (GitHubRepo)
+│   └── version.rs   # jj version parsing + minimum supported version
 ├── forge/           # Forge trait + GitHub implementation (octocrab)
 │   ├── mod.rs       # Forge trait, forge-agnostic types, ForgeError
 │   ├── github.rs    # GitHubForge implementation
 │   ├── comment.rs   # Stack comment formatting, parsing, and template context
 │   └── default_comment.md.jinja  # Default minijinja template for stack comments
 ├── graph/           # Change graph construction (ChangeGraph, BookmarkSegment, BranchStack)
+│   ├── types.rs     # Graph data types shared by select/, show/, and submit/
 │   └── layout.rs    # Convert ChangeGraph → jj-log-style row list (commit tree + display rows)
 ├── select/          # Interactive TUI selection (ratatui inline viewport)
 │   ├── mod.rs       # Public API: resolve_bookmark_interactively(), SelectionResult
@@ -128,6 +147,22 @@ There is intentionally no `git/` module.
 - Run `mise run fmt:nightly` (or `cargo +nightly fmt --all`) for full
   formatting locally.
 - **Always run `cargo +nightly fmt --all` before committing.**
+
+### Markdown
+
+- **Always run `rumdl fmt .` after modifying any Markdown file**, then re-read what it changed —
+  it rewrites line breaks.
+  `rumdl check .` reports without fixing.
+- [`.rumdl.toml`](.rumdl.toml) is the authority on settings and scope: 120-column lines,
+  semantic line breaks (one clause per line), and an `exclude` list.
+- Nothing under `src/` is formatted.
+  Markdown there is payload, not prose — `forge/default_comment.md.jinja` and Markdown test fixtures —
+  and reflowing it would change what stakk writes to GitHub or what the tests assert.
+  `CHANGELOG.md` is excluded too; release-plz owns it.
+- `rumdl` is not part of `mise run ci`, so unformatted Markdown will not fail the build —
+  it just shows up as churn in the next docs diff.
+- Semantic line breaks mean prose edits should stay on their own line rather than re-wrapping a paragraph;
+  it keeps docs diffs readable.
 
 ### Version Control
 
@@ -289,8 +324,7 @@ If you change any of the following, update `scripts/record-demo.py` in the same 
 - `#[cfg_attr(not(test), expect(dead_code, reason = "..."))]` for fields used
   only in tests — satisfies both `--all-targets` clippy and `-D warnings`.
 - jj JSON output uses NDJSON (one JSON object per line).
-  Parse with `lines()`
-  - per-line `serde_json::from_str`.
+  Parse with `lines()` plus a per-line `serde_json::from_str`.
 - `jj git remote list` outputs plain text, not JSON.
   Parse with string splitting.
 - `trunk()` remote bookmarks include an internal `@git` entry — filter it out.
@@ -301,6 +335,11 @@ If you change any of the following, update `scripts/record-demo.py` in the same 
 - octocrab `pulls().create()` borrows the handler — bind to a variable first.
 - Commit-derived PR body is only set on creation, not on update — avoids overwriting manually-edited PR bodies.
   Body-mode stack placement updates only the fenced section.
+- `submit::unwrap::unwrap_markdown` reflows hard-wrapped description prose into soft-wrapped paragraphs
+  (structural Markdown passes through verbatim).
+  It runs on *both* sides of the body-sync comparison — the generated body and the existing PR body —
+  so a body GitHub stores unchanged does not look different just because of line breaks.
+  Changing the reflow rules changes change-detection; the round-trip must stay idempotent.
 - Stack comment metadata line (`<!--- STAKK_STACK: ... --->`) is always prepended programmatically —
   not part of the minijinja template.
   Warning/repo-URL preambles are added per-placement-mode: comment mode uses `with_comment_preamble()`,
@@ -310,6 +349,10 @@ If you change any of the following, update `scripts/record-demo.py` in the same 
 - `format_stack_comment` returns `Result` because user templates can fail.
 - Body-mode fences (`STAKK_BODY_START`/`STAKK_BODY_END`) are HTML comments, invisible on GitHub.
   Migration between placement modes is automatic.
+- `StackPlacement` (4 CLI modes) resolves to `EffectivePlacement`
+  (4 behaviors) in `resolve_placement`: `comment` → `Comment`, `body` → `Body`, `none` → `Cleanup`, `ignore` → `Ignore`.
+  Keep the two enums distinct — `Cleanup` is also reached by single-bookmark submissions,
+  which have no CLI mode of their own.
 - `--stack-placement none` writes no stack info and instead runs `cleanup_stack_artifacts` on every PR,
   deleting the stack comment and stripping the body fence.
   Single-bookmark submissions take the same cleanup path
@@ -318,6 +361,10 @@ If you change any of the following, update `scripts/record-demo.py` in the same 
   PRs created in the same run are skipped — they cannot yet carry a stack comment.
   In `none` mode the custom `--template` is never read or compiled,
   so a broken template does not fail a submission that will not render it.
+- `--stack-placement ignore` writes nothing *and* cleans up nothing:
+  the `EffectivePlacement::Ignore` arm short-circuits before the cleanup branch,
+  so it also wins over the single-bookmark cleanup rule.
+  Like `none`, it never reads or compiles `--template`.
 - ratatui inline viewport: `enable_raw_mode()` before, `disable_raw_mode()` after.
 - The inline viewport is sized per screen
   (graph vs bookmark rows).
@@ -394,6 +441,9 @@ If you change any of the following, update `scripts/record-demo.py` in the same 
   disabling stack info retires the existing artifacts rather than leaving them stale,
   so the feature can be turned off cleanly.
   Deletion is not previewed by `--dry-run`, which returns before the execute phase.
+- **`ignore` exists because `none` deletes** — turning stack info off and leaving other
+  tooling's (or your own) comments and body fences alone are two different wishes.
+  `none` serves the first, `ignore` the second; neither is a safe default for the other.
 - **`--dry-run` not in env vars** — one-off decision, surprising as a default.
 - **Selection flags not in env vars/config** — `--keep`, `--keep-all`, `--new`, `--new-auto`,
   `--new-command` are per-invocation decisions like `--dry-run`;
