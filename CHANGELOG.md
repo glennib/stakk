@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.23.0](https://github.com/glennib/stakk/compare/v1.22.0...v1.23.0) - 2026-08-13
+
+### Added
+
+- *(comment)* draw the stack graph leaf-first in the default template
+- *(cli)* non-interactive stack selection via --keep/--new flags
+- *(submit)* make `--dry-run` fully inert by creating bookmarks in execute
+
+### Fixed
+
+- *(select)* check new bookmark names against every local bookmark
+
+### Other
+
+- *(deps)* update dependency rumdl to v0.2.55 ([#197](https://github.com/glennib/stakk/pull/197))
+- update
+- *(cli)* tighten `--help` text without losing facts
+- gate Markdown formatting with rumdl
+- document `ignore` placement, missing flags, and rumdl workflow
+- use rumdl for formatting
+- *(ci)* run ci regardless of base branch
+- *(media)* update gif
+- *(submit)* drop `analyze_submission`'s test-only folding arm
+
 ## [1.22.0](https://github.com/glennib/stakk/compare/v1.21.0...v1.22.0) - 2026-08-12
 
 ### Added
