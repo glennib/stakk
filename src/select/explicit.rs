@@ -654,7 +654,6 @@ mod tests {
         ChangeGraph {
             adjacency_list: HashMap::new(),
             stack_leaves: std::collections::HashSet::new(),
-            stack_roots: std::collections::HashSet::new(),
             segments: HashMap::new(),
             tainted_change_ids: std::collections::HashSet::new(),
             excluded_bookmark_count: 0,

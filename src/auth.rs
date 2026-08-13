@@ -39,11 +39,14 @@ pub struct AuthToken {
     pub token: String,
     /// Which source the token came from. Nothing in the binary reads it —
     /// submit needs only the token itself — but it is what the resolution
-    /// tests assert on, and it is the one piece of the resolution result that
-    /// is worth surfacing if a diagnostic ever needs to name the source.
+    /// tests assert on, and so what pins the per-host precedence order.
     #[cfg_attr(
         not(test),
-        expect(dead_code, reason = "read by the resolution tests only")
+        expect(
+            dead_code,
+            reason = "the resolution tests read it to pin which token environment variable wins \
+                      for a given host"
+        )
     )]
     pub source: TokenSource,
 }

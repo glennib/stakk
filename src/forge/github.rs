@@ -2,13 +2,11 @@
 
 use octocrab::Octocrab;
 use octocrab::models::CommentId;
-use octocrab::models::IssueState;
 
 use super::Comment;
 use super::CreatePrParams;
 use super::Forge;
 use super::ForgeError;
-use super::PrState;
 use super::PullRequest;
 
 /// GitHub implementation of the `Forge` trait.
@@ -182,9 +180,7 @@ fn convert_pr(pr: octocrab::models::pulls::PullRequest) -> PullRequest {
         number: pr.number,
         html_url: pr.html_url.map(|u| u.to_string()).unwrap_or_default(),
         title: pr.title.unwrap_or_default(),
-        head_ref: pr.head.ref_field,
         base_ref: pr.base.ref_field,
-        state: map_pr_state(pr.state.as_ref(), pr.merged_at.is_some()),
         body: pr.body,
     }
 }
@@ -210,15 +206,5 @@ fn map_octocrab_error(e: octocrab::Error) -> ForgeError {
     ForgeError::Api {
         message,
         source: Box::new(e),
-    }
-}
-
-fn map_pr_state(state: Option<&IssueState>, has_merged_at: bool) -> PrState {
-    if has_merged_at {
-        PrState::Merged
-    } else if state == Some(&IssueState::Closed) {
-        PrState::Closed
-    } else {
-        PrState::Open
     }
 }

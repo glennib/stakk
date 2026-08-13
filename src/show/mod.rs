@@ -313,7 +313,6 @@ mod tests {
         ChangeGraph {
             adjacency_list: HashMap::new(),
             stack_leaves: HashSet::new(),
-            stack_roots: HashSet::new(),
             segments: HashMap::new(),
             tainted_change_ids: HashSet::new(),
             excluded_bookmark_count: 0,

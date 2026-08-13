@@ -38,7 +38,7 @@ pub struct SelectionResult {
 /// - Otherwise: shows the TUI graph view, then bookmark assignment.
 ///
 /// Returns `StakkError::NotInteractive` if stdin is not a terminal.
-/// Returns `StakkError::PromptCancelled` if the user presses Escape/q.
+/// Returns `Ok(None)` if the user cancels with Escape/q.
 ///
 /// `reserved` is every local bookmark name in the repo
 /// ([`crate::jj::Jj::get_local_bookmark_names`]); new names are rejected
@@ -77,7 +77,6 @@ mod tests {
         ChangeGraph {
             adjacency_list: HashMap::new(),
             stack_leaves: HashSet::new(),
-            stack_roots: HashSet::new(),
             segments: HashMap::new(),
             tainted_change_ids: HashSet::new(),
             excluded_bookmark_count: 0,

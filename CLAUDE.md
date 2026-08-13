@@ -337,8 +337,33 @@ If you change any of the following, update `scripts/record-demo.py` in the same 
 
 ## Patterns & Gotchas
 
-- `#[cfg_attr(not(test), expect(dead_code, reason = "..."))]` for fields used
-  only in tests — satisfies both `--all-targets` clippy and `-D warnings`.
+- `#[cfg_attr(not(test), expect(dead_code, reason = "..."))]` for fields the tests read but production does not —
+  satisfies both `--all-targets` clippy and `-D warnings`.
+  It is legitimate in exactly two situations, and everything else is dead code to delete:
+  1. A test reads the item as an *observable for logic that runs in production*.
+     `AuthToken::source` (which token env var wins per host), `ChangeGraph`'s four construction maps
+     (stacking, leaves, segment grouping, merge taint) and `Bookmark::change_id`/`synced` are the surviving cases.
+     The two `Bookmark` fields are what `parse_bookmarks_single` reads to pin production's `jj bookmark list` parse:
+     that `change_id` comes from the nested `CommitData` in `BookmarkEntryRaw::target`
+     (`BOOKMARK_TEMPLATE` emits only `name`, `synced` and `target`, so there is no change-ID field to take it from),
+     and that `synced` reaches the parsed bookmark — which is also what keeps `BookmarkEntryRaw::synced`,
+     a situation-2 field, read in production instead of suppressed.
+     A stack-roots set is *not* on this list: roots are the changes absent from `adjacency_list`,
+     so a field recording them is a second copy of a fact production already derives,
+     and nothing but its own tests read it.
+  2. The field is a serde field with *no* `#[serde(default)]`,
+     so deleting it would relax the parse from "fail loudly on a template/parser mismatch" to "accept anything" —
+     `CommitRefData::target` is the only one.
+     (`LogEntryRaw::immutable` follows the same rule but is read in production, so it needs no suppression.)
+     A serde field that *does* carry `#[serde(default)]` is already optional;
+     deleting it changes no parsing and it should go.
+
+  The `reason` must name the behaviour the test pins,
+  not say "used in tests" or claim a diagnostic consumer that does not exist.
+  A test that only exercises the suppressed item itself
+  (a parallel implementation of production logic, a parse for a value nothing writes) justifies nothing — delete both.
+  `#[expect]` warns once a suppression becomes unnecessary, so `mise run ci` catches stale ones —
+  find the current set with `grep -rn dead_code src/`.
 - `stakk docs` `include_str!`s `docs/*.md`,
   so those files are the single source of truth and cargo rebuilds the crate when they change (no `build.rs` needed).
   Adding a topic means a `DocTopic` variant, a `docs::source` arm, and the file —

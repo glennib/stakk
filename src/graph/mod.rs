@@ -47,7 +47,6 @@ pub async fn build_change_graph<R: JjRunner>(
     let mut fully_collected: HashSet<String> = HashSet::new();
     let mut adjacency_list: HashMap<String, String> = HashMap::new();
     let mut segments: HashMap<String, BookmarkSegment> = HashMap::new();
-    let mut stack_roots: HashSet<String> = HashSet::new();
     let mut tainted_change_ids: HashSet<String> = HashSet::new();
     let mut excluded_bookmark_count: usize = 0;
 
@@ -73,7 +72,6 @@ pub async fn build_change_graph<R: JjRunner>(
         integrate_traversal_result(
             result,
             &mut adjacency_list,
-            &mut stack_roots,
             &mut segments,
             &mut fully_collected,
         );
@@ -111,7 +109,6 @@ pub async fn build_change_graph<R: JjRunner>(
         integrate_traversal_result(
             result,
             &mut adjacency_list,
-            &mut stack_roots,
             &mut segments,
             &mut fully_collected,
         );
@@ -141,7 +138,6 @@ pub async fn build_change_graph<R: JjRunner>(
     Ok(ChangeGraph {
         adjacency_list,
         stack_leaves,
-        stack_roots,
         segments,
         tainted_change_ids,
         excluded_bookmark_count,
@@ -151,12 +147,11 @@ pub async fn build_change_graph<R: JjRunner>(
 
 /// Integrate a traversal result into the shared graph state.
 ///
-/// Stores discovered segments, builds adjacency relationships, tracks roots,
-/// and marks bookmark names as fully collected.
+/// Stores discovered segments, builds adjacency relationships, and marks
+/// bookmark names as fully collected.
 fn integrate_traversal_result(
     result: TraversalResult,
     adjacency_list: &mut HashMap<String, String>,
-    stack_roots: &mut HashSet<String>,
     segments: &mut HashMap<String, BookmarkSegment>,
     fully_collected: &mut HashSet<String>,
 ) {
@@ -175,14 +170,14 @@ fn integrate_traversal_result(
         adjacency_list.insert(child_id.clone(), parent_id.clone());
     }
 
-    // Connect to already-seen segment if traversal stopped early.
-    if let Some(ref seen_id) = result.already_seen_change_id {
-        if let Some(last_seg) = result.segments.last() {
-            adjacency_list.insert(last_seg.change_id.clone(), seen_id.clone());
-        }
-    } else if let Some(last_seg) = result.segments.last() {
-        // Reached trunk: this is a root.
-        stack_roots.insert(last_seg.change_id.clone());
+    // Connect to already-seen segment if traversal stopped early. Otherwise
+    // traversal reached trunk and the last segment has no parent, which is
+    // what makes it a stack root — recorded implicitly by its absence from
+    // the adjacency list.
+    if let Some(ref seen_id) = result.already_seen_change_id
+        && let Some(last_seg) = result.segments.last()
+    {
+        adjacency_list.insert(last_seg.change_id.clone(), seen_id.clone());
     }
 
     for seg in result.segments {
@@ -524,8 +519,6 @@ mod tests {
         assert_eq!(graph.stacks.len(), 1);
         assert_eq!(graph.stack_leaves.len(), 1);
         assert!(graph.stack_leaves.contains("ch_b"));
-        assert_eq!(graph.stack_roots.len(), 1);
-        assert!(graph.stack_roots.contains("ch_a"));
 
         // Adjacency: ch_b -> ch_a
         assert_eq!(graph.adjacency_list.get("ch_b").unwrap(), "ch_a");
@@ -593,9 +586,6 @@ mod tests {
         // Both bm_b and bm_c are leaves.
         assert!(graph.stack_leaves.contains("ch_b"));
         assert!(graph.stack_leaves.contains("ch_c"));
-
-        // bm_a is root.
-        assert!(graph.stack_roots.contains("ch_a"));
 
         // Adjacency: ch_b -> ch_a, ch_c -> ch_a
         assert_eq!(graph.adjacency_list.get("ch_b").unwrap(), "ch_a");
@@ -835,7 +825,6 @@ mod tests {
         assert!(graph.segments.is_empty());
         assert!(graph.stacks.is_empty());
         assert!(graph.stack_leaves.is_empty());
-        assert!(graph.stack_roots.is_empty());
         assert_eq!(graph.excluded_bookmark_count, 0);
     }
 
@@ -1008,7 +997,6 @@ mod tests {
         assert_eq!(graph.segments.len(), 1);
         assert_eq!(graph.stacks.len(), 1);
         assert!(graph.stack_leaves.contains("ch_x"));
-        assert!(graph.stack_roots.contains("ch_x"));
         assert!(graph.adjacency_list.is_empty());
 
         let stack = &graph.stacks[0];

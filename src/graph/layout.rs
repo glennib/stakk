@@ -117,18 +117,6 @@ impl GraphLayout {
             .map(|i| &self.nodes[i])
             .collect()
     }
-
-    /// Display row index of the commit row for a node.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "used in tests; useful layout diagnostic")
-    )]
-    pub fn row_of_node(&self, node: usize) -> Option<usize> {
-        self.rows.iter().position(|r| match r {
-            GraphRow::Commit { node: n, .. } => *n == node,
-            GraphRow::Connector { .. } => false,
-        })
-    }
 }
 
 /// Build a jj-log-style graph layout from a `ChangeGraph`.
@@ -338,7 +326,6 @@ mod tests {
         ChangeGraph {
             adjacency_list: HashMap::new(),
             stack_leaves: HashSet::new(),
-            stack_roots: HashSet::new(),
             segments: HashMap::new(),
             tainted_change_ids: HashSet::new(),
             excluded_bookmark_count: 0,
@@ -710,21 +697,6 @@ mod tests {
         let leaves = layout.leaf_nodes();
         assert_eq!(leaves.len(), 2);
         assert!(leaves.iter().all(|n| n.is_leaf));
-    }
-
-    #[test]
-    fn row_of_node_finds_commit_rows() {
-        let graph = make_graph(vec![BranchStack {
-            segments: vec![
-                make_segment(&["base"], "ch_a", &["base work"]),
-                make_segment(&["leaf"], "ch_b", &["leaf work"]),
-            ],
-        }]);
-
-        let layout = build_layout(&graph);
-        // Leaf on top (row 0), base below (row 1), trunk at the bottom.
-        assert_eq!(layout.row_of_node(layout.leaves[0]), Some(0));
-        assert_eq!(layout.row_of_node(0), Some(2));
     }
 
     #[test]

@@ -1079,7 +1079,6 @@ mod tests {
     use super::*;
     use crate::forge::Comment;
     use crate::forge::ForgeError;
-    use crate::forge::PrState;
     use crate::forge::comment::build_comment_env;
     use crate::graph::types::BranchStack;
     use crate::graph::types::SegmentCommit;
@@ -1134,9 +1133,7 @@ mod tests {
             number,
             html_url: format!("https://github.com/test/repo/pull/{number}"),
             title: format!("PR for {head}"),
-            head_ref: head.to_string(),
             base_ref: base.to_string(),
-            state: PrState::Open,
             body: None,
         }
     }
@@ -1146,9 +1143,7 @@ mod tests {
             number,
             html_url: format!("https://github.com/test/repo/pull/{number}"),
             title: format!("PR for {head}"),
-            head_ref: head.to_string(),
             base_ref: base.to_string(),
-            state: PrState::Open,
             body: Some(body.to_string()),
         }
     }
@@ -1227,9 +1222,7 @@ mod tests {
                 number,
                 html_url: format!("https://github.com/test/repo/pull/{number}"),
                 title: params.title.clone(),
-                head_ref: params.head.clone(),
                 base_ref: params.base.clone(),
-                state: PrState::Open,
                 body: params.body.clone(),
             };
             if let Some(ops) = &self.ops {

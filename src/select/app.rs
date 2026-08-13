@@ -854,3 +854,167 @@ fn render_bookmark_screen(
         help_area,
     );
 }
+
+#[cfg(test)]
+mod tests {
+    use std::time::Instant;
+
+    use super::*;
+    use crate::graph::layout::LayoutNode;
+
+    fn make_node(change_id: &str, is_trunk: bool) -> LayoutNode {
+        LayoutNode {
+            change_id: change_id.to_string(),
+            commit_id: format!("commit_{change_id}"),
+            summary: "summary".to_string(),
+            description: "description".to_string(),
+            bookmark_names: vec![],
+            excluded_bookmarks: vec![],
+            is_immutable: false,
+            is_trunk,
+            is_leaf: !is_trunk,
+            parent: None,
+            short_change_id: change_id[..4.min(change_id.len())].to_string(),
+            author: crate::jj::types::Signature {
+                name: "Test".to_string(),
+                email: "test@test.com".to_string(),
+                timestamp: "T".to_string(),
+            },
+            files: vec![],
+        }
+    }
+
+    /// A two-row state — trunk plus one leaf — with the leaf already in
+    /// `UseCustom(Loading)`, the state `fire_pending_commands` acts on.
+    fn loading_state() -> BookmarkAssignmentState {
+        let trunk = make_node("trunk", true);
+        let leaf = make_node("ch_leaf", false);
+        let path = [&trunk, &leaf];
+        let mut state = BookmarkAssignmentState::from_path(&path, true, None, &HashSet::new());
+        state.rows[1].state = RowState::UseCustom(CustomNameState::Loading);
+        state
+    }
+
+    /// Cache key of the leaf row's dynamic segment.
+    fn leaf_key(state: &BookmarkAssignmentState) -> Vec<String> {
+        bookmark_gen::cache_key(&bookmark_gen::dynamic_segment_commits(&state.rows, 1))
+    }
+
+    /// A name the command returns that `validate_bookmark_name` rejects must
+    /// not reach the cache — the row can then be retried.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn invalid_command_output_is_not_cached() {
+        let mut state = loading_state();
+        let key = leaf_key(&state);
+        let cache = Arc::new(Mutex::new(BookmarkNameCache::new()));
+        let mut pending = Vec::new();
+
+        fire_pending_commands(&mut state, "echo 'bad name'", &cache, &mut pending);
+        assert_eq!(pending.len(), 1);
+
+        // The command succeeds, so the rejection can only come from the
+        // validation the spawned task runs before caching.
+        let result = pending.pop().unwrap().rx.await.unwrap();
+        assert_eq!(result.unwrap(), "bad name");
+        assert!(cache.lock().unwrap().get(&key).is_none());
+    }
+
+    /// A valid name is cached as `Computed`.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn valid_command_output_is_cached() {
+        let mut state = loading_state();
+        let key = leaf_key(&state);
+        let cache = Arc::new(Mutex::new(BookmarkNameCache::new()));
+        let mut pending = Vec::new();
+
+        fire_pending_commands(&mut state, "echo good-name", &cache, &mut pending);
+        assert_eq!(pending.len(), 1);
+
+        let result = pending.pop().unwrap().rx.await.unwrap();
+        assert_eq!(result.unwrap(), "good-name");
+        assert!(
+            matches!(cache.lock().unwrap().get(&key), Some(CacheEntry::Computed(n)) if n == "good-name")
+        );
+    }
+
+    /// A `Computed` entry is applied synchronously — no process is spawned,
+    /// so the command in the argument is never run.
+    #[tokio::test]
+    async fn computed_entry_is_applied_without_spawning() {
+        let mut state = loading_state();
+        let key = leaf_key(&state);
+        let cache = Arc::new(Mutex::new(BookmarkNameCache::new()));
+        cache
+            .lock()
+            .unwrap()
+            .insert(key, CacheEntry::Computed("cached-name".to_string()));
+        let mut pending = Vec::new();
+
+        fire_pending_commands(&mut state, "echo different-name", &cache, &mut pending);
+
+        assert!(pending.is_empty());
+        assert_eq!(state.rows[1].custom_name.as_deref(), Some("cached-name"));
+        assert_eq!(
+            state.rows[1].state,
+            RowState::UseCustom(CustomNameState::Ready("cached-name".to_string()))
+        );
+    }
+
+    /// A live `Computing` entry means a task is already in flight: the row
+    /// stays loading and nothing is spawned or overwritten.
+    #[tokio::test]
+    async fn live_computing_entry_is_not_refired() {
+        let mut state = loading_state();
+        let key = leaf_key(&state);
+        let cache = Arc::new(Mutex::new(BookmarkNameCache::new()));
+        cache.lock().unwrap().insert(
+            key.clone(),
+            CacheEntry::Computing {
+                since: Instant::now(),
+            },
+        );
+        let mut pending = Vec::new();
+
+        fire_pending_commands(&mut state, "echo different-name", &cache, &mut pending);
+
+        assert!(pending.is_empty());
+        assert_eq!(
+            state.rows[1].state,
+            RowState::UseCustom(CustomNameState::Loading)
+        );
+        assert!(matches!(
+            cache.lock().unwrap().get(&key),
+            Some(CacheEntry::Computing { .. })
+        ));
+    }
+
+    /// An expired `Computing` entry is abandoned: the command re-fires and the
+    /// fresh result replaces it.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn expired_computing_entry_is_refired() {
+        let mut state = loading_state();
+        let key = leaf_key(&state);
+        let cache = Arc::new(Mutex::new(BookmarkNameCache::new()));
+        cache.lock().unwrap().insert(
+            key.clone(),
+            CacheEntry::Computing {
+                since: Instant::now()
+                    .checked_sub(bookmark_gen::COMPUTING_TIMEOUT + Duration::from_secs(1))
+                    .unwrap(),
+            },
+        );
+        let mut pending = Vec::new();
+
+        fire_pending_commands(&mut state, "echo fresh-name", &cache, &mut pending);
+        assert_eq!(pending.len(), 1);
+
+        let result = pending.pop().unwrap().rx.await.unwrap();
+        assert_eq!(result.unwrap(), "fresh-name");
+        assert!(
+            matches!(cache.lock().unwrap().get(&key), Some(CacheEntry::Computed(n)) if n == "fresh-name")
+        );
+    }
+}

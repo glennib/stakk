@@ -77,7 +77,8 @@ pub struct ChangeGraph {
         not(test),
         expect(
             dead_code,
-            reason = "populated during graph construction; exposed for diagnostics"
+            reason = "the graph-construction tests read it to pin which bookmarked change stacks \
+                      on which"
         )
     )]
     pub adjacency_list: HashMap<String, String>,
@@ -88,24 +89,18 @@ pub struct ChangeGraph {
         not(test),
         expect(
             dead_code,
-            reason = "populated during graph construction; exposed for diagnostics"
+            reason = "the graph-construction tests read it to pin which changes end a stack"
         )
     )]
     pub stack_leaves: HashSet<String>,
-
-    /// Change IDs closest to trunk with no parent in the adjacency list.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "available for interactive mode or diagnostics")
-    )]
-    pub stack_roots: HashSet<String>,
 
     /// Map from `change_id` to its `BookmarkSegment`.
     #[cfg_attr(
         not(test),
         expect(
             dead_code,
-            reason = "used during graph construction; exposed for diagnostics"
+            reason = "the graph-construction tests read it to pin how commits are grouped into \
+                      per-change segments"
         )
     )]
     pub segments: HashMap<String, BookmarkSegment>,
@@ -116,7 +111,8 @@ pub struct ChangeGraph {
         not(test),
         expect(
             dead_code,
-            reason = "populated during graph construction; exposed for diagnostics"
+            reason = "the merge-commit tests read it to pin that taint propagates from a merge to \
+                      its descendants"
         )
     )]
     pub tainted_change_ids: HashSet<String>,
