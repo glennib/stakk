@@ -13,7 +13,7 @@ fully explicit non-interactive selection via `--keep`/`--new*`, offline `stakk s
 four stack-placement modes, stack comment templating, layered config
 (CLI > env > repo/user TOML), bundled documentation via `stakk docs`, and comprehensive error handling.
 
-The CLI surface is the one `plans/cli-v2.md` describes: `stakk` and `stakk submit` both open the TUI,
+The CLI surface: `stakk` and `stakk submit` both open the TUI,
 every PR boundary of a non-interactive submission is named with a selection flag, and there is no positional bookmark,
 no `--keep-all`, no `--draft`, and no `stakk auth`.
 Which parts of that surface are semver-guarded is stated in the README's **Stability** section —
