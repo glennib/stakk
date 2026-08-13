@@ -1,11 +1,16 @@
 //! Non-interactive bookmark selection driven by CLI flags.
 //!
-//! `--keep`, `--keep-all`, `--new REV[=NAME]`, `--new-auto REV`, and
+//! `--keep`, `--new REV[=NAME]`, `--new-auto REV`, and
 //! `--new-command REV` fully determine the PR boundary set — nothing is
 //! implicit. The marks themselves define the stack: all must lie on one
 //! trunk-to-tip path (colinearity is validated), and the topmost mark is
-//! the tip of the submission. Bookmarks on the path that are not kept fold
-//! into the PR above them, exactly like unchecked rows in the TUI.
+//! the tip of the submission.
+//!
+//! Unmarked commits below the topmost mark fold into the PR above them,
+//! bookmarked or not, exactly like unchecked rows in the TUI. Commits above
+//! it are dropped from the submission entirely: the full path is handed to
+//! `analysis_from_selection`, which never flushes `pending` past the last
+//! boundary.
 //!
 //! The resolver is pure with respect to the repository: it reads the
 //! already-built [`ChangeGraph`] and produces a [`SelectionResult`]; all
@@ -115,23 +120,6 @@ pub enum ExplicitSelectionError {
     )]
     MarksNotColinear { marks: Vec<String> },
 
-    /// Bare `--keep-all` (or one anchored on a shared segment) cannot pick
-    /// a stack.
-    #[error("--keep-all is ambiguous between stacks: {}", candidates.join("; "))]
-    #[diagnostic(
-        code(stakk::selection::keep_all_ambiguous),
-        help("anchor the path with --keep or --new, or run `stakk show` to inspect the stacks")
-    )]
-    KeepAllAmbiguous { candidates: Vec<String> },
-
-    /// `--keep-all` alone found nothing to keep.
-    #[error("--keep-all found no bookmarks on the selected path")]
-    #[diagnostic(
-        code(stakk::selection::no_marks),
-        help("use --new to create a bookmark, or run `stakk show`")
-    )]
-    NoMarks,
-
     /// Two marks target the same commit.
     #[error("marks {a} and {b} target the same commit")]
     #[diagnostic(
@@ -190,7 +178,6 @@ pub struct NewBookmarkSpec {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SelectionSpec {
     pub keep: Vec<String>,
-    pub keep_all: bool,
     pub new: Vec<NewBookmarkSpec>,
     pub new_auto: Vec<String>,
     pub new_command: Vec<String>,
@@ -239,7 +226,6 @@ impl SelectionSpec {
         }
         Ok(Self {
             keep: args.keep.clone(),
-            keep_all: args.keep_all,
             new,
             new_auto: args.new_auto.clone(),
             new_command: args.new_command.clone(),
@@ -249,7 +235,6 @@ impl SelectionSpec {
     /// Whether no selection flag was passed at all (→ interactive TUI).
     pub fn is_empty(&self) -> bool {
         self.keep.is_empty()
-            && !self.keep_all
             && self.new.is_empty()
             && self.new_auto.is_empty()
             && self.new_command.is_empty()
@@ -290,6 +275,9 @@ struct Mark {
 /// ([`crate::jj::Jj::get_local_bookmark_names`]). New names are checked
 /// against it rather than against the graph, which cannot see trunk's own
 /// bookmark or anything the bookmarks revset filtered out.
+///
+/// `spec` must carry at least one mark: an empty spec means the interactive
+/// TUI, and `main.rs` routes it there ([`SelectionSpec::is_empty`]).
 pub async fn resolve_bookmarks_explicitly(
     graph: &ChangeGraph,
     spec: &SelectionSpec,
@@ -368,35 +356,15 @@ pub async fn resolve_bookmarks_explicitly(
     }
 
     // Colinearity: all marks must share at least one stack.
-    let candidate_stacks: BTreeSet<usize> =
-        match marks
-            .iter()
-            .map(|m| &m.stacks)
-            .fold(None::<BTreeSet<usize>>, |acc, s| match acc {
-                None => Some(s.clone()),
-                Some(acc) => Some(acc.intersection(s).copied().collect()),
-            }) {
-            Some(set) => {
-                if set.is_empty() {
-                    return Err(ExplicitSelectionError::MarksNotColinear {
-                        marks: marks.iter().map(|m| m.display.clone()).collect(),
-                    });
-                }
-                set
-            }
-            // No marks yet: bare --keep-all considers every stack.
-            None => (0..graph.stacks.len()).collect(),
-        };
-
-    // Expand --keep-all into Keep marks on the chosen path. Commits that
-    // already carry an explicit mark are skipped (explicit beats bulk).
-    if spec.keep_all {
-        let anchored = !marks.is_empty();
-        let expansion = keep_all_expansion(graph, &candidate_stacks, &marks)?;
-        if expansion.is_empty() && !anchored {
-            return Err(ExplicitSelectionError::NoMarks);
-        }
-        marks.extend(expansion);
+    let candidate_stacks: BTreeSet<usize> = marks
+        .iter()
+        .map(|m| m.stacks.clone())
+        .reduce(|acc, s| acc.intersection(&s).copied().collect())
+        .expect("a non-empty spec always yields at least one mark");
+    if candidate_stacks.is_empty() {
+        return Err(ExplicitSelectionError::MarksNotColinear {
+            marks: marks.iter().map(|m| m.display.clone()).collect(),
+        });
     }
 
     // Per-commit duplicate check.
@@ -441,7 +409,7 @@ pub async fn resolve_bookmarks_explicitly(
     // the first candidate is as good as any.
     let stack_idx = *candidate_stacks
         .first()
-        .expect("candidate_stacks is non-empty: either checked above or built from marks");
+        .expect("candidate_stacks is non-empty: the empty case errors above");
     let path: Vec<SegmentCommit> = graph.stacks[stack_idx]
         .commits_trunk_to_tip()
         .cloned()
@@ -640,81 +608,6 @@ fn resolve_keep<'a>(
     })
 }
 
-/// Expand `--keep-all` into Keep marks on the candidate stacks.
-///
-/// Commits already carrying an explicit mark are skipped (explicit beats
-/// bulk). All candidate stacks must agree on the resulting expansion;
-/// bare `--keep-all` therefore requires a single stack, and an anchored
-/// one errors if the candidates diverge in their bookmarks.
-fn keep_all_expansion(
-    graph: &ChangeGraph,
-    candidate_stacks: &BTreeSet<usize>,
-    marks: &[Mark],
-) -> Result<Vec<Mark>, ExplicitSelectionError> {
-    let marked_commits: HashSet<&str> = marks.iter().map(|m| m.commit_id.as_str()).collect();
-
-    // Per candidate stack: the (commit_id, name) list of unmarked
-    // bookmarked boundaries, trunk-to-leaf.
-    let mut expansions: Vec<Vec<(String, String)>> = Vec::new();
-    for &stack_idx in candidate_stacks {
-        let expansion: Vec<(String, String)> = graph.stacks[stack_idx]
-            .segments
-            .iter()
-            .filter_map(|segment| {
-                let name = segment.bookmark_names.first()?;
-                let boundary = segment.commits.first()?;
-                if marked_commits.contains(boundary.commit_id.as_str()) {
-                    return None;
-                }
-                Some((boundary.commit_id.clone(), name.clone()))
-            })
-            .collect();
-        expansions.push(expansion);
-    }
-
-    let first = &expansions[0];
-    if expansions.iter().any(|e| e != first) {
-        return Err(ExplicitSelectionError::KeepAllAmbiguous {
-            candidates: candidate_stacks
-                .iter()
-                .map(|&idx| describe_stack(&graph.stacks[idx]))
-                .collect(),
-        });
-    }
-
-    Ok(first
-        .iter()
-        .map(|(commit_id, name)| Mark {
-            kind: MarkKind::Keep { name: name.clone() },
-            display: format!("--keep-all ({name})"),
-            commit_id: commit_id.clone(),
-            // Identical expansions mean every expanded commit is shared by
-            // all candidate stacks. (Only the pre-expansion colinearity
-            // fold reads this, but keep the data truthful.)
-            stacks: candidate_stacks.clone(),
-        })
-        .collect())
-}
-
-/// One-line description of a stack for ambiguity errors: its tip's short
-/// change id plus the tip segment's bookmarks or description.
-fn describe_stack(stack: &crate::graph::types::BranchStack) -> String {
-    let Some(tip) = stack.tip_commit() else {
-        return "(empty stack)".to_string();
-    };
-    let names = stack
-        .segments
-        .last()
-        .map(|s| s.bookmark_names.join(", "))
-        .unwrap_or_default();
-    if names.is_empty() {
-        let summary = tip.description.lines().next().unwrap_or("").trim();
-        format!("{} {summary:?}", tip.short_change_id)
-    } else {
-        format!("{} ({names})", tip.short_change_id)
-    }
-}
-
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -747,6 +640,7 @@ mod tests {
             files: vec![format!("src/{change_id}.rs")],
             is_immutable: false,
             local_bookmark_names: vec![],
+            remote_bookmark_names: vec![],
         }
     }
 
@@ -766,10 +660,11 @@ mod tests {
         ChangeGraph {
             adjacency_list: HashMap::new(),
             stack_leaves: std::collections::HashSet::new(),
-            stack_roots: std::collections::HashSet::new(),
             segments: HashMap::new(),
             tainted_change_ids: std::collections::HashSet::new(),
-            excluded_bookmark_count: 0,
+            bookmark_remote_states: HashMap::new(),
+            excluded_bookmarks: Vec::new(),
+            excluded_head_count: 0,
             stacks,
         }
     }
@@ -872,74 +767,6 @@ mod tests {
         let s = spec(|s| s.keep = vec!["nope".into()]);
         let err = resolve(&graph, &s).await.unwrap_err();
         assert!(matches!(err, ExplicitSelectionError::KeepNotFound { name } if name == "nope"));
-    }
-
-    // -- keep-all --
-
-    #[tokio::test]
-    async fn keep_all_bare_single_stack() {
-        let graph = single_stack_graph();
-        let s = spec(|s| s.keep_all = true);
-        let result = resolve(&graph, &s).await.unwrap();
-        assert_eq!(
-            names(&result),
-            vec![("base", false), ("mid", false), ("leaf", false)]
-        );
-    }
-
-    #[tokio::test]
-    async fn keep_all_bare_multi_stack_errors() {
-        let graph = forked_graph();
-        let s = spec(|s| s.keep_all = true);
-        let err = resolve(&graph, &s).await.unwrap_err();
-        assert!(matches!(
-            err,
-            ExplicitSelectionError::KeepAllAmbiguous { candidates } if candidates.len() == 2
-        ));
-    }
-
-    #[tokio::test]
-    async fn keep_all_anchored_picks_the_marked_stack() {
-        let graph = forked_graph();
-        let s = spec(|s| {
-            s.keep_all = true;
-            s.keep = vec!["feat-y".into()];
-        });
-        let result = resolve(&graph, &s).await.unwrap();
-        assert_eq!(names(&result), vec![("base", false), ("feat-y", false)]);
-    }
-
-    #[tokio::test]
-    async fn keep_all_bare_no_bookmarks_errors_no_marks() {
-        let graph = make_graph(vec![BranchStack {
-            segments: vec![{
-                let mut seg = make_segment(&[], "aaaa1111", "wip");
-                seg.bookmark_names = vec![];
-                seg
-            }],
-        }]);
-        let s = spec(|s| s.keep_all = true);
-        let err = resolve(&graph, &s).await.unwrap_err();
-        assert!(matches!(err, ExplicitSelectionError::NoMarks));
-    }
-
-    #[tokio::test]
-    async fn keep_all_skips_explicitly_marked_commits() {
-        let graph = single_stack_graph();
-        // mid's commit gets an explicit --new name; keep-all must not also
-        // keep `mid` there (explicit beats bulk).
-        let s = spec(|s| {
-            s.keep_all = true;
-            s.new = vec![NewBookmarkSpec {
-                rev: "bbbb".into(),
-                name: Some("renamed-mid".into()),
-            }];
-        });
-        let result = resolve(&graph, &s).await.unwrap();
-        assert_eq!(
-            names(&result),
-            vec![("base", false), ("renamed-mid", true), ("leaf", false)]
-        );
     }
 
     // -- rev resolution --
@@ -1458,7 +1285,7 @@ mod tests {
     #[tokio::test]
     async fn empty_graph_errors_no_stacks() {
         let graph = make_graph(vec![]);
-        let s = spec(|s| s.keep_all = true);
+        let s = spec(|s| s.keep = vec!["base".into()]);
         let err = resolve(&graph, &s).await.unwrap_err();
         assert!(matches!(err, ExplicitSelectionError::NoStacks));
     }
@@ -1494,7 +1321,7 @@ mod tests {
         let cli = crate::cli::Cli::try_parse_from(args).unwrap();
         match cli.command {
             Some(crate::cli::Commands::Submit(a)) => *a,
-            _ => cli.submit_args,
+            other => panic!("expected Submit, got {other:?}"),
         }
     }
 
@@ -1543,7 +1370,7 @@ mod tests {
     fn spec_is_empty() {
         let args = parse_submit(&["stakk", "submit"]);
         assert!(SelectionSpec::from_args(&args).unwrap().is_empty());
-        let args = parse_submit(&["stakk", "submit", "--keep-all"]);
+        let args = parse_submit(&["stakk", "submit", "--keep", "base"]);
         assert!(!SelectionSpec::from_args(&args).unwrap().is_empty());
     }
 }

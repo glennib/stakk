@@ -24,6 +24,13 @@ pub struct SegmentCommit {
     /// `BookmarkSegment::bookmark_names`, this includes bookmarks excluded
     /// from the graph by the bookmarks revset (e.g. on immutable commits).
     pub local_bookmark_names: Vec<String>,
+    /// Remote bookmarks pointing at this commit, as jj spells them
+    /// (`name@remote`), including the internal `name@git` entries.
+    ///
+    /// A remote bookmark sits wherever the remote currently is, which is not
+    /// where the local bookmark is once the local one moves.
+    /// [`ChangeGraph::bookmark_remote_states`] combines the two.
+    pub remote_bookmark_names: Vec<String>,
 }
 
 /// A group of consecutive commits belonging to one or more bookmarks.
@@ -39,6 +46,32 @@ pub struct BookmarkSegment {
     /// Commits in this segment (newest first). The first commit is the one the
     /// bookmarks point at.
     pub commits: Vec<SegmentCommit>,
+}
+
+/// Where a local bookmark stands relative to its remote counterpart.
+///
+/// Derived offline, from `jj` alone: it says nothing about pull requests,
+/// only about what a push would do.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RemoteState {
+    /// No remote counterpart. Pushing creates the remote bookmark.
+    Unpushed,
+    /// A remote counterpart exists but sits elsewhere — the usual state
+    /// after a rebase or an amend. Pushing moves it.
+    Diverged,
+    /// The remote counterpart is on the same commit. A push is a no-op.
+    Synced,
+}
+
+impl RemoteState {
+    /// The wire name used in `stakk show`'s JSON.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Unpushed => "unpushed",
+            Self::Diverged => "diverged",
+            Self::Synced => "synced",
+        }
+    }
 }
 
 /// A complete path from trunk to a leaf bookmark.
@@ -77,7 +110,8 @@ pub struct ChangeGraph {
         not(test),
         expect(
             dead_code,
-            reason = "populated during graph construction; exposed for diagnostics"
+            reason = "the graph-construction tests read it to pin which bookmarked change stacks \
+                      on which"
         )
     )]
     pub adjacency_list: HashMap<String, String>,
@@ -88,24 +122,18 @@ pub struct ChangeGraph {
         not(test),
         expect(
             dead_code,
-            reason = "populated during graph construction; exposed for diagnostics"
+            reason = "the graph-construction tests read it to pin which changes end a stack"
         )
     )]
     pub stack_leaves: HashSet<String>,
-
-    /// Change IDs closest to trunk with no parent in the adjacency list.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "available for interactive mode or diagnostics")
-    )]
-    pub stack_roots: HashSet<String>,
 
     /// Map from `change_id` to its `BookmarkSegment`.
     #[cfg_attr(
         not(test),
         expect(
             dead_code,
-            reason = "used during graph construction; exposed for diagnostics"
+            reason = "the graph-construction tests read it to pin how commits are grouped into \
+                      per-change segments"
         )
     )]
     pub segments: HashMap<String, BookmarkSegment>,
@@ -116,13 +144,23 @@ pub struct ChangeGraph {
         not(test),
         expect(
             dead_code,
-            reason = "populated during graph construction; exposed for diagnostics"
+            reason = "the merge-commit tests read it to pin that taint propagates from a merge to \
+                      its descendants"
         )
     )]
     pub tainted_change_ids: HashSet<String>,
 
-    /// Number of bookmarks excluded due to merge commits in their history.
-    pub excluded_bookmark_count: usize,
+    /// Push state per user bookmark name, for every bookmark that reached a
+    /// segment. Bookmark names are unique across the repo, so one map covers
+    /// every stack the name appears in.
+    pub bookmark_remote_states: HashMap<String, RemoteState>,
+
+    /// Names of bookmarks excluded due to merge commits in their history.
+    pub excluded_bookmarks: Vec<String>,
+
+    /// Unbookmarked heads excluded for the same reason. Counted separately
+    /// because they have no name to report.
+    pub excluded_head_count: usize,
 
     /// Complete stacks, one per leaf bookmark, ordered trunk-to-leaf.
     pub stacks: Vec<BranchStack>,

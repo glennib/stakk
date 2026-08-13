@@ -32,31 +32,13 @@ pub enum ForgeError {
     },
 }
 
-/// State of a pull request.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PrState {
-    Open,
-    Closed,
-    Merged,
-}
-
 /// A pull request, forge-agnostic.
 #[derive(Debug, Clone)]
 pub struct PullRequest {
     pub number: u64,
     pub html_url: String,
     pub title: String,
-    #[expect(
-        dead_code,
-        reason = "part of PR data model, not yet consumed by submission logic"
-    )]
-    pub head_ref: String,
     pub base_ref: String,
-    #[expect(
-        dead_code,
-        reason = "part of PR data model, not yet consumed by submission logic"
-    )]
-    pub state: PrState,
     /// The PR body/description text.
     pub body: Option<String>,
 }
@@ -83,11 +65,6 @@ pub struct CreatePrParams {
 /// All methods return forge-agnostic types. Implementations handle the
 /// translation to/from forge-specific APIs.
 pub trait Forge: Send + Sync {
-    /// Get the username of the authenticated user.
-    fn get_authenticated_user(
-        &self,
-    ) -> impl std::future::Future<Output = Result<String, ForgeError>> + Send;
-
     /// Find an open PR with the given head branch.
     fn find_pr_for_branch(
         &self,

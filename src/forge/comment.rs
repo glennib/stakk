@@ -7,7 +7,6 @@ use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use clap::ValueEnum;
 use minijinja::Environment;
-use serde::Deserialize;
 use serde::Serialize;
 
 use super::Comment;
@@ -54,14 +53,14 @@ const DEFAULT_TEMPLATE: &str = include_str!("default_comment.md.jinja");
 pub const STAKK_REPO_URL: &str = "https://github.com/glennib/stakk";
 
 /// Metadata embedded in stack comments as base64-encoded JSON.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct StackCommentData {
     pub version: u32,
     pub stack: Vec<StackEntry>,
 }
 
 /// One entry in the stack comment metadata.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct StackEntry {
     /// The jj bookmark name.
     pub bookmark_name: String,
@@ -161,26 +160,6 @@ pub fn find_stack_comment(comments: &[Comment]) -> Option<&Comment> {
     comments
         .iter()
         .find(|c| c.body.contains(COMMENT_DATA_PREFIX))
-}
-
-/// Parse stack comment metadata from a comment body.
-///
-/// Returns `None` if the comment does not contain valid metadata.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "needed when submission reads existing stack data (e.g. detecting merged PRs)"
-    )
-)]
-pub fn parse_stack_comment(body: &str) -> Option<StackCommentData> {
-    let first_line = body.lines().next()?;
-    let start = first_line.find(COMMENT_DATA_PREFIX)? + COMMENT_DATA_PREFIX.len();
-    let end = first_line[start..].find(COMMENT_DATA_POSTFIX)? + start;
-    let encoded = &first_line[start..end];
-    let decoded = BASE64.decode(encoded).ok()?;
-    let json_str = std::str::from_utf8(&decoded).ok()?;
-    serde_json::from_str(json_str).ok()
 }
 
 /// Find the byte range of a fenced stack section in a PR body.
@@ -296,17 +275,6 @@ mod tests {
     }
 
     #[test]
-    fn format_and_parse_roundtrip() {
-        let data = sample_data();
-        let ctx = sample_context(0);
-        let env = default_env();
-        let tmpl = env.get_template("stack_comment").unwrap();
-        let body = format_stack_comment(&data, &ctx, &tmpl).unwrap();
-        let parsed = parse_stack_comment(&body).unwrap();
-        assert_eq!(parsed, data);
-    }
-
-    #[test]
     fn format_highlights_current_pr() {
         let data = sample_data();
         let ctx = sample_context(1);
@@ -385,30 +353,6 @@ mod tests {
             body: "Nothing here".to_string(),
         }];
         assert!(find_stack_comment(&comments).is_none());
-    }
-
-    #[test]
-    fn parse_with_different_body_text() {
-        // Parse metadata even when the body text around it differs.
-        let data = sample_data();
-        let encoded = BASE64.encode(serde_json::to_string(&data).unwrap());
-        let body = format!(
-            "{COMMENT_DATA_PREFIX}{encoded}{COMMENT_DATA_POSTFIX}\nSome different body \
-             text\n\n---\n*Some other footer*"
-        );
-        let parsed = parse_stack_comment(&body).unwrap();
-        assert_eq!(parsed, data);
-    }
-
-    #[test]
-    fn parse_invalid_base64_returns_none() {
-        let body = format!("{COMMENT_DATA_PREFIX}not-valid-base64!!!{COMMENT_DATA_POSTFIX}\nstuff");
-        assert!(parse_stack_comment(&body).is_none());
-    }
-
-    #[test]
-    fn parse_no_metadata_returns_none() {
-        assert!(parse_stack_comment("just a regular comment").is_none());
     }
 
     // -- Body fence tests --

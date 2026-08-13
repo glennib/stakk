@@ -9,13 +9,17 @@ pub mod types;
 use std::collections::HashMap;
 use std::collections::HashSet;
 
+use jiff::Timestamp;
+
 use self::types::BookmarkSegment;
 use self::types::BranchStack;
 use self::types::ChangeGraph;
+use self::types::RemoteState;
 use self::types::SegmentCommit;
 use crate::error::StakkError;
 use crate::jj::Jj;
 use crate::jj::runner::JjRunner;
+use crate::jj::types::Bookmark;
 
 /// Result of traversing from one bookmark toward trunk.
 struct TraversalResult {
@@ -47,9 +51,9 @@ pub async fn build_change_graph<R: JjRunner>(
     let mut fully_collected: HashSet<String> = HashSet::new();
     let mut adjacency_list: HashMap<String, String> = HashMap::new();
     let mut segments: HashMap<String, BookmarkSegment> = HashMap::new();
-    let mut stack_roots: HashSet<String> = HashSet::new();
     let mut tainted_change_ids: HashSet<String> = HashSet::new();
-    let mut excluded_bookmark_count: usize = 0;
+    let mut excluded_bookmarks: Vec<String> = Vec::new();
+    let mut excluded_head_count: usize = 0;
 
     for bookmark in &bookmarks {
         if fully_collected.contains(&bookmark.name) {
@@ -66,14 +70,13 @@ pub async fn build_change_graph<R: JjRunner>(
         .await?;
 
         if result.excluded {
-            excluded_bookmark_count += 1;
+            excluded_bookmarks.push(bookmark.name.clone());
             continue;
         }
 
         integrate_traversal_result(
             result,
             &mut adjacency_list,
-            &mut stack_roots,
             &mut segments,
             &mut fully_collected,
         );
@@ -104,14 +107,13 @@ pub async fn build_change_graph<R: JjRunner>(
         .await?;
 
         if result.excluded {
-            excluded_bookmark_count += 1;
+            excluded_head_count += 1;
             continue;
         }
 
         integrate_traversal_result(
             result,
             &mut adjacency_list,
-            &mut stack_roots,
             &mut segments,
             &mut fully_collected,
         );
@@ -138,25 +140,82 @@ pub async fn build_change_graph<R: JjRunner>(
         }
     }
 
+    let bookmark_remote_states = derive_remote_states(&bookmarks, &stacks);
+
     Ok(ChangeGraph {
         adjacency_list,
         stack_leaves,
-        stack_roots,
         segments,
         tainted_change_ids,
-        excluded_bookmark_count,
+        bookmark_remote_states,
+        excluded_bookmarks,
+        excluded_head_count,
         stacks,
+    })
+}
+
+/// Classify every bookmark that reached a segment as unpushed, diverged or
+/// synced.
+///
+/// Two facts decide it, and neither is enough alone. `jj`'s `synced()` is
+/// false only when a *tracked* remote disagrees with the local bookmark, so a
+/// never-pushed bookmark reports `synced = true` exactly like an up-to-date
+/// one. What separates those two is whether a remote bookmark of the same
+/// name sits on the segment's boundary commit — which is where it must be if
+/// the two agree.
+///
+/// The internal `name@git` remote is not a real remote and is skipped: it
+/// tracks the colocated git repo, not anything a push would reach.
+fn derive_remote_states(
+    bookmarks: &[Bookmark],
+    stacks: &[BranchStack],
+) -> HashMap<String, RemoteState> {
+    let synced: HashMap<&str, bool> = bookmarks
+        .iter()
+        .map(|b| (b.name.as_str(), b.synced))
+        .collect();
+
+    let mut states = HashMap::new();
+    for stack in stacks {
+        for segment in &stack.segments {
+            // The boundary commit is the one the bookmarks point at, stored
+            // first because segment commits are newest-first.
+            let Some(boundary) = segment.commits.first() else {
+                continue;
+            };
+            for name in &segment.bookmark_names {
+                let state = if !synced.get(name.as_str()).copied().unwrap_or(true) {
+                    RemoteState::Diverged
+                } else if has_real_remote(&boundary.remote_bookmark_names, name) {
+                    RemoteState::Synced
+                } else {
+                    RemoteState::Unpushed
+                };
+                states.insert(name.clone(), state);
+            }
+        }
+    }
+    states
+}
+
+/// Whether `remote_names` contains `<name>@<remote>` for a remote other than
+/// jj's internal `git`.
+fn has_real_remote(remote_names: &[String], name: &str) -> bool {
+    remote_names.iter().any(|entry| {
+        entry
+            .strip_prefix(name)
+            .and_then(|rest| rest.strip_prefix('@'))
+            .is_some_and(|remote| remote != "git")
     })
 }
 
 /// Integrate a traversal result into the shared graph state.
 ///
-/// Stores discovered segments, builds adjacency relationships, tracks roots,
-/// and marks bookmark names as fully collected.
+/// Stores discovered segments, builds adjacency relationships, and marks
+/// bookmark names as fully collected.
 fn integrate_traversal_result(
     result: TraversalResult,
     adjacency_list: &mut HashMap<String, String>,
-    stack_roots: &mut HashSet<String>,
     segments: &mut HashMap<String, BookmarkSegment>,
     fully_collected: &mut HashSet<String>,
 ) {
@@ -175,14 +234,14 @@ fn integrate_traversal_result(
         adjacency_list.insert(child_id.clone(), parent_id.clone());
     }
 
-    // Connect to already-seen segment if traversal stopped early.
-    if let Some(ref seen_id) = result.already_seen_change_id {
-        if let Some(last_seg) = result.segments.last() {
-            adjacency_list.insert(last_seg.change_id.clone(), seen_id.clone());
-        }
-    } else if let Some(last_seg) = result.segments.last() {
-        // Reached trunk: this is a root.
-        stack_roots.insert(last_seg.change_id.clone());
+    // Connect to already-seen segment if traversal stopped early. Otherwise
+    // traversal reached trunk and the last segment has no parent, which is
+    // what makes it a stack root — recorded implicitly by its absence from
+    // the adjacency list.
+    if let Some(ref seen_id) = result.already_seen_change_id
+        && let Some(last_seg) = result.segments.last()
+    {
+        adjacency_list.insert(last_seg.change_id.clone(), seen_id.clone());
     }
 
     for seg in result.segments {
@@ -290,6 +349,7 @@ async fn traverse_and_discover_segments<R: JjRunner>(
                     files: vec![],
                     is_immutable: change.immutable,
                     local_bookmark_names: change.local_bookmark_names.clone(),
+                    remote_bookmark_names: change.remote_bookmark_names.clone(),
                 });
             }
         }
@@ -376,10 +436,10 @@ fn group_segments_into_stacks(
     }
 
     // Sort stacks by committer timestamps: collect each stack's commit
-    // timestamps in descending order, then sort stacks so the one with the
-    // most recent timestamp comes first (leftmost column). Ties are broken
-    // by the next-most-recent timestamp, etc. Final tiebreaker is the leaf
-    // change_id for full determinism.
+    // timestamps as instants in descending order, then sort stacks so the one
+    // with the most recent instant comes first (leftmost column). Ties are
+    // broken by the next-most-recent instant, etc. Final tiebreaker is the
+    // leaf change_id for full determinism.
     stacks.sort_by(|a, b| {
         let ts_a = collect_timestamps_desc(a);
         let ts_b = collect_timestamps_desc(b);
@@ -398,13 +458,30 @@ fn group_segments_into_stacks(
     stacks
 }
 
-/// Collect all committer timestamps from a stack's commits, sorted descending.
-fn collect_timestamps_desc(stack: &BranchStack) -> Vec<&str> {
-    let mut timestamps: Vec<&str> = stack
+/// Collect all committer timestamps from a stack's commits as instants,
+/// sorted descending.
+///
+/// Timestamps are parsed with jiff so that the UTC offset in the RFC 3339
+/// string does not affect ordering: string comparison would place
+/// `12:30:00+02:00` after `12:00:00+00:00` even though it is the earlier
+/// instant. `graph::layout` reads the same field the same way, so the two
+/// cannot disagree about which stack is *newer*. They are still not the same
+/// order: layout ranks a sibling subtree by its maximum instant and tiebreaks
+/// on the subtree root's change_id, while this ranks a stack by its whole
+/// descending instant vector and tiebreaks on the leaf segment's — so JSON
+/// `stacks[0]` and the TUI's leaf 1 are not guaranteed to be one stack.
+///
+/// Unparseable timestamps become `None`, which sorts as oldest — the same
+/// tolerance `graph::layout` applies. jj always emits RFC 3339, so this is a
+/// should-never-happen; failing here instead would make `stakk show` error out
+/// on input the TUI still renders, which is the divergence this parsing
+/// exists to remove.
+fn collect_timestamps_desc(stack: &BranchStack) -> Vec<Option<Timestamp>> {
+    let mut timestamps: Vec<Option<Timestamp>> = stack
         .segments
         .iter()
         .flat_map(|seg| seg.commits.iter())
-        .map(|c| c.committer.timestamp.as_str())
+        .map(|c| c.committer.timestamp.parse().ok())
         .collect();
     timestamps.sort_unstable_by(|a, b| b.cmp(a));
     timestamps
@@ -524,8 +601,6 @@ mod tests {
         assert_eq!(graph.stacks.len(), 1);
         assert_eq!(graph.stack_leaves.len(), 1);
         assert!(graph.stack_leaves.contains("ch_b"));
-        assert_eq!(graph.stack_roots.len(), 1);
-        assert!(graph.stack_roots.contains("ch_a"));
 
         // Adjacency: ch_b -> ch_a
         assert_eq!(graph.adjacency_list.get("ch_b").unwrap(), "ch_a");
@@ -594,9 +669,6 @@ mod tests {
         assert!(graph.stack_leaves.contains("ch_b"));
         assert!(graph.stack_leaves.contains("ch_c"));
 
-        // bm_a is root.
-        assert!(graph.stack_roots.contains("ch_a"));
-
         // Adjacency: ch_b -> ch_a, ch_c -> ch_a
         assert_eq!(graph.adjacency_list.get("ch_b").unwrap(), "ch_a");
         assert_eq!(graph.adjacency_list.get("ch_c").unwrap(), "ch_a");
@@ -646,7 +718,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(graph.stacks.len(), 0);
-        assert_eq!(graph.excluded_bookmark_count, 1);
+        assert_eq!(graph.excluded_bookmarks, vec!["bm_merge"]);
         assert!(graph.tainted_change_ids.contains("ch_merge"));
     }
 
@@ -695,7 +767,7 @@ mod tests {
 
         assert_eq!(graph.stacks.len(), 0);
         // bm_b excluded because its traversal hit a merge.
-        assert_eq!(graph.excluded_bookmark_count, 1);
+        assert_eq!(graph.excluded_bookmarks, vec!["bm_b"]);
         assert!(graph.tainted_change_ids.contains("ch_a"));
         assert!(graph.tainted_change_ids.contains("ch_b"));
 
@@ -754,7 +826,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(graph.stacks.len(), 0);
-        assert_eq!(graph.excluded_bookmark_count, 2);
+        assert_eq!(graph.excluded_bookmarks, vec!["bm_merge", "bm_child"]);
         assert!(graph.tainted_change_ids.contains("ch_merge"));
         assert!(graph.tainted_change_ids.contains("ch_child"));
     }
@@ -835,8 +907,8 @@ mod tests {
         assert!(graph.segments.is_empty());
         assert!(graph.stacks.is_empty());
         assert!(graph.stack_leaves.is_empty());
-        assert!(graph.stack_roots.is_empty());
-        assert_eq!(graph.excluded_bookmark_count, 0);
+        assert!(graph.excluded_bookmarks.is_empty());
+        assert_eq!(graph.excluded_head_count, 0);
     }
 
     /// Multi-commit segment: unbookmarked commits between bookmarks are
@@ -1008,7 +1080,6 @@ mod tests {
         assert_eq!(graph.segments.len(), 1);
         assert_eq!(graph.stacks.len(), 1);
         assert!(graph.stack_leaves.contains("ch_x"));
-        assert!(graph.stack_roots.contains("ch_x"));
         assert!(graph.adjacency_list.is_empty());
 
         let stack = &graph.stacks[0];
@@ -1093,6 +1164,7 @@ mod tests {
                         files: vec![],
                         is_immutable: false,
                         local_bookmark_names: vec![],
+                        remote_bookmark_names: vec![],
                     }],
                 },
             );
@@ -1106,6 +1178,58 @@ mod tests {
         assert_eq!(stacks[0].segments[0].change_id, "a_leaf"); // 2026-03-03
         assert_eq!(stacks[1].segments[0].change_id, "m_leaf"); // 2026-03-02
         assert_eq!(stacks[2].segments[0].change_id, "z_leaf"); // 2026-03-01
+    }
+
+    /// Stack order compares committer timestamps as instants, not as strings,
+    /// so a UTC offset cannot flip it. Mirrors
+    /// `layout::tests::sibling_order_uses_offset_aware_timestamps`.
+    #[test]
+    fn stacks_ordered_by_offset_aware_timestamps() {
+        use crate::jj::types::Signature;
+
+        let mut segments = HashMap::new();
+        let adjacency_list = HashMap::new();
+        let mut stack_leaves = HashSet::new();
+
+        let test_sig = |ts: &str| Signature {
+            name: "T".to_string(),
+            email: "t@t.t".to_string(),
+            timestamp: ts.to_string(),
+        };
+
+        // 12:00+00:00 is the *later* instant than 12:30+02:00 (= 10:30 UTC),
+        // but lexicographic string comparison would say otherwise.
+        for (id, ts) in [
+            ("utc", "2026-01-01T12:00:00+00:00"),
+            ("offset", "2026-01-01T12:30:00+02:00"),
+        ] {
+            segments.insert(
+                id.to_string(),
+                BookmarkSegment {
+                    bookmark_names: vec![id.to_string()],
+                    change_id: id.to_string(),
+                    commits: vec![SegmentCommit {
+                        commit_id: format!("c_{id}"),
+                        change_id: id.to_string(),
+                        description: String::new(),
+                        author: test_sig(ts),
+                        committer: test_sig(ts),
+                        short_change_id: id[..3].to_string(),
+                        files: vec![],
+                        is_immutable: false,
+                        local_bookmark_names: vec![],
+                        remote_bookmark_names: vec![],
+                    }],
+                },
+            );
+            stack_leaves.insert(id.to_string());
+        }
+
+        let stacks = group_segments_into_stacks(&stack_leaves, &adjacency_list, &segments);
+
+        assert_eq!(stacks.len(), 2);
+        assert_eq!(stacks[0].segments[0].change_id, "utc");
+        assert_eq!(stacks[1].segments[0].change_id, "offset");
     }
 
     /// Non-user bookmarks on a commit are filtered out; segment uses only
@@ -1527,5 +1651,109 @@ mod tests {
         assert_eq!(stack.segments.len(), 2);
         assert_eq!(stack.segments[0].change_id, "ch_mid");
         assert_eq!(stack.segments[1].change_id, "ch_head");
+    }
+
+    // -- push state --
+
+    fn bookmark(name: &str, synced: bool) -> Bookmark {
+        Bookmark {
+            name: name.to_string(),
+            commit_id: format!("c_{name}"),
+            change_id: format!("ch_{name}"),
+            synced,
+        }
+    }
+
+    /// One stack, one segment, one bookmark, whose boundary commit carries
+    /// `remotes`.
+    fn stack_with(name: &str, remotes: &[&str]) -> BranchStack {
+        BranchStack {
+            segments: vec![BookmarkSegment {
+                bookmark_names: vec![name.to_string()],
+                change_id: format!("ch_{name}"),
+                commits: vec![SegmentCommit {
+                    commit_id: format!("c_{name}"),
+                    change_id: format!("ch_{name}"),
+                    description: String::new(),
+                    author: test_signature(),
+                    committer: test_signature(),
+                    short_change_id: "ch".to_string(),
+                    files: vec![],
+                    is_immutable: false,
+                    local_bookmark_names: vec![name.to_string()],
+                    remote_bookmark_names: remotes.iter().map(ToString::to_string).collect(),
+                }],
+            }],
+        }
+    }
+
+    fn test_signature() -> crate::jj::types::Signature {
+        crate::jj::types::Signature {
+            name: "T".to_string(),
+            email: "t@t.t".to_string(),
+            timestamp: "2026-01-01T00:00:00Z".to_string(),
+        }
+    }
+
+    /// A never-pushed bookmark and an up-to-date one are both `synced` as far
+    /// as jj is concerned. Only the remote ref on the boundary commit tells
+    /// them apart, and getting this backwards would report every new stack as
+    /// already pushed.
+    #[test]
+    fn synced_alone_does_not_separate_unpushed_from_synced() {
+        let states = derive_remote_states(
+            &[bookmark("fresh", true), bookmark("live", true)],
+            &[
+                stack_with("fresh", &[]),
+                stack_with("live", &["live@origin"]),
+            ],
+        );
+
+        assert_eq!(states["fresh"], RemoteState::Unpushed);
+        assert_eq!(states["live"], RemoteState::Synced);
+    }
+
+    /// After a rebase the remote ref stays on the old commit, so it is absent
+    /// from the boundary commit — `synced == false` is what catches it.
+    #[test]
+    fn an_out_of_date_remote_is_diverged() {
+        let states = derive_remote_states(&[bookmark("moved", false)], &[stack_with("moved", &[])]);
+
+        assert_eq!(states["moved"], RemoteState::Diverged);
+    }
+
+    /// jj's internal `@git` remote is not a push target, so a bookmark that
+    /// only exists there has never been pushed anywhere real.
+    #[test]
+    fn the_internal_git_remote_does_not_count_as_pushed() {
+        let states = derive_remote_states(
+            &[bookmark("local", true)],
+            &[stack_with("local", &["local@git"])],
+        );
+
+        assert_eq!(states["local"], RemoteState::Unpushed);
+    }
+
+    /// A remote bookmark whose name merely starts with ours is a different
+    /// bookmark; matching on a bare prefix would call `feat` synced because
+    /// `feat-2@origin` is on the commit.
+    #[test]
+    fn a_longer_bookmark_name_is_not_a_match() {
+        let states = derive_remote_states(
+            &[bookmark("feat", true)],
+            &[stack_with("feat", &["feat-2@origin"])],
+        );
+
+        assert_eq!(states["feat"], RemoteState::Unpushed);
+    }
+
+    /// The unbookmarked head segment contributes no entry rather than an
+    /// empty-named one.
+    #[test]
+    fn an_unbookmarked_segment_contributes_nothing() {
+        let mut stack = stack_with("head", &[]);
+        stack.segments[0].bookmark_names.clear();
+
+        assert!(derive_remote_states(&[], &[stack]).is_empty());
     }
 }

@@ -75,62 +75,37 @@ impl std::fmt::Display for TrailerHandling {
 
 /// Arguments for the submit subcommand.
 #[derive(Debug, Args)]
-#[command(group = clap::ArgGroup::new("explicit_marks").multiple(true))]
 pub struct SubmitArgs {
-    /// The bookmark to submit as a pull request.
-    ///
-    /// Every bookmark between trunk and this one gets its own stacked
-    /// pull request. Omit it for interactive selection, or for the
-    /// --keep/--keep-all/--new/--new-auto/--new-command flags, which
-    /// conflict with this argument.
-    #[arg(conflicts_with = "explicit_marks", verbatim_doc_comment)]
-    pub bookmark: Option<String>,
-
     /// Print the submission plan and stop.
     ///
-    /// Fully inert: no bookmark is created, nothing is pushed, and no
-    /// pull request is touched.
+    /// No bookmark is created, nothing is pushed, and no pull request is
+    /// touched — but a configured --bookmark-command still runs during
+    /// selection.
     #[arg(long, verbatim_doc_comment)]
     pub dry_run: bool,
 
     /// Keep an existing bookmark as a PR boundary (repeatable).
     ///
-    /// Non-interactive selection: the --keep/--keep-all/--new/--new-auto/
-    /// --new-command marks fully determine the PR set — nothing is
-    /// implicit. All marks must lie on one trunk-to-tip path; the topmost
-    /// is the tip of the submission. Bookmarks on the path that are not
-    /// kept fold into the PR above them.
+    /// Non-interactive selection: the --keep/--new/--new-auto/--new-command
+    /// marks fully determine the PR set — nothing is implicit. All marks
+    /// must lie on one trunk-to-tip path; the topmost is the tip of the
+    /// submission.
+    ///
+    /// Unmarked commits *below* the topmost mark fold into the PR above
+    /// them, bookmarked or not. Commits *above* it are not submitted at
+    /// all — an unbookmarked work-in-progress head is left out unless it
+    /// is marked.
     ///
     /// `stakk show [--format=json]` lists stacks, bookmarks and change
     /// ids.
-    #[arg(
-        long,
-        value_name = "BOOKMARK",
-        group = "explicit_marks",
-        verbatim_doc_comment
-    )]
+    #[arg(long, value_name = "BOOKMARK", verbatim_doc_comment)]
     pub keep: Vec<String>,
-
-    /// Keep every existing bookmark on the selected path.
-    ///
-    /// With other marks, expands on the path they anchor, skipping commits
-    /// that carry an explicit mark (explicit beats bulk). Alone, it needs
-    /// the choice of stack to be unambiguous: one stack, or several that
-    /// agree on their bookmarks (e.g. differing only in unbookmarked heads
-    /// such as the working copy).
-    #[arg(long, group = "explicit_marks", verbatim_doc_comment)]
-    pub keep_all: bool,
 
     /// Create a new bookmark at REV as a PR boundary (repeatable).
     ///
     /// REV is a change id or commit id prefix (as shown by `stakk show`).
     /// The bookmark is named stakk-<change_id> unless =NAME is given.
-    #[arg(
-        long,
-        value_name = "REV[=NAME]",
-        group = "explicit_marks",
-        verbatim_doc_comment
-    )]
+    #[arg(long, value_name = "REV[=NAME]", verbatim_doc_comment)]
     pub new: Vec<String>,
 
     /// Create a new auto-named bookmark at REV (repeatable).
@@ -139,24 +114,14 @@ pub struct SubmitArgs {
     /// the commits folded into the boundary, honoring --auto-prefix. Falls
     /// back to stakk-<change_id> when nothing can be derived or the
     /// derived name is already taken.
-    #[arg(
-        long,
-        value_name = "REV",
-        group = "explicit_marks",
-        verbatim_doc_comment
-    )]
+    #[arg(long, value_name = "REV", verbatim_doc_comment)]
     pub new_auto: Vec<String>,
 
     /// Create a new bookmark at REV named by --bookmark-command (repeatable).
     ///
     /// Errors if no bookmark command is configured. The command receives
     /// the same JSON segment description as in the TUI.
-    #[arg(
-        long,
-        value_name = "REV",
-        group = "explicit_marks",
-        verbatim_doc_comment
-    )]
+    #[arg(long, value_name = "REV", verbatim_doc_comment)]
     pub new_command: Vec<String>,
 
     #[command(flatten)]
@@ -164,8 +129,7 @@ pub struct SubmitArgs {
 
     /// Whether new pull requests are created as regular or draft PRs.
     ///
-    /// Existing PRs keep their current draft/ready state. Overridden by
-    /// --draft.
+    /// Existing PRs keep their current draft/ready state.
     #[arg(
         long,
         env = "STAKK_PR_MODE",
@@ -174,10 +138,6 @@ pub struct SubmitArgs {
         verbatim_doc_comment
     )]
     pub pr_mode: PrMode,
-
-    /// Shortcut for --pr-mode=draft. Overrides --pr-mode if both are given.
-    #[arg(long, env = "STAKK_DRAFT")]
-    draft: bool,
 
     /// Git remote to push to.
     #[arg(long, default_value = "origin", env = "STAKK_REMOTE")]
@@ -217,8 +177,8 @@ pub struct SubmitArgs {
         clippy::doc_lazy_continuation,
         reason = "endfor must align with the for-loop, not the list item"
     )]
-    #[arg(long, env = "STAKK_TEMPLATE", verbatim_doc_comment)]
-    pub template: Option<String>,
+    #[arg(long, env = "STAKK_TEMPLATE_PATH", verbatim_doc_comment)]
+    pub template_path: Option<String>,
 
     /// Where to place the stack overview on each pull request.
     ///
@@ -357,15 +317,4 @@ pub struct SubmitArgs {
     ///     | head -c 50
     #[arg(long, env = "STAKK_BOOKMARK_COMMAND", verbatim_doc_comment)]
     pub bookmark_command: Option<String>,
-}
-
-impl SubmitArgs {
-    /// Effective PR mode. `--draft` forces `PrMode::Draft`.
-    pub fn pr_mode(&self) -> PrMode {
-        if self.draft {
-            PrMode::Draft
-        } else {
-            self.pr_mode
-        }
-    }
 }

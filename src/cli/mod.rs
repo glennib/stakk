@@ -1,4 +1,3 @@
-pub mod auth;
 pub mod graph;
 pub mod submit;
 
@@ -6,11 +5,12 @@ use std::path::PathBuf;
 
 use clap::Args;
 use clap::Command;
+use clap::CommandFactory;
+use clap::FromArgMatches;
 use clap::Parser;
 use clap::Subcommand;
 use clap_complete::Shell;
 
-use crate::cli::auth::AuthArgs;
 use crate::cli::graph::GraphArgs;
 use crate::cli::submit::SubmitArgs;
 use crate::config::Config;
@@ -18,7 +18,6 @@ use crate::config::Config;
 /// stakk — bridge Jujutsu bookmarks to GitHub stacked pull requests.
 #[derive(Debug, Parser)]
 #[command(version, about, after_long_help = env!("CARGO_PKG_REPOSITORY"))]
-#[command(args_conflicts_with_subcommands = true)]
 pub struct Cli {
     /// Path to a config file (overrides automatic discovery).
     ///
@@ -43,9 +42,6 @@ pub struct Cli {
 
     #[command(subcommand)]
     pub command: Option<Commands>,
-    /// Default submit arguments (used when no subcommand is given).
-    #[command(flatten)]
-    pub submit_args: SubmitArgs,
 }
 
 #[derive(Debug, Subcommand)]
@@ -55,8 +51,6 @@ pub enum Commands {
     // Boxed: SubmitArgs is by far the largest payload (clippy
     // large_enum_variant).
     Submit(Box<SubmitArgs>),
-    /// Manage authentication.
-    Auth(AuthArgs),
     /// Show repository status and bookmark stacks.
     Show(ShowArgs),
     /// Generate shell completions for the given shell.
@@ -79,10 +73,16 @@ pub enum Commands {
 /// list, so they cannot drift from each other.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
 pub enum DocTopic {
-    /// Non-interactive submission, for scripts and coding agents.
+    /// Submitting without the TUI, written for coding agents.
+    Agents,
+    /// Driving stakk from a program: exit codes and a worked example.
     Scripting,
+    /// The `stakk show` document, field by field.
+    Show,
     /// Config files, precedence, and environment variables.
     Config,
+    /// GitHub authentication: tokens, hosts, and troubleshooting.
+    Auth,
     /// Stack info placement and stack comment templates.
     Template,
 }
@@ -93,8 +93,12 @@ pub enum ShowFormat {
     /// Human-readable jj-log-style graph of all bookmark stacks.
     #[default]
     Pretty,
-    /// Machine-readable, schema-versioned JSON document.
+    /// Machine-readable, schema-versioned JSON: a sparse projection with
+    /// just enough to pinpoint a segment.
     Json,
+    /// The same JSON document with every field, including commit
+    /// descriptions, authors and touched files.
+    JsonFull,
 }
 
 /// Arguments for the show subcommand.
@@ -107,7 +111,14 @@ pub struct ShowArgs {
     ///
     /// json describes every stack, segment and commit for scripts and
     /// agents. Its identifiers (short_change_id, bookmark names) can be
-    /// passed directly to `stakk submit`.
+    /// passed directly to `stakk submit`. It is a sparse projection:
+    /// per commit it carries change_id, short_change_id, title,
+    /// committer_timestamp, is_immutable, local_bookmark_names,
+    /// is_boundary and is_leaf.
+    ///
+    /// json-full is the same document with commit_id, description,
+    /// author and files added back. Every json field is present in
+    /// json-full with the same name, type and value.
     #[arg(long, default_value = "pretty", value_enum, verbatim_doc_comment)]
     pub format: ShowFormat,
 
@@ -124,15 +135,34 @@ pub struct ShowArgs {
     reason = "Config is moved into closures captured by mut_subcommand which requires 'static"
 )]
 pub fn apply_config_defaults(config: Config, cmd: Command) -> Command {
-    // Apply to top-level (flattened submit args) first.
+    // Global args live on the root; every other arg has exactly one home on
+    // its own subcommand.
     let cmd = apply_global_defaults(&config, cmd);
-    let cmd = apply_submit_and_graph_defaults(&config, cmd);
     // Clone for the closures that mut_subcommand requires ('static).
     let config2 = config.clone();
     let cmd = cmd.mut_subcommand("submit", |sub| {
-        apply_submit_and_graph_defaults(&config, sub)
+        let sub = apply_submit_defaults(&config, sub);
+        apply_graph_defaults(&config, sub)
     });
     cmd.mut_subcommand("show", |sub| apply_graph_defaults(&config2, sub))
+}
+
+/// Parse the `SubmitArgs` that a bare `stakk` runs with.
+///
+/// The args come from a real clap parse of the synthetic argv `stakk submit`
+/// against a `Command` this function config-applies itself, so clap defaults,
+/// `STAKK_*` environment variables and config-injected defaults all apply,
+/// exactly as they would for a typed `stakk submit`. Building `SubmitArgs` by
+/// hand would bypass all three — which is why `SubmitArgs` has no `Default`
+/// impl. Taking the `Config` rather than a prepared `Command` keeps the
+/// config application inside this function, where a caller cannot skip it.
+pub fn default_submit_args(config: Config) -> Result<SubmitArgs, clap::Error> {
+    let cmd = apply_config_defaults(config, Cli::command());
+    let matches = cmd.try_get_matches_from(["stakk", "submit"])?;
+    let submit = matches
+        .subcommand_matches("submit")
+        .expect("the synthetic argv always names the submit subcommand");
+    SubmitArgs::from_arg_matches(submit)
 }
 
 fn set_default(cmd: Command, arg_id: &str, value: &str) -> Command {
@@ -162,8 +192,8 @@ fn apply_submit_defaults(config: &Config, mut cmd: Command) -> Command {
     if let Some(pr_mode) = config.pr_mode {
         cmd = set_default(cmd, "pr_mode", &pr_mode.to_string());
     }
-    if let Some(ref template) = config.template {
-        cmd = set_default(cmd, "template", template);
+    if let Some(ref template_path) = config.template_path {
+        cmd = set_default(cmd, "template_path", template_path);
     }
     if let Some(sp) = config.stack_placement {
         cmd = set_default(cmd, "stack_placement", &sp.to_string());
@@ -193,16 +223,8 @@ fn apply_graph_defaults(config: &Config, mut cmd: Command) -> Command {
     cmd
 }
 
-fn apply_submit_and_graph_defaults(config: &Config, cmd: Command) -> Command {
-    let cmd = apply_submit_defaults(config, cmd);
-    apply_graph_defaults(config, cmd)
-}
-
 #[cfg(test)]
 mod tests {
-    use clap::CommandFactory;
-    use clap::FromArgMatches;
-
     use super::*;
     use crate::forge::comment::StackPlacement;
 
@@ -213,12 +235,11 @@ mod tests {
         Cli::from_arg_matches(&matches).unwrap()
     }
 
-    /// Extract `SubmitArgs` from parsed CLI (handles both top-level and
-    /// subcommand).
+    /// Extract `SubmitArgs` from a parsed `stakk submit` invocation.
     fn submit_args(cli: &Cli) -> &SubmitArgs {
         match &cli.command {
             Some(Commands::Submit(args)) => args,
-            _ => &cli.submit_args,
+            other => panic!("expected Submit, got {other:?}"),
         }
     }
 
@@ -228,8 +249,8 @@ mod tests {
 
     #[test]
     fn pr_mode_default_no_config() {
-        let cli = parse_with_config(Config::default(), &["stakk", "submit", "bm"]);
-        assert_eq!(submit_args(&cli).pr_mode(), PrMode::Regular);
+        let cli = parse_with_config(Config::default(), &["stakk", "submit"]);
+        assert_eq!(submit_args(&cli).pr_mode, PrMode::Regular);
     }
 
     #[test]
@@ -238,8 +259,8 @@ mod tests {
             pr_mode: Some(PrMode::Draft),
             ..Default::default()
         };
-        let cli = parse_with_config(config, &["stakk", "submit", "bm"]);
-        assert_eq!(submit_args(&cli).pr_mode(), PrMode::Draft);
+        let cli = parse_with_config(config, &["stakk", "submit"]);
+        assert_eq!(submit_args(&cli).pr_mode, PrMode::Draft);
     }
 
     #[test]
@@ -248,18 +269,20 @@ mod tests {
             pr_mode: Some(PrMode::Regular),
             ..Default::default()
         };
-        let cli = parse_with_config(config, &["stakk", "submit", "bm"]);
-        assert_eq!(submit_args(&cli).pr_mode(), PrMode::Regular);
+        let cli = parse_with_config(config, &["stakk", "submit"]);
+        assert_eq!(submit_args(&cli).pr_mode, PrMode::Regular);
     }
 
     #[test]
-    fn pr_mode_config_regular_cli_draft() {
+    fn pr_mode_cli_draft() {
+        // Config says regular, so this pins CLI-beats-config in the draft
+        // direction; pr_mode_config_draft_cli_regular covers the reverse.
         let config = Config {
             pr_mode: Some(PrMode::Regular),
             ..Default::default()
         };
-        let cli = parse_with_config(config, &["stakk", "submit", "--draft", "bm"]);
-        assert_eq!(submit_args(&cli).pr_mode(), PrMode::Draft);
+        let cli = parse_with_config(config, &["stakk", "submit", "--pr-mode", "draft"]);
+        assert_eq!(submit_args(&cli).pr_mode, PrMode::Draft);
     }
 
     #[test]
@@ -268,48 +291,53 @@ mod tests {
             pr_mode: Some(PrMode::Draft),
             ..Default::default()
         };
-        let cli = parse_with_config(config, &["stakk", "submit", "--pr-mode", "regular", "bm"]);
-        assert_eq!(submit_args(&cli).pr_mode(), PrMode::Regular);
+        let cli = parse_with_config(config, &["stakk", "submit", "--pr-mode", "regular"]);
+        assert_eq!(submit_args(&cli).pr_mode, PrMode::Regular);
     }
 
+    // -- the bare `stakk` form --
+
     #[test]
-    fn pr_mode_no_config_cli_draft_flag() {
-        let cli = parse_with_config(Config::default(), &["stakk", "submit", "--draft", "bm"]);
-        assert_eq!(submit_args(&cli).pr_mode(), PrMode::Draft);
+    fn bare_stakk_parses_to_no_subcommand() {
+        let cli = parse_with_config(Config::default(), &["stakk"]);
+        assert!(cli.command.is_none());
     }
 
+    /// Regression guard for 90718ef5cf97 ("fix: respect env vars when running
+    /// without subcommand").
+    ///
+    /// The bare `stakk` form must take its `SubmitArgs` from a clap parse of
+    /// the config-applied `Command` — the mechanism `default_submit_args`
+    /// implements and `main.rs`'s `None` arm calls. A hand-built value would
+    /// silently ignore both `STAKK_*` environment variables and the config
+    /// defaults passed here. Env vars ride the same parse, so pinning the
+    /// config path pins both; clap's own env handling is not ours to test.
     #[test]
-    fn pr_mode_draft_flag_overrides_pr_mode_regular() {
-        let cli = parse_with_config(
-            Config::default(),
-            &["stakk", "submit", "--pr-mode", "regular", "--draft", "bm"],
-        );
-        assert_eq!(submit_args(&cli).pr_mode(), PrMode::Draft);
-    }
-
-    // -- pr_mode top-level (no subcommand) --
-
-    #[test]
-    fn pr_mode_toplevel_config_draft() {
+    fn bare_stakk_submit_args_come_from_a_config_applied_clap_parse() {
         let config = Config {
             pr_mode: Some(PrMode::Draft),
             ..Default::default()
         };
-        let cli = parse_with_config(config, &["stakk", "bm"]);
-        assert_eq!(submit_args(&cli).pr_mode(), PrMode::Draft);
+        let args = default_submit_args(config).unwrap();
+        assert_eq!(args.pr_mode, PrMode::Draft);
     }
 
     #[test]
-    fn pr_mode_toplevel_cli_draft_flag() {
-        let cli = parse_with_config(Config::default(), &["stakk", "--draft", "bm"]);
-        assert_eq!(submit_args(&cli).pr_mode(), PrMode::Draft);
+    fn bare_stakk_rejects_submit_flags() {
+        use clap::error::ErrorKind;
+
+        let cmd = apply_config_defaults(Config::default(), Cli::command());
+        let err = cmd
+            .try_get_matches_from(["stakk", "--dry-run"])
+            .unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::UnknownArgument);
     }
 
     // -- remote tests --
 
     #[test]
     fn remote_default_no_config() {
-        let cli = parse_with_config(Config::default(), &["stakk", "submit", "bm"]);
+        let cli = parse_with_config(Config::default(), &["stakk", "submit"]);
         assert_eq!(submit_args(&cli).remote, "origin");
     }
 
@@ -319,7 +347,7 @@ mod tests {
             remote: Some("upstream".into()),
             ..Default::default()
         };
-        let cli = parse_with_config(config, &["stakk", "submit", "bm"]);
+        let cli = parse_with_config(config, &["stakk", "submit"]);
         assert_eq!(submit_args(&cli).remote, "upstream");
     }
 
@@ -329,7 +357,7 @@ mod tests {
             remote: Some("upstream".into()),
             ..Default::default()
         };
-        let cli = parse_with_config(config, &["stakk", "submit", "--remote", "other", "bm"]);
+        let cli = parse_with_config(config, &["stakk", "submit", "--remote", "other"]);
         assert_eq!(submit_args(&cli).remote, "other");
     }
 
@@ -341,7 +369,7 @@ mod tests {
 
     #[test]
     fn github_host_default_none() {
-        let cli = parse_with_config(Config::default(), &["stakk", "submit", "bm"]);
+        let cli = parse_with_config(Config::default(), &["stakk", "submit"]);
         assert_eq!(cli.github_host, None);
     }
 
@@ -351,7 +379,7 @@ mod tests {
             github_host: Some("github.example.com".into()),
             ..Default::default()
         };
-        let cli = parse_with_config(config, &["stakk", "submit", "bm"]);
+        let cli = parse_with_config(config, &["stakk", "submit"]);
         assert_eq!(cli.github_host.as_deref(), Some("github.example.com"));
     }
 
@@ -363,19 +391,20 @@ mod tests {
         };
         let cli = parse_with_config(
             config,
-            &["stakk", "submit", "--github-host", "ghe.other.com", "bm"],
+            &["stakk", "submit", "--github-host", "ghe.other.com"],
         );
         assert_eq!(cli.github_host.as_deref(), Some("ghe.other.com"));
     }
 
     #[test]
-    fn github_host_from_config_without_subcommand() {
-        let config = Config {
-            github_host: Some("github.example.com".into()),
-            ..Default::default()
-        };
-        let cli = parse_with_config(config, &["stakk", "bm"]);
-        assert_eq!(cli.github_host.as_deref(), Some("github.example.com"));
+    fn github_host_is_global_and_parses_before_the_subcommand() {
+        // `global = true` makes it insertable anywhere; the submit flags are
+        // accepted only after `submit`.
+        let cli = parse_with_config(
+            Config::default(),
+            &["stakk", "--github-host", "ghe.example.com", "submit"],
+        );
+        assert_eq!(cli.github_host.as_deref(), Some("ghe.example.com"));
     }
 
     #[test]
@@ -388,21 +417,61 @@ mod tests {
         assert_eq!(cli.github_host.as_deref(), Some("github.example.com"));
     }
 
+    /// The bare form has no subcommand to carry the global arg, and `main.rs`
+    /// reads `github_host` off this parse — not off the synthetic `submit`
+    /// parse, which yields a `SubmitArgs` with no host field.
     #[test]
-    fn github_host_from_config_reaches_auth_test() {
+    fn github_host_from_config_reaches_bare_stakk() {
         let config = Config {
             github_host: Some("github.example.com".into()),
             ..Default::default()
         };
-        let cli = parse_with_config(config, &["stakk", "auth", "test"]);
+        let cli = parse_with_config(config, &["stakk"]);
         assert_eq!(cli.github_host.as_deref(), Some("github.example.com"));
+    }
+
+    // -- template_path tests --
+
+    #[test]
+    fn template_path_default_none() {
+        let cli = parse_with_config(Config::default(), &["stakk", "submit"]);
+        assert_eq!(submit_args(&cli).template_path, None);
+    }
+
+    #[test]
+    fn template_path_config_override() {
+        let config = Config {
+            template_path: Some("/from/config.jinja".into()),
+            ..Default::default()
+        };
+        let cli = parse_with_config(config, &["stakk", "submit"]);
+        assert_eq!(
+            submit_args(&cli).template_path.as_deref(),
+            Some("/from/config.jinja"),
+        );
+    }
+
+    #[test]
+    fn template_path_cli_overrides_config() {
+        let config = Config {
+            template_path: Some("/from/config.jinja".into()),
+            ..Default::default()
+        };
+        let cli = parse_with_config(
+            config,
+            &["stakk", "submit", "--template-path", "/from/cli.jinja"],
+        );
+        assert_eq!(
+            submit_args(&cli).template_path.as_deref(),
+            Some("/from/cli.jinja"),
+        );
     }
 
     // -- stack_placement tests --
 
     #[test]
     fn stack_placement_default_no_config() {
-        let cli = parse_with_config(Config::default(), &["stakk", "submit", "bm"]);
+        let cli = parse_with_config(Config::default(), &["stakk", "submit"]);
         assert_eq!(submit_args(&cli).stack_placement, StackPlacement::Comment);
     }
 
@@ -412,7 +481,7 @@ mod tests {
             stack_placement: Some(StackPlacement::Body),
             ..Default::default()
         };
-        let cli = parse_with_config(config, &["stakk", "submit", "bm"]);
+        let cli = parse_with_config(config, &["stakk", "submit"]);
         assert_eq!(submit_args(&cli).stack_placement, StackPlacement::Body);
     }
 
@@ -422,10 +491,7 @@ mod tests {
             stack_placement: Some(StackPlacement::Body),
             ..Default::default()
         };
-        let cli = parse_with_config(
-            config,
-            &["stakk", "submit", "--stack-placement", "comment", "bm"],
-        );
+        let cli = parse_with_config(config, &["stakk", "submit", "--stack-placement", "comment"]);
         assert_eq!(submit_args(&cli).stack_placement, StackPlacement::Comment);
     }
 
@@ -435,7 +501,7 @@ mod tests {
             stack_placement: Some(StackPlacement::None),
             ..Default::default()
         };
-        let cli = parse_with_config(config, &["stakk", "submit", "bm"]);
+        let cli = parse_with_config(config, &["stakk", "submit"]);
         assert_eq!(submit_args(&cli).stack_placement, StackPlacement::None);
     }
 
@@ -445,10 +511,7 @@ mod tests {
             stack_placement: Some(StackPlacement::Body),
             ..Default::default()
         };
-        let cli = parse_with_config(
-            config,
-            &["stakk", "submit", "--stack-placement", "none", "bm"],
-        );
+        let cli = parse_with_config(config, &["stakk", "submit", "--stack-placement", "none"]);
         assert_eq!(submit_args(&cli).stack_placement, StackPlacement::None);
     }
 
@@ -456,7 +519,7 @@ mod tests {
 
     #[test]
     fn sync_pr_content_default_none() {
-        let cli = parse_with_config(Config::default(), &["stakk", "submit", "bm"]);
+        let cli = parse_with_config(Config::default(), &["stakk", "submit"]);
         assert_eq!(
             submit_args(&cli).sync_pr_content,
             crate::cli::submit::SyncPrContent::None,
@@ -469,7 +532,7 @@ mod tests {
             sync_pr_content: Some(crate::cli::submit::SyncPrContent::All),
             ..Default::default()
         };
-        let cli = parse_with_config(config, &["stakk", "submit", "bm"]);
+        let cli = parse_with_config(config, &["stakk", "submit"]);
         assert_eq!(
             submit_args(&cli).sync_pr_content,
             crate::cli::submit::SyncPrContent::All,
@@ -482,10 +545,7 @@ mod tests {
             sync_pr_content: Some(crate::cli::submit::SyncPrContent::All),
             ..Default::default()
         };
-        let cli = parse_with_config(
-            config,
-            &["stakk", "submit", "--sync-pr-content=title", "bm"],
-        );
+        let cli = parse_with_config(config, &["stakk", "submit", "--sync-pr-content=title"]);
         assert_eq!(
             submit_args(&cli).sync_pr_content,
             crate::cli::submit::SyncPrContent::Title,
@@ -496,7 +556,7 @@ mod tests {
 
     #[test]
     fn trailers_default_keep() {
-        let cli = parse_with_config(Config::default(), &["stakk", "submit", "bm"]);
+        let cli = parse_with_config(Config::default(), &["stakk", "submit"]);
         assert_eq!(
             submit_args(&cli).trailers,
             crate::cli::submit::TrailerHandling::Keep,
@@ -509,7 +569,7 @@ mod tests {
             trailers: Some(crate::cli::submit::TrailerHandling::Strip),
             ..Default::default()
         };
-        let cli = parse_with_config(config, &["stakk", "submit", "bm"]);
+        let cli = parse_with_config(config, &["stakk", "submit"]);
         assert_eq!(
             submit_args(&cli).trailers,
             crate::cli::submit::TrailerHandling::Strip,
@@ -522,7 +582,7 @@ mod tests {
             trailers: Some(crate::cli::submit::TrailerHandling::Strip),
             ..Default::default()
         };
-        let cli = parse_with_config(config, &["stakk", "submit", "--trailers=keep", "bm"]);
+        let cli = parse_with_config(config, &["stakk", "submit", "--trailers=keep"]);
         assert_eq!(
             submit_args(&cli).trailers,
             crate::cli::submit::TrailerHandling::Keep,
@@ -537,7 +597,7 @@ mod tests {
             auto_prefix: Some("gb-".into()),
             ..Default::default()
         };
-        let cli = parse_with_config(config, &["stakk", "submit", "bm"]);
+        let cli = parse_with_config(config, &["stakk", "submit"]);
         assert_eq!(submit_args(&cli).auto_prefix.as_deref(), Some("gb-"));
     }
 
@@ -547,7 +607,7 @@ mod tests {
             auto_prefix: Some("gb-".into()),
             ..Default::default()
         };
-        let cli = parse_with_config(config, &["stakk", "submit", "--auto-prefix", "xx-", "bm"]);
+        let cli = parse_with_config(config, &["stakk", "submit", "--auto-prefix", "xx-"]);
         assert_eq!(submit_args(&cli).auto_prefix.as_deref(), Some("xx-"));
     }
 
@@ -559,7 +619,7 @@ mod tests {
             bookmarks_revset: Some("all()".into()),
             ..Default::default()
         };
-        let cli = parse_with_config(config, &["stakk", "submit", "bm"]);
+        let cli = parse_with_config(config, &["stakk", "submit"]);
         assert_eq!(submit_args(&cli).graph.bookmarks_revset, "all()");
     }
 
@@ -569,7 +629,7 @@ mod tests {
             heads_revset: Some("heads(all())".into()),
             ..Default::default()
         };
-        let cli = parse_with_config(config, &["stakk", "submit", "bm"]);
+        let cli = parse_with_config(config, &["stakk", "submit"]);
         assert_eq!(submit_args(&cli).graph.heads_revset, "heads(all())");
     }
 
@@ -579,10 +639,7 @@ mod tests {
             bookmarks_revset: Some("all()".into()),
             ..Default::default()
         };
-        let cli = parse_with_config(
-            config,
-            &["stakk", "submit", "--bookmarks-revset", "mine()", "bm"],
-        );
+        let cli = parse_with_config(config, &["stakk", "submit", "--bookmarks-revset", "mine()"]);
         assert_eq!(submit_args(&cli).graph.bookmarks_revset, "mine()");
     }
 
@@ -620,7 +677,9 @@ mod tests {
     #[test]
     fn docs_parses_each_topic() {
         for (arg, expected) in [
+            ("agents", DocTopic::Agents),
             ("scripting", DocTopic::Scripting),
+            ("show", DocTopic::Show),
             ("config", DocTopic::Config),
             ("template", DocTopic::Template),
         ] {
@@ -656,7 +715,6 @@ mod tests {
                 "a",
                 "--keep",
                 "b",
-                "--keep-all",
                 "--new",
                 "r1=name1",
                 "--new",
@@ -669,57 +727,9 @@ mod tests {
         );
         let args = submit_args(&cli);
         assert_eq!(args.keep, vec!["a", "b"]);
-        assert!(args.keep_all);
         assert_eq!(args.new, vec!["r1=name1", "r2"]);
         assert_eq!(args.new_auto, vec!["r3"]);
         assert_eq!(args.new_command, vec!["r4"]);
-    }
-
-    #[test]
-    fn selection_flags_conflict_with_positional_bookmark() {
-        use clap::error::ErrorKind;
-
-        for flag_args in [
-            vec!["--keep", "a"],
-            vec!["--keep-all"],
-            vec!["--new", "r"],
-            vec!["--new-auto", "r"],
-            vec!["--new-command", "r"],
-        ] {
-            let mut argv = vec!["stakk", "submit", "my-bookmark"];
-            argv.extend(&flag_args);
-            let cmd = apply_config_defaults(Config::default(), Cli::command());
-            let err = cmd.try_get_matches_from(argv).unwrap_err();
-            assert_eq!(
-                err.kind(),
-                ErrorKind::ArgumentConflict,
-                "flags {flag_args:?} must conflict with the positional bookmark",
-            );
-        }
-    }
-
-    #[test]
-    fn selection_flags_parse_at_top_level() {
-        // The flattened no-subcommand form must accept the flags too.
-        let cli = parse_with_config(
-            Config::default(),
-            &["stakk", "--keep", "a", "--new", "r=n", "--keep-all"],
-        );
-        assert!(cli.command.is_none());
-        assert_eq!(cli.submit_args.keep, vec!["a"]);
-        assert_eq!(cli.submit_args.new, vec!["r=n"]);
-        assert!(cli.submit_args.keep_all);
-    }
-
-    #[test]
-    fn selection_flags_conflict_at_top_level() {
-        use clap::error::ErrorKind;
-
-        let cmd = apply_config_defaults(Config::default(), Cli::command());
-        let err = cmd
-            .try_get_matches_from(["stakk", "my-bookmark", "--keep", "a"])
-            .unwrap_err();
-        assert_eq!(err.kind(), ErrorKind::ArgumentConflict);
     }
 
     // -- env var interaction --
@@ -735,7 +745,7 @@ mod tests {
             ..Default::default()
         };
         // CLI flag should override config.
-        let cli = parse_with_config(config, &["stakk", "submit", "--remote", "from-cli", "bm"]);
+        let cli = parse_with_config(config, &["stakk", "submit", "--remote", "from-cli"]);
         assert_eq!(submit_args(&cli).remote, "from-cli");
     }
 
@@ -747,7 +757,7 @@ mod tests {
 remote = "upstream"
 github_host = "github.example.com"
 pr_mode = "draft"
-template = "/path/to/template.jinja"
+template_path = "/path/to/template.jinja"
 stack_placement = "body"
 sync_pr_content = "all"
 trailers = "strip"
@@ -760,7 +770,10 @@ heads_revset = "heads(all())"
         assert_eq!(config.remote.as_deref(), Some("upstream"));
         assert_eq!(config.github_host.as_deref(), Some("github.example.com"));
         assert_eq!(config.pr_mode, Some(PrMode::Draft));
-        assert_eq!(config.template.as_deref(), Some("/path/to/template.jinja"));
+        assert_eq!(
+            config.template_path.as_deref(),
+            Some("/path/to/template.jinja"),
+        );
         assert_eq!(config.stack_placement, Some(StackPlacement::Body));
         assert_eq!(
             config.sync_pr_content,

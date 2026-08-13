@@ -4,8 +4,8 @@ stakk loads settings from TOML config files, environment variables, and CLI flag
 
 The full precedence order, highest to lowest:
 
-1. **CLI flags** — `--remote`, `--draft`, `--pr-mode`, etc.
-2. **Environment variables** — `STAKK_REMOTE`, `STAKK_DRAFT`, etc.
+1. **CLI flags** — `--remote`, `--pr-mode`, etc.
+2. **Environment variables** — `STAKK_REMOTE`, `STAKK_PR_MODE`, etc.
 3. **Repository config** — `stakk.toml`, found by walking up from the current directory
 4. **User config** — `~/.config/stakk/config.toml` (Linux),
    `~/Library/Application Support/stakk/config.toml` (macOS),
@@ -28,6 +28,31 @@ Both files use the same format.
 When both exist, settings from the repo config take precedence —
 the user config fills in any fields the repo config leaves unset.
 
+## Repo config runs with your privileges
+
+Discovery has no trust step, and a `stakk.toml` is often committed,
+so cloning a repository can hand you its configuration.
+Most keys only set a preference.
+Two do more:
+
+- **`bookmark_command`** is run through `sh -c` (`cmd /C` on Windows) while stakk works out which bookmarks to create.
+  That happens in the first phase, so it runs before any GitHub call, with `--dry-run`, and with no valid token.
+- **`template_path`** reads whatever path it names — not only files inside the repo — and renders the contents into a
+  pull request comment or body, which is outward-facing.
+
+The rest cannot act on their own.
+Revsets reach `jj` as arguments rather than through a shell, `pr_mode`, `stack_placement`,
+`sync_pr_content` and `trailers` are closed sets of values, `remote` has to name a remote that already exists,
+and `github_host` does nothing without a remote on that host.
+
+So before running stakk in a repository you have not read, check whether it has a `stakk.toml`,
+and read those two keys if it does.
+Note also that `inherit = false` in a repo config suppresses your user config entirely,
+so a repo-supplied value cannot be overridden by yours — only by a flag or an environment variable.
+
+`--config <path>` (or `STAKK_CONFIG`) replaces the repo-level file rather than adding to it,
+which is the way to run in an untrusted repository with configuration you chose.
+
 ## Config file format
 
 All fields are optional.
@@ -41,14 +66,16 @@ Unknown fields cause a parse error, so typos are caught early.
 remote = "origin"
 
 # Extra host to treat as GitHub, for GitHub Enterprise Server
-# (default: none — only github.com is accepted)
+# (default: unset — falls back to GH_HOST; github.com is always accepted)
 github_host = "github.example.com"
 
 # PR creation mode: "regular" or "draft" (default: "regular")
 pr_mode = "draft"
 
 # Path to a custom minijinja template for stack comments
-template = "/path/to/my-template.md.jinja"
+# (default: none — the built-in template is used)
+# Reads any path and renders it into a PR — see the trust note above.
+template_path = "/path/to/my-template.md.jinja"
 
 # Where to place stack info: "comment", "body", "none", or "ignore"
 # (default: "comment")
@@ -82,6 +109,7 @@ sync_pr_content = "all"
 trailers = "strip"
 
 # Shell command for generating custom bookmark names
+# Runs via sh -c — see the trust note above.
 bookmark_command = "my-bookmark-namer"
 
 # Whether to merge with the user config (default: true)
@@ -106,6 +134,10 @@ stack_placement = "comment"
 `inherit` only has meaning in a repo config.
 It is not merged from the user config.
 
+Enforcing settings this way works because the repo file wins and your own is skipped —
+which is also why a repo you have not read deserves a look first.
+See **Repo config runs with your privileges** above.
+
 ## Examples
 
 **User config** — personal defaults across all repos:
@@ -123,8 +155,8 @@ stack_placement = "body"
 remote = "upstream"
 ```
 
-With both files above, `stakk submit my-feature` uses `remote = "upstream"` from the repo config
-and `pr_mode = "draft"`, `stack_placement = "body"` from the user config.
+With both files above, `stakk submit` uses `remote = "upstream"` from the repo config and `pr_mode = "draft"`,
+`stack_placement = "body"` from the user config.
 Passing `--pr-mode regular` on the command line overrides all of them.
 
 **Team-enforced config** — no user config inheritance:
@@ -145,29 +177,18 @@ and talks to its REST API at `https://<host>/api/v3`.
 
 The host is resolved highest to lowest:
 
-1. `--github-host <host>` — must come after the subcommand, e.g. `stakk auth test --github-host <host>`
+1. `--github-host <host>` — a global flag, so it works either side of the subcommand,
+   e.g. `stakk show --github-host <host>`
 2. `STAKK_GITHUB_HOST`
 3. `github_host` in `stakk.toml`
 4. `GH_HOST` — the GitHub CLI's own setting, so an existing `gh` setup needs no stakk configuration
 
 Any other host is rejected, so an unrelated forge is never mistaken for GitHub.
 
-The token is resolved for the host the remote actually points at, mirroring the GitHub CLI:
-
-| Host | Order |
-|------|-------|
-| `github.com` | `gh auth token --hostname github.com`, then `GITHUB_TOKEN`, then `GH_TOKEN` |
-| anything else | `gh auth token --hostname <host>`, then `GH_ENTERPRISE_TOKEN`, then `GITHUB_ENTERPRISE_TOKEN` |
-
-So a github.com token is never sent to an Enterprise host, or the other way around.
-
-```sh
-export GH_HOST=github.example.com
-gh auth login --hostname github.example.com
-stakk auth test
-```
-
-`stakk auth test` prints the host it resolved, so it is the quickest way to confirm the setup.
+The token is resolved for the host the remote actually points at,
+so a github.com token is never sent to an Enterprise host, or the other way around.
+The per-host variables, the `gh auth login` commands that set the host up, and how to confirm the setup afterwards:
+`stakk docs auth`.
 
 Note that the API base is always `https`, even for an `http://` remote:
 an Enterprise Server reachable only over plain HTTP is not supported.
@@ -180,8 +201,7 @@ an Enterprise Server reachable only over plain HTTP is not supported.
 | `STAKK_REMOTE` | Default git remote to push to (overridden by `--remote`) |
 | `STAKK_GITHUB_HOST` | Extra host to treat as GitHub, for GitHub Enterprise Server (overridden by `--github-host`) |
 | `STAKK_PR_MODE` | PR creation mode: `regular` or `draft` (overridden by `--pr-mode`) |
-| `STAKK_DRAFT` | Set to `true` to always create draft PRs (overridden by `--draft`) |
-| `STAKK_TEMPLATE` | Path to a custom minijinja template for stack comments (overridden by `--template`) |
+| `STAKK_TEMPLATE_PATH` | Path to a custom minijinja template for stack comments (overridden by `--template-path`) |
 | `STAKK_STACK_PLACEMENT` | Where to place the stack info: `comment` (default), `body`, `none`, or `ignore` (overridden by `--stack-placement`) |
 | `STAKK_AUTO_PREFIX` | Prefix for auto-generated bookmark names (overridden by `--auto-prefix`) |
 | `STAKK_SYNC_PR_CONTENT` | Sync PR title/body from commits: `none` (default), `title`, `body`, or `all` (overridden by `--sync-pr-content`) |
@@ -190,15 +210,15 @@ an Enterprise Server reachable only over plain HTTP is not supported.
 | `STAKK_BOOKMARKS_REVSET` | Revset for discovering bookmarks (overridden by `--bookmarks-revset`) |
 | `STAKK_HEADS_REVSET` | Revset for discovering unbookmarked heads (overridden by `--heads-revset`) |
 | `GH_HOST` | The GitHub CLI's host setting; used as the `github_host` fallback |
-| `GITHUB_TOKEN` | GitHub personal access token for github.com (see `stakk auth setup`) |
-| `GH_TOKEN` | Alternative to `GITHUB_TOKEN` |
+| `GH_TOKEN` | GitHub personal access token for github.com (see `stakk docs auth`) |
+| `GITHUB_TOKEN` | Alternative to `GH_TOKEN` |
 | `GH_ENTERPRISE_TOKEN` | Access token for a GitHub Enterprise Server host |
 | `GITHUB_ENTERPRISE_TOKEN` | Alternative to `GH_ENTERPRISE_TOKEN` |
 
-`--draft` is a shortcut for `--pr-mode draft`, and draft-ness wins from whichever source sets it:
-`--draft` *or* `STAKK_DRAFT=true` forces a draft even alongside an explicit `--pr-mode regular`.
-Unset `STAKK_DRAFT` rather than passing `--pr-mode regular` when you want a non-draft PR.
-There is no `draft` config key — use `pr_mode = "draft"` in a config file.
+`STAKK_DRAFT` and `STAKK_TEMPLATE` are gone: `STAKK_PR_MODE=draft` replaces the first, `STAKK_TEMPLATE_PATH` the second.
+A stale one is not an error — stakk cannot know the variable is still meant for it —
+but `stakk submit` warns on stderr while either is set.
+Unset it to fix the setting, or set it empty to silence the warning.
 
-`--dry-run` and the selection flags (`--keep`, `--keep-all`, `--new`, `--new-auto`, `--new-command`) deliberately have
-no environment variables or config keys: they are per-invocation decisions, and a persisted default would be surprising.
+`--dry-run` and the selection flags (`--keep`, `--new`, `--new-auto`, `--new-command`) deliberately have no environment
+variables or config keys: they are per-invocation decisions, and a persisted default would be surprising.

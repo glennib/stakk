@@ -217,36 +217,6 @@ pub fn cache_key(rows: &[&BookmarkRow]) -> Vec<String> {
     rows.iter().map(|r| r.commit_id.clone()).collect()
 }
 
-/// Generate a custom bookmark name by invoking the external command.
-///
-/// Results are cached by the ordered commit IDs of the segment.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "app.rs calls build_segment_input + run_command directly for async spawning"
-    )
-)]
-pub async fn generate_custom_name(
-    command: &str,
-    rows: &[&BookmarkRow],
-    cache: &mut BookmarkNameCache,
-) -> Result<String, BookmarkGenError> {
-    let key = cache_key(rows);
-    if let Some(CacheEntry::Computed(name)) = cache.get(&key) {
-        return Ok(name.clone());
-    }
-
-    let input = build_segment_input(rows);
-    let json = serde_json::to_string(&input).expect("SegmentInput is always serializable");
-
-    let name = run_command(command, &json, COMPUTING_TIMEOUT).await?;
-    validate_bookmark_name(&name)?;
-
-    cache.insert(key, CacheEntry::Computed(name.clone()));
-    Ok(name)
-}
-
 /// Build the JSON input struct from bookmark rows. Exposed for `app.rs` to
 /// serialize before spawning a background task.
 pub(super) fn build_segment_input(rows: &[&BookmarkRow]) -> SegmentInput {
@@ -499,31 +469,6 @@ mod tests {
     }
 
     #[test]
-    fn computing_entry_overwrites_on_generate() {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let mut cache = BookmarkNameCache::new();
-        let row = make_row("c1", "ch1", RowState::UseGenerated, false);
-        let rows: Vec<&BookmarkRow> = vec![&row];
-        let key = cache_key(&rows);
-
-        // Insert a Computing entry.
-        cache.insert(
-            key.clone(),
-            CacheEntry::Computing {
-                since: Instant::now(),
-            },
-        );
-
-        // generate_custom_name should run the command and overwrite with
-        // Computed.
-        let name = rt
-            .block_on(generate_custom_name("echo my-branch", &rows, &mut cache))
-            .unwrap();
-        assert_eq!(name, "my-branch");
-        assert!(matches!(cache.get(&key), Some(CacheEntry::Computed(n)) if n == "my-branch"));
-    }
-
-    #[test]
     fn expired_computing_entry_is_treated_as_absent() {
         let mut cache = BookmarkNameCache::new();
         let key = vec!["c1".to_string()];
@@ -616,10 +561,7 @@ mod tests {
     #[cfg(unix)]
     #[tokio::test]
     async fn command_returns_expected_output() {
-        let mut cache = BookmarkNameCache::new();
-        let row = make_row("c1", "ch1", RowState::UseGenerated, false);
-        let rows: Vec<&BookmarkRow> = vec![&row];
-        let name = generate_custom_name("echo my-branch", &rows, &mut cache)
+        let name = run_command("echo my-branch", "{}", COMPUTING_TIMEOUT)
             .await
             .unwrap();
         assert_eq!(name, "my-branch");
@@ -628,10 +570,7 @@ mod tests {
     #[cfg(unix)]
     #[tokio::test]
     async fn command_failure_returns_error() {
-        let mut cache = BookmarkNameCache::new();
-        let row = make_row("c1", "ch1", RowState::UseGenerated, false);
-        let rows: Vec<&BookmarkRow> = vec![&row];
-        let err = generate_custom_name("false", &rows, &mut cache)
+        let err = run_command("false", "{}", COMPUTING_TIMEOUT)
             .await
             .unwrap_err();
         assert!(matches!(err, BookmarkGenError::CommandFailed { .. }));
@@ -640,13 +579,10 @@ mod tests {
     #[cfg(unix)]
     #[tokio::test]
     async fn missing_command_returns_not_found() {
-        let mut cache = BookmarkNameCache::new();
-        let row = make_row("c1", "ch1", RowState::UseGenerated, false);
-        let rows: Vec<&BookmarkRow> = vec![&row];
         // sh -c with a non-existent command returns exit 127, not NotFound.
         // NotFound only fires if sh itself is missing, which we can't easily
         // test. Instead verify the CommandFailed path for missing programs.
-        let err = generate_custom_name("nonexistent_command_xyz_12345", &rows, &mut cache)
+        let err = run_command("nonexistent_command_xyz_12345", "{}", COMPUTING_TIMEOUT)
             .await
             .unwrap_err();
         assert!(matches!(err, BookmarkGenError::CommandFailed { .. }));
@@ -655,10 +591,7 @@ mod tests {
     #[cfg(unix)]
     #[tokio::test]
     async fn empty_output_returns_error() {
-        let mut cache = BookmarkNameCache::new();
-        let row = make_row("c1", "ch1", RowState::UseGenerated, false);
-        let rows: Vec<&BookmarkRow> = vec![&row];
-        let err = generate_custom_name("echo -n ''", &rows, &mut cache)
+        let err = run_command("echo -n ''", "{}", COMPUTING_TIMEOUT)
             .await
             .unwrap_err();
         assert!(matches!(err, BookmarkGenError::EmptyOutput { .. }));
@@ -666,30 +599,9 @@ mod tests {
 
     #[cfg(unix)]
     #[tokio::test]
-    async fn cached_result_reused() {
-        let mut cache = BookmarkNameCache::new();
-        let row = make_row("c1", "ch1", RowState::UseGenerated, false);
-        let rows: Vec<&BookmarkRow> = vec![&row];
-
-        // First call populates cache.
-        let name1 = generate_custom_name("echo cached-name", &rows, &mut cache)
-            .await
-            .unwrap();
-        assert_eq!(name1, "cached-name");
-
-        // Second call with a different command still returns cached value.
-        let name2 = generate_custom_name("echo different-name", &rows, &mut cache)
-            .await
-            .unwrap();
-        assert_eq!(name2, "cached-name");
-    }
-
-    #[cfg(unix)]
-    #[tokio::test]
     async fn command_receives_json_stdin() {
         use std::io::Write;
 
-        let mut cache = BookmarkNameCache::new();
         let mut row = make_row("c1", "ch1_full_change_id", RowState::UseGenerated, false);
         row.description = "add login page".to_string();
         row.files = vec!["src/login.rs".to_string()];
@@ -712,10 +624,16 @@ mod tests {
         )
         .unwrap();
 
-        let name =
-            generate_custom_name(&format!("sh {}", script_path.display()), &rows, &mut cache)
-                .await
-                .unwrap();
+        // Mirror what app.rs does before spawning: build the segment input,
+        // serialize it, hand it to the command on stdin.
+        let json = serde_json::to_string(&build_segment_input(&rows)).unwrap();
+        let name = run_command(
+            &format!("sh {}", script_path.display()),
+            &json,
+            COMPUTING_TIMEOUT,
+        )
+        .await
+        .unwrap();
         assert_eq!(name, "valid-name");
 
         // Verify the JSON that was sent.

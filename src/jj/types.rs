@@ -23,31 +23,29 @@ pub struct Signature {
 
 /// `CommitRef` serialization from `jj` (used in bookmark arrays on log
 /// entries).
+///
+/// jj also emits a `tracking_target` key on remote refs — an array whose
+/// elements are null when the tracking target is absent (e.g. after the
+/// tracked commit was rewritten). Nothing here declares it, and the struct
+/// has no `#[serde(deny_unknown_fields)]`, so it is silently ignored.
 #[derive(Debug, Clone, Deserialize)]
 pub struct CommitRefData {
     pub name: String,
+    /// Target commit IDs. Nothing reads them, but the field has no
+    /// `#[serde(default)]` on purpose: it keeps jj's `CommitRef` shape a hard
+    /// parse contract, so a template change that drops `target` fails loudly
+    /// as a `ParseError` — the same rule as `LogEntryRaw::immutable`.
     #[cfg_attr(
         not(test),
         expect(
             dead_code,
-            reason = "deserialized for completeness, not yet read in production"
+            reason = "required-by-serde field: its absence must fail the parse, and \
+                      `deserialize_commit_ref_local` pins that it arrives"
         )
     )]
     pub target: Vec<String>,
     #[serde(default)]
     pub remote: Option<String>,
-    /// Tracking target commit IDs. Elements are `Option<String>` because jj
-    /// serializes absent tracking targets as `[null]` (e.g. when the tracked
-    /// commit has been rewritten and the remote bookmark hasn't been updated).
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "deserialized for completeness, not yet read in production"
-        )
-    )]
-    #[serde(default)]
-    pub tracking_target: Option<Vec<Option<String>>>,
 }
 
 /// Raw log entry: commit + bookmark refs from the log template.
@@ -59,7 +57,12 @@ pub struct LogEntryRaw {
     /// Whether jj considers the commit immutable. Deliberately not
     /// serde-defaulted: a template/parser mismatch must fail loudly.
     pub immutable: bool,
-    /// Shortest unique change ID prefix (from `change_id.shortest(4)`).
+    /// Shortest unique change ID prefix, from jj's own `change_id.shortest()`.
+    ///
+    /// No minimum length is requested, so this is as short as jj can make it
+    /// while staying unique in the repository — two characters is common, one
+    /// happens. It is jj that decides, not stakk: the prefix must stay in step
+    /// with what `jj log` shows and with what a later `--new REV` can resolve.
     pub short_change_id: String,
 }
 
@@ -77,21 +80,23 @@ pub struct BookmarkEntryRaw {
 pub struct Bookmark {
     pub name: String,
     pub commit_id: String,
+    /// Change ID of the bookmark's target. `BOOKMARK_TEMPLATE` has no
+    /// change-ID field of its own; this comes from the nested `CommitData` in
+    /// `BookmarkEntryRaw::target`.
     #[cfg_attr(
         not(test),
         expect(
             dead_code,
-            reason = "deserialized for completeness, available for diagnostics"
+            reason = "`parse_bookmarks_single` pins that the change ID is taken from the target \
+                      commit, not the bookmark entry"
         )
     )]
     pub change_id: String,
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "available for push optimization (skip synced bookmarks)"
-        )
-    )]
+    /// Whether the local bookmark matches its remote tracking target.
+    ///
+    /// False only when a *tracked* remote disagrees, so a never-pushed
+    /// bookmark is `true` just like an up-to-date one.
+    /// `graph::derive_remote_states` separates the two.
     pub synced: bool,
 }
 
@@ -155,7 +160,6 @@ mod tests {
         assert_eq!(cr.name, "main");
         assert_eq!(cr.target, vec!["4fcf70e0abc"]);
         assert!(cr.remote.is_none());
-        assert!(cr.tracking_target.is_none());
     }
 
     #[test]
@@ -169,10 +173,6 @@ mod tests {
         let cr: CommitRefData = serde_json::from_str(json).unwrap();
         assert_eq!(cr.name, "main");
         assert_eq!(cr.remote.as_deref(), Some("origin"));
-        assert_eq!(
-            cr.tracking_target.as_deref(),
-            Some(vec![Some("4fcf70e0abc".to_string())].as_slice())
-        );
     }
 
     #[test]
@@ -231,14 +231,5 @@ mod tests {
         let entry: BookmarkEntryRaw = serde_json::from_str(json).unwrap();
         assert_eq!(entry.name, "conflict");
         assert!(entry.target.is_none());
-    }
-
-    /// Remote bookmarks can have `tracking_target: [null]` when the tracking
-    /// target commit is absent (e.g. after the tracked commit was rewritten).
-    #[test]
-    fn deserialize_commit_ref_null_tracking_target_element() {
-        let json = r#"{"name":"feat","remote":"origin","target":["abc"],"tracking_target":[null]}"#;
-        let cr: CommitRefData = serde_json::from_str(json).unwrap();
-        assert_eq!(cr.tracking_target.as_deref(), Some([None].as_slice()));
     }
 }

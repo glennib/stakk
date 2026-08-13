@@ -116,24 +116,6 @@ impl BookmarkRow {
     pub fn is_locked(&self) -> bool {
         !self.is_trunk && self.is_immutable && self.existing_bookmarks.is_empty()
     }
-
-    /// Get the effective bookmark name for this row.
-    #[cfg_attr(not(test), expect(dead_code, reason = "used in tests for validation"))]
-    pub fn effective_name(&self) -> Option<&str> {
-        if self.is_trunk || self.is_locked() {
-            return None;
-        }
-        match &self.state {
-            RowState::UseExisting(idx) => self.existing_bookmarks.get(*idx).map(String::as_str),
-            RowState::UseGenerated => self.generated_name.as_deref(),
-            RowState::UseTfidf(ts) => Some(ts.name.as_str()),
-            RowState::UseCustom(CustomNameState::Ready(name)) => Some(name.as_str()),
-            RowState::UserInput(s) if !s.is_empty() => Some(s.as_str()),
-            RowState::UserInput(_)
-            | RowState::UseCustom(CustomNameState::Loading)
-            | RowState::Unchecked => None,
-        }
-    }
 }
 
 /// Reasons why the selection cannot be confirmed.
@@ -1686,28 +1668,6 @@ mod tests {
     }
 
     #[test]
-    fn effective_name_returns_correct_values() {
-        let row_existing = make_bare_row(RowState::UseExisting(0));
-        assert_eq!(row_existing.effective_name(), Some("feat"));
-
-        let mut row_generated = make_bare_row(RowState::UseGenerated);
-        row_generated.existing_bookmarks = vec![];
-        row_generated.generated_name = Some("stakk-bbbbbbbbb".to_string());
-        assert_eq!(row_generated.effective_name(), Some("stakk-bbbbbbbbb"));
-
-        let row_unchecked = make_bare_row(RowState::Unchecked);
-        assert_eq!(row_unchecked.effective_name(), None);
-
-        let row_custom = make_bare_row(RowState::UseCustom(CustomNameState::Ready(
-            "my-branch".to_string(),
-        )));
-        assert_eq!(row_custom.effective_name(), Some("my-branch"));
-
-        let row_loading = make_bare_row(RowState::UseCustom(CustomNameState::Loading));
-        assert_eq!(row_loading.effective_name(), None);
-    }
-
-    #[test]
     fn build_result_blocks_when_loading() {
         let mut row = make_bare_row(RowState::UseCustom(CustomNameState::Loading));
         // Ensure the row is not trunk so it's included.
@@ -1940,16 +1900,6 @@ mod tests {
     }
 
     #[test]
-    fn effective_name_for_tfidf() {
-        let mut row = make_bare_row(RowState::UseTfidf(TfidfNameState {
-            name: "caching-database-layer".to_string(),
-            variation: 0,
-        }));
-        row.existing_bookmarks = vec![];
-        assert_eq!(row.effective_name(), Some("caching-database-layer"));
-    }
-
-    #[test]
     fn auto_prefix_prepended_to_tfidf_name() {
         let nodes = [
             make_node("", "trunk", &[], true, false),
@@ -2145,15 +2095,6 @@ mod tests {
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].bookmark_name, "my-branch");
         assert!(result[0].is_new);
-    }
-
-    #[test]
-    fn effective_name_for_user_input() {
-        let row_empty = make_bare_row(RowState::UserInput(String::new()));
-        assert_eq!(row_empty.effective_name(), None);
-
-        let row_filled = make_bare_row(RowState::UserInput("my-branch".to_string()));
-        assert_eq!(row_filled.effective_name(), Some("my-branch"));
     }
 
     #[test]
@@ -2366,15 +2307,6 @@ mod tests {
         let result = state.build_result().unwrap();
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].bookmark_name, "leaf");
-    }
-
-    #[test]
-    fn effective_name_none_for_locked_row() {
-        let mut row = make_bare_row(RowState::Unchecked);
-        row.existing_bookmarks = vec![];
-        row.is_immutable = true;
-        assert!(row.is_locked());
-        assert_eq!(row.effective_name(), None);
     }
 
     #[test]

@@ -9,6 +9,10 @@ authors = ["Glenn Bitar <glennbitar@gmail.com>"]
 readme = "README.md"
 keywords = ["jujutsu", "jj", "github", "stacked-prs", "pull-request"]
 categories = ["command-line-utilities", "development-tools"]
+# Internal planning and automation files that no build step reads.
+# `docs/` stays packaged — it is `include_str!`ed by `stakk docs` — and so does
+# `media/`, which the README links to relatively.
+exclude = ["plans/", "scripts/", ".github/", "CLAUDE.md"]
 
 [lints.clippy]
 pedantic = { level = "warn", priority = -1 }

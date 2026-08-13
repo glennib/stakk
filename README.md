@@ -22,16 +22,16 @@ and idempotent updates.
 - **Auto bookmark naming** — the `[~]auto` state derives names from commit descriptions and file paths via TF-IDF
   scoring; `r` cycles alternatives and `--auto-prefix` brands them (e.g. `gb-caching-database`).
 - **Stacked PR submission** — creates or updates GitHub PRs with correct base branches so each PR shows only its own
-  diff; `--draft` creates new ones as drafts.
+  diff; `--pr-mode draft` creates new ones as drafts.
 - **Stack-awareness comments** — every PR gets the full stack with links,
   updated in place on re-runs and rendered with customizable [minijinja](https://github.com/mitsuhiko/minijinja)
   templates.
   See [Stack info placement](#stack-info-placement).
 - **Idempotent** — re-running `stakk submit` is always safe.
   Existing PRs are updated, never duplicated.
-- **Dry-run mode** — `--dry-run` shows exactly what would happen without
-  touching GitHub — or the repo: no bookmarks are created, nothing is pushed.
-- **Non-interactive selection** — `--keep`/`--keep-all`/`--new`/`--new-auto`/`--new-command` build the exact same
+- **Dry-run mode** — `--dry-run` shows exactly what would happen: no bookmarks are
+  created, nothing is pushed, and nothing is written to GitHub.
+- **Non-interactive selection** — `--keep`/`--new`/`--new-auto`/`--new-command` build the exact same
   submission the TUI would, without a terminal.
 - **PR titles and bodies from descriptions** — populated from jj change descriptions on creation, so manual edits on
   GitHub survive; `--sync-pr-content` opts into keeping them in sync.
@@ -48,6 +48,7 @@ and idempotent updates.
 stakk shells out to the [`jj`](https://github.com/jj-vcs/jj) CLI, which must be installed and on your `PATH`.
 The minimum supported jj version is **0.39.0**.
 Older versions may work but are untested; stakk prints a warning when it detects one.
+Raising that floor is not a breaking change — see [Stability](#stability).
 
 ### mise (recommended)
 
@@ -86,11 +87,11 @@ stakk
 # See your stacks without submitting (offline: jj only, never GitHub)
 stakk show
 
-# Submit a specific bookmark and its ancestors as stacked PRs
-stakk submit my-feature
-
 # Preview a submission without touching the repo or GitHub
-stakk submit my-feature --dry-run
+stakk submit --keep feat-auth --keep feat-api --keep my-feature --dry-run
+
+# Submit without the TUI — every --keep is one PR boundary
+stakk submit --keep feat-auth --keep feat-api --keep my-feature
 ```
 
 ## How stacking works
@@ -106,8 +107,9 @@ Create the bookmarks yourself, or let stakk discover unbookmarked heads and crea
  ◆  main       ← trunk
 ```
 
-`stakk submit feat-ui` pushes every bookmark from the trunk up to `feat-ui` and creates or updates one PR per bookmark,
-basing each on the bookmark below it:
+Picking `feat-ui` as the tip and keeping all three bookmarks — in the TUI,
+or as `stakk submit --keep feat-auth --keep feat-api --keep feat-ui` —
+pushes every one of them and creates or updates one PR per bookmark, basing each on the bookmark below it:
 
 - `feat-auth` → PR targeting `main`
 - `feat-api` → PR targeting `feat-auth`
@@ -154,8 +156,8 @@ stack_placement = "body"
 auto_prefix = "gb-"
 ```
 
-Every config key and environment variable, the `inherit` field, and worked examples: [docs/config.md](docs/config.md),
-or run `stakk docs config`.
+Every config key and environment variable, the `inherit` field, worked examples,
+and what a repo-supplied `stakk.toml` is able to do: [docs/config.md](docs/config.md), or run `stakk docs config`.
 
 ### GitHub Enterprise Server
 
@@ -165,14 +167,9 @@ For a GitHub Enterprise Server host, name the host with `--github-host`, `STAKK_
 stakk then accepts remotes on that host and uses its API at `https://<host>/api/v3`.
 Tokens are resolved per host, mirroring the GitHub CLI, so an Enterprise token is never sent to github.com.
 
-```sh
-export GH_HOST=github.example.com
-gh auth login --hostname github.example.com
-stakk auth test
-```
-
-Host resolution order, the per-host token order, and the API base: [docs/config.md](docs/config.md),
-or run `stakk docs config`.
+Host resolution order and the API base: [docs/config.md](docs/config.md), or run `stakk docs config`.
+The `gh` commands that set the host up, the per-host token order, what to do when it fails, and how to check the setup:
+[docs/auth.md](docs/auth.md), or run `stakk docs auth`.
 
 ## Usage
 
@@ -186,16 +183,18 @@ A ratatui TUI shows a graph of all branch stacks; select a leaf branch, then tog
 Works even in repos with no pre-existing bookmarks — stakk creates `stakk-<change_id>` bookmarks for unmarked commits.
 Identical to `stakk submit` with no arguments.
 
-### `stakk submit [bookmark]`
+### `stakk submit`
 
-Submit a bookmark and all its ancestors as stacked PRs.
-Without a bookmark argument, it runs the interactive flow above.
+Submit a stack of bookmarks as stacked PRs.
+With no selection flags it runs the interactive flow above — `stakk` and `stakk submit` are the same thing.
+The selection flags below replace the TUI with an explicit, scriptable selection.
 
 #### Non-interactive selection
 
-`--keep`, `--keep-all`, `--new`, `--new-auto` and `--new-command` replace the TUI with a fully explicit,
-scriptable selection: the marks determine the PR set with nothing implicit, all marks must lie on one trunk-to-tip path,
-the topmost mark is the tip, and bookmarks on the path that are not kept fold into the PR above them.
+`--keep`, `--new`, `--new-auto` and `--new-command` replace the TUI with a fully explicit, scriptable selection:
+every PR boundary is named on the command line, all marks must lie on one trunk-to-tip path,
+the topmost mark is the tip, unmarked commits below it fold into the PR above them, and anything above it —
+an unbookmarked work-in-progress head, typically — is not submitted at all.
 `rev` is a change id or commit id prefix as printed by `stakk show`, which makes submission a two-command loop:
 
 ```console
@@ -204,9 +203,11 @@ stakk submit --keep base --new qzvs=my-feature --new-auto wmtk --dry-run
 stakk submit --keep base --new qzvs=my-feature --new-auto wmtk
 ```
 
-Every selection rule, the machine-readable `stakk::selection::*` diagnostic codes, and the JSON schema:
-[docs/scripting.md](docs/scripting.md), or run `stakk docs scripting`.
-Pointing a coding agent at `stakk docs scripting` is the fastest way to bring it up to speed.
+Every selection rule and the machine-readable `stakk::selection::*` diagnostic codes: [docs/agents.md](docs/agents.md),
+or run `stakk docs agents`.
+Pointing a coding agent at `stakk docs agents` is the fastest way to bring it up to speed.
+For a program rather than an agent, [docs/scripting.md](docs/scripting.md)
+(`stakk docs scripting`) adds exit codes and a worked Python example.
 
 #### PR titles and bodies
 
@@ -242,7 +243,7 @@ a bookmark exists on it *and* the bookmarks revset does not filter that bookmark
 (the default `~ immutable()` term does).
 So if you really need a PR there, create the bookmark yourself and drop `~ immutable()` from `--bookmarks-revset`;
 otherwise move the work onto mutable commits.
-The non-interactive side of this is in [docs/scripting.md](docs/scripting.md), or run `stakk docs scripting`.
+The non-interactive side of this is in [docs/agents.md](docs/agents.md), or run `stakk docs agents`.
 
 ### `stakk show`
 
@@ -269,11 +270,17 @@ Remote: origin git@github.com:you/repo.git (you/repo)
 ```
 
 Bookmarks whose history contains a merge commit cannot be stacked and are left out of the graph; when that happens,
-`pretty` prints a `(N bookmark(s) excluded due to merge commits)` footer.
+`pretty` names them in a footer, and the JSON reports them in `excluded_bookmarks`.
 
 `--format=json` emits a schema-versioned document for machine consumption
 (scripts, agents); its change id prefixes and bookmark names can be passed directly to `stakk submit`.
-Field-by-field schema: [docs/scripting.md](docs/scripting.md), or run `stakk docs scripting`.
+It is a sparse projection — identifiers, commit titles, bookmarks and stack position, and nothing else —
+while `--format=json-full` adds each commit's `commit_id`, full `description`, `author` and `files[]`.
+Sparse is a strict subset of full: same schema, same field names, same values.
+Each segment also reports its bookmarks' push state
+(`unpushed`, `diverged`, `synced`),
+derived from `jj` alone, so a consumer can tell new work from an update without a network round trip.
+Field-by-field schema: [docs/show.md](docs/show.md), or run `stakk docs show`.
 
 ### `stakk docs [topic]`
 
@@ -284,7 +291,7 @@ Each topic is one of the Markdown files in [docs/](docs/), which is also where t
 
 At a terminal the prose is re-flowed to your terminal width.
 Redirected, the source is emitted verbatim —
-so `stakk docs scripting >> AGENTS.md` writes exactly the Markdown in `docs/scripting.md`,
+so `stakk docs agents >> AGENTS.md` writes exactly the Markdown in `docs/agents.md`,
 which makes it a one-line way to give a coding agent the full non-interactive workflow.
 
 ### `stakk completions <shell>`
@@ -302,22 +309,6 @@ stakk completions bash > ~/.local/share/bash-completion/completions/stakk
 # Fish
 stakk completions fish > ~/.config/fish/completions/stakk.fish
 ```
-
-### `stakk auth test`
-
-Validate that GitHub authentication is working, and print the resolved host and the authenticated username.
-
-### `stakk auth setup`
-
-Print instructions for setting up authentication. stakk resolves a GitHub token for the host the remote points at.
-For github.com, in this order:
-
-1. **GitHub CLI** (`gh auth token`) — recommended
-2. **`GITHUB_TOKEN`** environment variable
-3. **`GH_TOKEN`** environment variable
-
-For a GitHub Enterprise Server host, `gh auth token --hostname <host>`, then **`GH_ENTERPRISE_TOKEN`**,
-then **`GITHUB_ENTERPRISE_TOKEN`**.
 
 ## Design
 
@@ -338,6 +329,46 @@ The submission pipeline is split into three phases:
 
 This separation makes the business logic testable without hitting real APIs, and `--dry-run` falls out naturally
 (run phases 1 and 2, skip 3).
+
+## Stability
+
+stakk follows semantic versioning.
+What that guarantee covers — the surface a script, an agent, or another tool may rely on:
+
+**Stable.**
+Changing these needs a major release.
+
+- Subcommand names and their flags.
+- `STAKK_`-prefixed environment variables.
+- Config file keys and their defaults.
+- The `stakk show` JSON document, under its `schema_version` — field names, types and meanings
+  (currently `2`; both the sparse `json` and the `json-full` projection report it).
+  The *order* of `stacks[]` is not part of it.
+- The JSON handed to `--bookmark-command` on stdin, under its own `schema_version` (currently `1`).
+- Diagnostic codes (`stakk::…`).
+- Exit codes: `0` success, `1` failure, `130` interrupted.
+  `2` is clap's usage-error convention and follows clap, not this contract.
+  The table is in `stakk docs scripting`, alongside the rules a program should follow.
+
+**Not stable.** These may change in any release.
+
+- The rendered text of `stakk docs` and `--help`.
+  Doc topics may be added, reworded, or restructured at any time;
+  only the `stakk docs <topic>` invocation shape is stable.
+- The order of `stacks[]` in the `stakk show` JSON.
+  It tracks commit recency, so it moves as you commit anywhere in the repository,
+  and it is computed separately from the TUI's leaf numbering.
+  Choose a stack by its bookmark names or its contents, never by index.
+- The `pretty` output of `stakk show`.
+- The TUI layout and keybindings.
+- Spinner and progress text.
+- Error message wording — the diagnostic codes are the contract, not the prose.
+- Advisory warnings printed to stderr.
+  They may be added or removed in any release.
+
+**Not a breaking change:** raising the minimum supported jj version.
+The check is warn-only — stakk runs against an older jj and says so — so the floor can move in any release,
+normally the one that actually adopts a newer jj's behaviour.
 
 ## License
 

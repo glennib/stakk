@@ -1,127 +1,187 @@
-# Non-interactive submission
+# Scripting stakk
 
-How to drive stakk from a script or a coding agent, with no TUI and no terminal.
+Driving `stakk` from a program: exit codes, the properties that matter to automation, and a worked example.
 
-Submitting a stack without the TUI is a two-command loop — discover, then submit.
-Everything `stakk submit` needs (change id prefixes, bookmark names) comes out of `stakk show`.
+Two other topics carry the rest.
+`stakk docs agents` has the submission model — the selection flags,
+the rules that decide which commits become pull requests, and the diagnostic codes.
+`stakk docs show` has the JSON schema field by field.
 
-```console
-stakk show --format=json
-stakk submit --keep base --new qzvs=my-feature --new-auto wmtk --dry-run
-stakk submit --keep base --new qzvs=my-feature --new-auto wmtk
-```
+## Properties worth knowing
 
-`stakk show` is fully offline — it queries only `jj`, never GitHub — so discovery is cheap and safe to run at any time.
+**`stacks[]` has no stable order.**
+It tracks commit recency and shifts as soon as anyone commits,
+so an index into it means something different on the next run.
+Matching a bookmark name or comparing `committer_timestamp` does not.
 
-## Always name the subcommand
+**A stack need not carry a bookmark.**
+A branch whose tip was never bookmarked still appears, with an empty `bookmarks[]` on its last segment,
+so a name is not available as an identifier for every stack.
 
-Write `stakk submit`, never the bare `stakk <bookmark>` form.
-A leading subcommand name wins over the positional bookmark,
-so `stakk show` runs the `show` subcommand even when a bookmark of that name exists.
-The reserved set is `submit`, `auth`, `show`, `completions`, `docs` and `help`,
-and it grows whenever stakk gains a subcommand.
-Both `stakk submit show` and `stakk -- show` submit the bookmark.
+**`committer_timestamp` is offset-aware.** `2026-02-19T19:47:54+01:00` sorts after `2026-02-19T19:00:00Z` as a string
+while being twelve minutes earlier as an instant, so the two comparisons disagree across offsets.
 
-Flags belong after the subcommand.
-`stakk submit --dry-run my-feature` works, while `stakk --dry-run submit my-feature` is rejected.
+**`short_change_id` is unique only right now.**
+It is jj's shortest unique prefix at the moment of the query, often one or two characters.
+A value stored, passed between processes,
+or computed well before use can resolve to `stakk::selection::rev_ambiguous` later,
+where the full `change_id` still resolves.
 
-## Selection flags
+**stakk's exit code carries the outcome.**
+A wrapper that discards it turns a stopped submission into a silent one.
 
-The selection flags replace the TUI with a fully explicit selection.
-They conflict with the positional bookmark argument, and they are deliberately CLI-only:
-no environment variables and no config keys, because a persisted default would silently change what gets submitted.
-
-| Flag | Meaning |
-|------|---------|
-| `--keep <bookmark>` | Keep an existing bookmark as a PR boundary (repeatable) |
-| `--keep-all` | Keep every existing bookmark on the selected path |
-| `--new <rev>[=<name>]` | New bookmark at `rev` — `stakk-<change_id>` by default, or `name` (repeatable) |
-| `--new-auto <rev>` | New TF-IDF-named bookmark at `rev`, honoring `--auto-prefix` (repeatable) |
-| `--new-command <rev>` | New bookmark at `rev` named by `--bookmark-command` (repeatable) |
-
-`rev` is a change id or commit id prefix, exactly as printed by `stakk show`.
-
-## Rules
-
-**The marks fully determine the PR set — nothing is implicit.**
-A commit only becomes a PR boundary if you mark it.
-
-**All marks must lie on one trunk-to-tip path**, and the topmost mark is the tip of the submission.
-Marks on diverging branches are rejected with `stakk::selection::not_colinear`.
-
-**Bookmarks on the path that are not kept fold into the PR above them.**
-This means the minimal selection produces the *fewest* PRs, not the most —
-an unmarked commit is absorbed into the next boundary, it does not silently get a PR of its own.
-
-**`--new-auto` falls back** to `stakk-<change_id>` when no name can be derived from the commit,
-or when the derived name is already taken.
-
-**Bare `--keep-all` requires the choice of stack to be unambiguous** — a single stack,
-or several that agree on their bookmarks (differing only in unbookmarked heads such as the working copy).
-Anchor it with `--keep`/`--new` otherwise.
-Commits already carrying an explicit mark are skipped by `--keep-all`: explicit beats bulk.
-
-## Dry runs
-
-`--dry-run` is fully inert.
-It prints the planned bookmark creations and PR actions without creating bookmarks, pushing, or touching GitHub —
-so it is always safe to run first and diff against what you expected.
-
-Note that `--dry-run` returns before the execute phase,
-so it does not preview the *removal* of stack artifacts that `--stack-placement none` would perform.
-
-## Errors
-
-Selection failures carry machine-readable diagnostic codes and point back at `stakk show`:
+## Exit codes
 
 | Code | Meaning |
 |------|---------|
-| `stakk::selection::rev_not_found` | No commit on the graph matches the prefix |
-| `stakk::selection::rev_ambiguous` | The prefix matches more than one commit |
-| `stakk::selection::rev_immutable` | The commit is jj-immutable and cannot take a bookmark |
-| `stakk::selection::empty_rev` | A selection flag was given an empty `REV` |
-| `stakk::selection::invalid_new_spec` | A `--new` value is neither `REV` nor `REV=NAME` |
-| `stakk::selection::not_colinear` | The marks do not lie on a single trunk-to-tip path |
-| `stakk::selection::keep_not_found` | No such bookmark on the selected path |
-| `stakk::selection::keep_all_ambiguous` | Bare `--keep-all` cannot pick between stacks |
-| `stakk::selection::no_marks` | No marks given, so there is nothing to submit |
-| `stakk::selection::no_stacks` | The repository has no bookmark stacks to select from |
-| `stakk::selection::duplicate_mark` | The same revision was marked twice |
-| `stakk::selection::duplicate_name` | Two marks would create the same bookmark name |
-| `stakk::selection::name_exists` | The requested name is already taken by a local bookmark |
-| `stakk::selection::bookmark_command_not_configured` | `--new-command` was used without `--bookmark-command` |
+| `0` | Success. `--help` and `--version` also exit `0` |
+| `1` | stakk failed; the diagnostic, with its `stakk::…` code, is on stderr |
+| `2` | Usage error — unknown flag, unknown subcommand, invalid enum value |
+| `130` | Interrupted (`Ctrl-C` in the TUI) |
 
-## The `stakk show --format=json` document
+`2` comes from clap, stakk's argument parser, rather than from stakk itself,
+so it follows clap's usage-error convention rather than stakk's stability contract.
 
-`--format=json` emits a schema-versioned document for machine consumption.
-Identifiers in it — change id prefixes and bookmark names — can be passed straight to `stakk submit`.
+Note that `stakk submit` with no selection flags means the TUI.
+Without a terminal that is `stakk::not_interactive` and exit `1`,
+which is what an empty selection looks like when a shell substitution expands to nothing.
 
-- `schema_version` — currently `1`; bumped on breaking schema changes
-- `default_branch`
-- `remotes[]` — `name`, `url`, `github` (`owner/repo`, or `null` for non-GitHub remotes)
-- `excluded_bookmark_count` — bookmarks excluded due to merge commits
-- `stacks[]` — one per leaf, trunk-to-leaf; shared ancestor segments are repeated in every stack that contains them
-  - `segments[]` — `bookmark_names[]` and `commits[]` (oldest first)
-    - each commit: `change_id`, `short_change_id`, `commit_id`, `description` (full), `author` (`name`, `email`,
-      `timestamp`), `files[]`, `is_immutable`, `local_bookmark_names[]` (unfiltered — includes bookmarks the
-      bookmarks revset excluded), `is_boundary` (the commit its segment's bookmarks point at), `is_leaf` (the tip of
-      its stack)
+## A worked example
 
-Pulling the identifiers you need out of the first stack:
+Submits the most recently modified stack, keeping the bookmarks it already has and auto-naming an unbookmarked tip.
+Requires Python 3.11 or newer for `datetime.fromisoformat` to accept jj's offsets and `Z` suffix.
 
-```console
-stakk show --format=json \
-  | jq '.stacks[0].segments[].commits[]
-        | {short_change_id, local_bookmark_names}'
+```python
+#!/usr/bin/env python3
+"""Submit the most recently modified stack, without the TUI.
+
+Usage: submit-stack.py [--dry-run]
+"""
+
+import json
+import subprocess
+import sys
+from datetime import datetime
+
+
+def show_json() -> dict:
+    """stakk show is offline: it queries jj only, never GitHub."""
+    proc = subprocess.run(
+        ["stakk", "show", "--format=json"],
+        capture_output=True,
+        text=True,
+    )
+    if proc.returncode != 0:
+        sys.stderr.write(proc.stderr)
+        sys.exit(proc.returncode)
+    return json.loads(proc.stdout)
+
+
+def last_touched(stack: dict) -> datetime:
+    """When this stack was last modified.
+
+    Parsed rather than string-compared: jj emits offset-aware
+    timestamps, so "2026-02-19T19:47:54+01:00" sorts after
+    "2026-02-19T19:00:00Z" as text while being twelve minutes
+    earlier as an instant.
+    """
+    return max(
+        datetime.fromisoformat(commit["committer_timestamp"])
+        for segment in stack["segments"]
+        for commit in segment["commits"]
+    )
+
+
+def latest_stack(stacks: list) -> dict:
+    """The most recently modified stack.
+
+    Chosen explicitly rather than by taking stacks[0]: the document's
+    order is not part of the contract, and a stack need not carry a
+    bookmark to be identified by name.
+    """
+    if not stacks:
+        sys.exit("no bookmark stacks in this repository")
+    return max(stacks, key=last_touched)
+
+
+def selection_flags(stack: dict) -> list:
+    """One mark per segment: every PR boundary is named explicitly."""
+    flags = []
+    for segment in stack["segments"]:
+        if segment["bookmarks"]:
+            # One mark per segment, not per name. Two marks on one
+            # commit is stakk::selection::duplicate_mark.
+            flags.append(f"--keep={segment['bookmarks'][0]['name']}")
+            continue
+        # The unbookmarked head, always last when present. Unmarked,
+        # it sits above the topmost boundary and is not submitted.
+        tip = segment["commits"][-1]
+        if tip["is_immutable"]:
+            print(
+                f"tip {tip['short_change_id']} is immutable, skipping",
+                file=sys.stderr,
+            )
+            continue
+        # change_id, not short_change_id: short prefixes are unique
+        # only against the repository as it stands right now.
+        flags.append(f"--new-auto={tip['change_id']}")
+    return flags
+
+
+def describe(stack: dict) -> None:
+    """Report what a submission would touch, before touching it."""
+    for segment in stack["segments"]:
+        for bookmark in segment["bookmarks"]:
+            print(f"  {bookmark['name']}: {bookmark['remote_state']}")
+
+
+def submit(flags: list, dry_run: bool) -> None:
+    """Run stakk submit, streaming output, and adopt its exit code."""
+    argv = ["stakk", "submit", *flags]
+    if dry_run:
+        argv.append("--dry-run")
+    # The child inherits this stdout. Python block-buffers when stdout is
+    # a pipe, so without the flush our own lines land after stakk's.
+    sys.stdout.flush()
+    proc = subprocess.run(argv)
+    if proc.returncode != 0:
+        sys.exit(proc.returncode)
+
+
+def main() -> None:
+    dry_run = "--dry-run" in sys.argv[1:]
+
+    stack = latest_stack(show_json()["stacks"])
+    describe(stack)
+
+    flags = selection_flags(stack)
+    if not flags:
+        # Bare `stakk submit` means the TUI, or exit 1 with no tty.
+        sys.exit("no PR boundaries found; nothing to submit")
+
+    submit(flags, dry_run=True)
+    if not dry_run:
+        submit(flags, dry_run=False)
+
+
+if __name__ == "__main__":
+    main()
 ```
 
-## Immutable commits
+`describe` is there to show what `remote_state` makes possible: it comes out of `stakk show` without touching GitHub,
+so a script can report what a submission would do — "two already pushed, one new" — before running it.
 
-Commits jj considers immutable cannot take a new bookmark: the default bookmarks revset excludes `immutable()`,
-so stakk would create a PR it could never see again on the next run.
-`--new <rev>` on such a commit fails with `stakk::selection::rev_immutable`,
-and the commits are annotated in `stakk show`.
+## The same thing in shell
 
-If you genuinely need a PR there, create the bookmark yourself
-and drop the `~ immutable()` term from `--bookmarks-revset`.
-Otherwise, move the work onto mutable commits.
+For the common case where every segment is already bookmarked:
+
+```console
+stakk submit $(stakk show --format=json \
+  | jq -r '.stacks[0].segments[]
+           | select(.bookmarks | length > 0)
+           | "--keep=\(.bookmarks[0].name)"')
+```
+
+This indexes `.stacks[0]`, so it picks whichever stack is currently newest rather than a chosen one,
+and a segment with no bookmark is filtered out rather than reported — an unbookmarked tip is silently left unsubmitted.
+Both are fine for a one-off in a single-stack repository, and both are why the Python version is longer.

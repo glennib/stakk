@@ -7,14 +7,20 @@ It complements jj by turning local bookmark state into coherent GitHub PRs with 
 
 ## Current Status
 
-**v1.22.0** — All core features complete: stack detection, three-phase submission, interactive TUI selection,
-non-interactive selection via `--keep`/`--new*`, offline `stakk show`
-(pretty graph + versioned JSON),
+All core features are complete: stack detection, three-phase submission, interactive TUI selection,
+fully explicit non-interactive selection via `--keep`/`--new*`, offline `stakk show`
+(pretty graph + versioned JSON in sparse and full projections),
 four stack-placement modes, stack comment templating, layered config
-(CLI > env > repo/user TOML), and comprehensive error handling.
+(CLI > env > repo/user TOML), bundled documentation via `stakk docs`, and comprehensive error handling.
+
+The CLI surface: `stakk` and `stakk submit` both open the TUI,
+every PR boundary of a non-interactive submission is named with a selection flag, and there is no positional bookmark,
+no `--keep-all`, no `--draft`, and no `stakk auth`.
+Which parts of that surface are semver-guarded is stated in the README's **Stability** section —
+the contract lives there, not in a doc topic, because doc-topic text is exactly what it declares unstable.
 
 Versions are managed by release-plz from conventional-commit messages.
-Never edit `CHANGELOG.md` or the `version` field by hand.
+Never edit `CHANGELOG.md` or the `version` field by hand, and do not pin a version number here — release-plz owns it.
 
 ## Testing
 
@@ -44,7 +50,7 @@ The core submission logic must never import GitHub-specific types directly.
 
 Re-running any command must be safe.
 `submit` updates existing PRs rather than creating duplicates.
-Stack comments are identified by embedded metadata.
+Stack comments are found by the `STAKK_STACK` marker on their metadata line, then rewritten wholesale.
 
 ### 5. Boring solutions over clever abstractions
 
@@ -87,16 +93,15 @@ When adding, renaming, or changing the default of one, update all of them in the
    Only touch the README when the option changes something it describes in prose: the four-key `stakk.toml` sample,
    the **Stack info placement** summary, **GitHub Enterprise Server**, **Non-interactive selection**,
    **PR titles and bodies**, **Custom bookmark names**, or **Immutable commits**.
-   Deeper reference material for those lives in `docs/template.md` and `docs/scripting.md`,
+   Deeper reference material for those lives in `docs/template.md`, `docs/agents.md` and `docs/show.md`,
    which each README section links to alongside its `stakk docs <topic>` command.
 
 A change that lands in only some of these will silently drop config-file support, fail to appear in `--help` defaults,
 or stay invisible in the docs.
 
 The README describes only encouraged flows.
-The bare `stakk <bookmark>` form works but is never shown there — `stakk` with no arguments means the TUI,
-and submitting a named bookmark means `stakk submit <bookmark>`.
-Subcommand shadowing and `stakk -- <bookmark>` are documented in `docs/scripting.md` only.
+`submit` takes no positional bookmark: `stakk` and `stakk submit` both mean the TUI,
+and non-interactive submission is spelled with the `--keep`/`--new*` selection flags.
 
 ## Architecture
 
@@ -104,7 +109,7 @@ Subcommand shadowing and `stakk -- <bookmark>` are documented in `docs/scripting
 src/
 ├── main.rs          # CLI entry point (clap)
 ├── auth.rs          # Per-host GitHub token resolution (gh CLI, env vars)
-├── cli/             # clap subcommand definitions (Cli, SubmitArgs, ShowArgs, GraphArgs, AuthArgs, DocTopic)
+├── cli/             # clap subcommand definitions (Cli, SubmitArgs, ShowArgs, GraphArgs, DocTopic)
 ├── config/          # TOML config discovery, merging, and clap-default injection
 ├── docs/            # `stakk docs` — include_str!s docs/*.md, renders them, generates the topic index
 ├── markdown/        # Markdown transforms shared by submit/ and docs/
@@ -129,11 +134,13 @@ src/
 │   ├── app.rs       # App state machine, event loop, terminal init
 │   ├── graph_widget.rs  # Screen 1: jj-log-style graph widget (leaf selection, collapsing, scrolling)
 │   ├── bookmark_widget.rs # Screen 2: bookmark toggle/assignment widget
-│   ├── explicit.rs  # Non-interactive selection via --keep/--keep-all/--new/--new-auto/--new-command
+│   ├── explicit.rs  # Non-interactive selection via --keep/--new/--new-auto/--new-command
 │   ├── bookmark_gen.rs # Bookmark validation and external command execution
 │   ├── tfidf.rs     # TF-IDF algorithm for auto-generated bookmark names
 │   └── event.rs     # crossterm key event mapping to app actions
-├── show/            # `stakk show` rendering: pretty graph + schema-versioned JSON (offline, pure jj)
+├── show/            # `stakk show` rendering: pretty graph + schema-versioned JSON in two
+│                    # projections, sparse (`--format=json`) and full (`--format=json-full`)
+│                    # (offline, pure jj)
 ├── submit/          # Three-phase submission (analyze → plan → execute)
 └── error.rs         # Error types (thiserror)
 ```
@@ -338,12 +345,45 @@ If you change any of the following, update `scripts/record-demo.py` in the same 
 
 ## Patterns & Gotchas
 
-- `#[cfg_attr(not(test), expect(dead_code, reason = "..."))]` for fields used
-  only in tests — satisfies both `--all-targets` clippy and `-D warnings`.
+- `#[cfg_attr(not(test), expect(dead_code, reason = "..."))]` for fields the tests read but production does not —
+  satisfies both `--all-targets` clippy and `-D warnings`.
+  It is legitimate in exactly two situations, and everything else is dead code to delete:
+  1. A test reads the item as an *observable for logic that runs in production*.
+     `AuthToken::source` (which token env var wins per host), `ChangeGraph`'s four construction maps
+     (stacking, leaves, segment grouping, merge taint) and `Bookmark::change_id` are the surviving cases.
+     `Bookmark::change_id` is what `parse_bookmarks_single` reads to pin production's `jj bookmark list` parse:
+     it comes from the nested `CommitData` in `BookmarkEntryRaw::target`
+     (`BOOKMARK_TEMPLATE` emits only `name`, `synced` and `target`, so there is no change-ID field to take it from).
+     `Bookmark::synced` is *not* on this list — `graph::derive_remote_states` reads it in production,
+     which is also what keeps `BookmarkEntryRaw::synced` read rather than suppressed.
+     A stack-roots set is *not* on this list: roots are the changes absent from `adjacency_list`,
+     so a field recording them is a second copy of a fact production already derives,
+     and nothing but its own tests read it.
+  2. The field is a serde field with *no* `#[serde(default)]`,
+     so deleting it would relax the parse from "fail loudly on a template/parser mismatch" to "accept anything" —
+     `CommitRefData::target` is the only one.
+     (`LogEntryRaw::immutable` follows the same rule but is read in production, so it needs no suppression.)
+     A serde field that *does* carry `#[serde(default)]` is already optional;
+     deleting it changes no parsing and it should go.
+
+  The `reason` must name the behaviour the test pins,
+  not say "used in tests" or claim a diagnostic consumer that does not exist.
+  A test that only exercises the suppressed item itself
+  (a parallel implementation of production logic, a parse for a value nothing writes) justifies nothing — delete both.
+  `#[expect]` warns once a suppression becomes unnecessary, so `mise run ci` catches stale ones —
+  find the current set with `grep -rn dead_code src/`.
+- **Every file in `docs/` must be reachable as a `stakk docs` topic.**
+  A Markdown file there is not "documentation in the repo" — it is payload compiled into the binary,
+  and one with no `DocTopic` variant ships as a document nobody can print and nobody can find in the index.
+  Adding a file to `docs/` therefore means three edits in the same change: the file, a `DocTopic` variant,
+  and a `docs::source` arm.
+  `docs::tests::every_docs_file_is_a_topic` reads the directory at test time and fails the build otherwise,
+  so this is enforced rather than remembered.
+  The reverse direction needs no test — a `source` arm without a file fails to compile.
+  Anything that genuinely is not a topic (a README for the directory, say) does not belong in `docs/`.
 - `stakk docs` `include_str!`s `docs/*.md`,
   so those files are the single source of truth and cargo rebuilds the crate when they change (no `build.rs` needed).
-  Adding a topic means a `DocTopic` variant, a `docs::source` arm, and the file —
-  the index is generated from `DocTopic::value_variants()`, so it cannot drift.
+  The index is generated from `DocTopic::value_variants()`, so it cannot drift.
   The variant doc comments are load-bearing:
   clap prints them as possible-value help *and* `docs::index` reads them back.
   `DocTopic` has no `Default` on purpose — `None` means "print the index", not "print a default topic".
@@ -353,13 +393,22 @@ If you change any of the following, update `scripts/record-demo.py` in the same 
   or the `_ => true` fallthrough makes it shell out to jj for a version check it does not need.
 - `stakk docs` output depends on where it goes: a TTY gets prose re-flowed to the terminal width,
   a redirect gets the source verbatim.
-  The verbatim path is what makes `stakk docs scripting >> AGENTS.md` reproduce the file byte for byte,
+  The verbatim path is what makes `stakk docs agents >> AGENTS.md` reproduce the file byte for byte,
   and it is asserted by a test — do not "improve" it by always rendering.
   Width resolution checks `COLUMNS` before `console`, which reads the terminal over ioctl and never consults it;
   without that there is no way to exercise a narrow terminal.
   Fenced blocks pass through the wrapper unwrapped
   (a folded shell command is a broken one),
   so a test caps fenced lines in `docs/*.md` at 76 chars — rumdl formats at 120 and will not catch it.
+- `Cli` has no flattened `SubmitArgs`: every submit flag lives on the `submit` subcommand only,
+  so flags before a subcommand fail with clap's stock "unexpected argument".
+  Bare `stakk` still means `stakk submit`: the `None` arm calls `cli::default_submit_args`,
+  which takes the `Config` and parses the synthetic argv `["stakk", "submit"]` through a `Command` it config-applies
+  itself — the signature is what stops a caller from handing it an unprepared `Command`.
+  That clap parse is what makes `STAKK_*` env vars and config-injected defaults apply to the bare form —
+  `SubmitArgs` deliberately has no `Default` impl, because hand-building one silently drops both
+  (the bug 90718ef5cf97 fixed; `bare_stakk_submit_args_come_from_a_config_applied_clap_parse` pins the mechanism).
+  Only `global = true` args (`--config`, `--github-host`) are accepted on either side of the subcommand.
 - Remote host handling: `jj::remote::parse_remote_url` parses `<host>/<owner>/<repo>` for *any* host;
   `parse_github_url` layers the gate on top, accepting `GITHUB_COM` plus one configured host
   (`--github-host` / `STAKK_GITHUB_HOST` / `github_host` / `GH_HOST`, resolved once in `run()`).
@@ -371,8 +420,10 @@ If you change any of the following, update `scripts/record-demo.py` in the same 
   the two are not one template.
   Always `https`, even for an `http://` remote.
 - The remote must be resolved *before* the token:
-  `auth::resolve_token(host)` picks `GITHUB_TOKEN`/`GH_TOKEN` for github.com
+  `auth::resolve_token(host)` picks `GH_TOKEN`/`GITHUB_TOKEN` for github.com
   and `GH_ENTERPRISE_TOKEN`/`GITHUB_ENTERPRISE_TOKEN` otherwise, and passes `--hostname` to `gh auth token`.
+  Both pairs are in the order `gh help environment` documents,
+  so stakk's fallback and gh's own answer agree on which variable wins.
   Without `--hostname`, gh answers for whatever `GH_HOST` names, which need not be this repo's host.
   `env_sources`/`token_from_env` take the lookup as a closure so tests never mutate the process environment.
 - jj JSON output uses NDJSON (one JSON object per line).
@@ -401,6 +452,14 @@ If you change any of the following, update `scripts/record-demo.py` in the same 
   body mode adds `BODY_WARNING` inside the fence.
   `format_stack_comment` itself is placement-neutral (no warning lines).
   `STAKK_REPO_URL` is the single source of truth for the repo URL.
+- The base64 payload on that line is **write-only**: nothing reads it back.
+  `find_stack_comment` locates stakk's comment with a substring test for `COMMENT_DATA_PREFIX`,
+  and the comment is then regenerated from freshly computed state rather than diffed against what it said before —
+  so `StackCommentData` derives `Serialize` only.
+  The payload is kept because comments already on GitHub carry it, which is what a future reader
+  (detecting merged PRs, say)
+  would need and cannot retrofit; writing that reader means deriving `Deserialize` again and parsing the line,
+  not changing the format.
 - `format_stack_comment` returns `Result` because user templates can fail.
 - `StackCommentContext.stack` is ordered trunk-first
   (`position` is 1 nearest the trunk);
@@ -430,12 +489,12 @@ If you change any of the following, update `scripts/record-demo.py` in the same 
   (one PR is not a stack),
   so the two share one branch that runs *before* the template and context setup that only `comment`/`body` need.
   PRs created in the same run are skipped — they cannot yet carry a stack comment.
-  In `none` mode the custom `--template` is never read or compiled,
+  In `none` mode the custom `--template-path` is never read or compiled,
   so a broken template does not fail a submission that will not render it.
 - `--stack-placement ignore` writes nothing *and* cleans up nothing:
   the `EffectivePlacement::Ignore` arm short-circuits before the cleanup branch,
   so it also wins over the single-bookmark cleanup rule.
-  Like `none`, it never reads or compiles `--template`.
+  Like `none`, it never reads or compiles `--template-path`.
 - ratatui inline viewport: `enable_raw_mode()` before, `disable_raw_mode()` after.
 - The inline viewport is sized per screen
   (graph vs bookmark rows).
@@ -453,22 +512,59 @@ If you change any of the following, update `scripts/record-demo.py` in the same 
   unlike `BookmarkSegment::bookmark_names`, it includes bookmarks the bookmarks revset excluded
   (e.g. on immutable commits).
   Feeds `excluded_bookmarks` in the graph layout, which labels locked TUI rows.
-- Two phase-1 constructors: the positional `stakk submit <bookmark>` path uses `analyze_submission` —
-  every boundary from trunk through the target is its own stacked PR, no folding (issue #184).
-  Folding lives only in the selection constructor.
-  Selection-based paths (the TUI and the explicit flags via `select::explicit`) use
-  `analysis_from_selection(path, assignments, ...)`: boundaries are matched by change ID on the selected trunk→tip path,
-  so new bookmarks need not exist yet and no graph rebuild happens; commits between boundaries fold into the boundary
-  above.
+- One phase-1 constructor: every submission — the TUI and the explicit flags via `select::explicit` alike —
+  goes through `analysis_from_selection(path, assignments, ...)`.
+  Boundaries are matched by change ID on the selected trunk→tip path,
+  so new bookmarks need not exist yet and no graph rebuild happens;
+  commits between boundaries fold into the boundary above.
+  Marking every boundary reproduces the no-fold shape (issue #184): each segment keeps exactly its own commit.
+  Commits *above* the topmost mark are dropped from the submission entirely:
+  `pending` is never flushed past the last boundary, so an unbookmarked head is not submitted unless it is marked.
 - Explicit selection (`select/explicit.rs`):
-  `--keep`/`--keep-all`/`--new REV[=NAME]`/`--new-auto REV`/`--new-command REV` marks fully determine the PR set —
-  nothing implicit.
+  `--keep`/`--new REV[=NAME]`/`--new-auto REV`/`--new-command REV` marks fully determine the PR set —
+  every PR boundary is named on the command line, nothing is implicit and there is no bulk flag.
   Revs prefix-match change/commit ids on the graph
   (deduped by commit_id: shared segments cloned into several stacks are one commit, not ambiguous);
   colinearity is validated by intersecting per-mark containing-stack sets; the topmost mark is the tip.
-  Bare `--keep-all` needs the stacks to agree on their bookmarks; anchored, it expands on the marked path,
-  skipping commits with explicit marks (explicit beats bulk).
+  `resolve_bookmarks_explicitly` requires at least one mark —
+  an empty `SelectionSpec` means the TUI and `main.rs` routes it there,
+  so the intersection `reduce` `expect`s a non-empty mark list.
   Errors are `stakk::selection::*` diagnostics pointing at `stakk show`.
+  "Submit my whole stack" emits one `--keep=` per *segment* — `bookmarks[0].name`, not one per `bookmarks[]` entry.
+  A commit can carry several bookmarks,
+  and two `--keep`s on one commit are two marks on one boundary (`stakk::selection::duplicate_mark`).
+  `docs/scripting.md` works this through in Python; the `jq` one-liner is there too, marked as the shortcut it is.
+- `stakk show`'s JSON is one schema in two projections: `--format=json` is sparse, `--format=json-full` is everything.
+  Sparse must stay a *strict subset* of full — same names, types, values and emitted order.
+  That is enforced by construction: full-only fields
+  (`commit_id`, `description`, `author`, `files`)
+  are `Option`s on the single `CommitReport` with `skip_serializing_if = "Option::is_none"`,
+  so they are *omitted* rather than nulled and there is no second serializer path to drift.
+  `sparse_is_a_strict_subset_of_full` pins values, `sparse_omits_full_only_fields` pins the field set on every commit
+  (omitted, never nulled),
+  and `sparse_field_order_matches_full` pins the emitted order per commit object — the last one reads the rendered text,
+  because a parsed `serde_json::Value` sorts its keys,
+  and it scans each commit object separately
+  because a document-wide cursor scan accepts a permutation inside one commit by matching the later keys in the commits
+  that follow.
+  `show::json_projection` maps `--format` to the projection so the wiring is testable rather than inline in `main`.
+  `title` is the first line of `description`; `description` stays the full message.
+  Both projections report the same `SCHEMA_VERSION`.
+  `committer_timestamp` is in *both* projections on purpose: stack order is derived from the committer timestamp
+  (`group_segments_into_stacks`), not the author one, so without it in sparse a consumer cannot reproduce or override
+  the order it is being handed.
+- Each segment reports `bookmarks: [{name, remote_state}]`,
+  where `remote_state` is `unpushed` / `diverged` / `synced` from `graph::derive_remote_states`.
+  Two facts are needed and neither suffices alone: jj's `synced()` is false only when a *tracked* remote disagrees,
+  so a never-pushed bookmark reports `synced = true` exactly like an up-to-date one.
+  The tiebreaker is whether a remote bookmark of the same name sits on the segment's boundary commit.
+  Match the name exactly up to the `@` — a bare prefix test calls `feat` synced when `feat-2@origin` is on the commit —
+  and skip jj's internal `name@git`, which is not a push target.
+  The state is offline and says nothing about pull requests, only about what a push would do.
+- `excluded_bookmarks` (names) and `excluded_head_count` are separate
+  because the old single counter conflated bookmarks excluded by merge taint with unbookmarked *heads* excluded the same
+  way.
+  Heads have no name to report, so a consumer reading only a count could not say what it lost.
 - Reserved bookmark names: `Jj::get_local_bookmark_names`
   (`jj bookmark list` with *no* `-r`) is the single source of truth for "this name is taken".
   The change graph is not — it cannot see trunk's own bookmark
@@ -516,14 +612,15 @@ If you change any of the following, update `scripts/record-demo.py` in the same 
   tooling's (or your own) comments and body fences alone are two different wishes.
   `none` serves the first, `ignore` the second; neither is a safe default for the other.
 - **`--dry-run` not in env vars** — one-off decision, surprising as a default.
-- **Selection flags not in env vars/config** — `--keep`, `--keep-all`, `--new`, `--new-auto`,
+- **Selection flags not in env vars/config** — `--keep`, `--new`, `--new-auto`,
   `--new-command` are per-invocation decisions like `--dry-run`;
   a persisted default would silently change what gets submitted.
   CLI + README touchpoints only (deliberate exception to the four-touchpoint rule).
 - **Generic `Jj<R: JjRunner>`** — zero-cost dispatch, edition 2024 async traits.
-- **Three-phase submission** — analyze (pure) → plan (queries forge) → execute.
+- **Three-phase submission** — analyze → plan (queries forge) → execute.
   All repo mutations (bookmark creation, pushes) live in execute, so `--dry-run` —
-  which returns after printing the plan — is fully inert.
+  which returns after printing the plan — writes nothing.
+  Analyze is not side-effect-free: a configured `--bookmark-command` runs during selection, under `--dry-run` too.
 - **ratatui over inquire** — visual graph rendering, bookmark assignment TUI.
 - **minijinja for stack comments** — customizable templates, metadata outside template.
 - **Interleaved push+update** — `execute_submission_plan` processes each bookmark sequentially

@@ -18,11 +18,9 @@ use crate::cli::Cli;
 use crate::cli::Commands;
 use crate::cli::ShowArgs;
 use crate::cli::ShowFormat;
-use crate::cli::auth::AuthCommands;
 use crate::cli::submit::SubmitArgs;
 use crate::error::StakkError::Interrupted;
 use crate::error::StakkError::{self};
-use crate::forge::Forge;
 use crate::forge::comment::StackPlacement;
 use crate::jj::Jj;
 use crate::jj::remote::parse_github_url;
@@ -52,14 +50,21 @@ async fn main() {
 async fn run() -> Result<(), StakkError> {
     let config_path = config::pre_parse_config_path();
     let config = config::Config::load(config_path)?;
-    let cmd = cli::apply_config_defaults(config, Cli::command());
+    let cmd = cli::apply_config_defaults(config.clone(), Cli::command());
     let cli = Cli::from_arg_matches(&cmd.get_matches())?;
 
+    // Warn about environment variables stakk stopped reading, for the two paths
+    // that consume submit args. `show`, `docs` and `completions` never read
+    // them and never did, so they pay nothing — not even a stray stderr line in
+    // a shell that evaluates `stakk completions zsh`.
+    if matches!(&cli.command, Some(Commands::Submit(_)) | None) {
+        config::warn_removed_env_vars();
+    }
+
     // Warn about an outdated jj for commands that shell out to it. Commands that
-    // never touch jj (completions, docs, `auth setup`) skip the check.
+    // never touch jj (completions, docs) skip the check.
     let runs_jj = match &cli.command {
         Some(Commands::Completions { .. } | Commands::Docs { .. }) => false,
-        Some(Commands::Auth(args)) => matches!(args.command, AuthCommands::Test),
         _ => true, // Submit, Show, and None (= submit) all use jj.
     };
     if runs_jj {
@@ -79,14 +84,6 @@ async fn run() -> Result<(), StakkError> {
         Some(Commands::Submit(args)) => {
             submit_bookmark(&args, github_host).await?;
         }
-        Some(Commands::Auth(args)) => match args.command {
-            AuthCommands::Test => {
-                auth_test(github_host).await?;
-            }
-            AuthCommands::Setup => {
-                auth_setup();
-            }
-        },
         Some(Commands::Show(args)) => {
             show_status(&args, github_host).await?;
         }
@@ -97,7 +94,14 @@ async fn run() -> Result<(), StakkError> {
             docs::print(topic);
         }
         None => {
-            submit_bookmark(&cli.submit_args, github_host).await?;
+            // A bare `stakk` means `stakk submit`. Its arguments come from a
+            // clap parse of the synthetic argv `stakk submit` rather than from
+            // a hand-built value, so clap defaults, `STAKK_*` environment
+            // variables and config-injected defaults all reach it. The global
+            // flags are unaffected: `--config` is pre-parsed from the real
+            // argv, and `github_host` comes from the real parse above.
+            let args = cli::default_submit_args(config).unwrap_or_else(|e| e.exit());
+            submit_bookmark(&args, github_host).await?;
         }
     }
 
@@ -122,46 +126,8 @@ async fn warn_if_jj_too_old() {
     }
 }
 
-async fn auth_test(github_host: Option<&str>) -> Result<(), StakkError> {
-    // The remote comes first: its host decides which token to ask for.
-    let (_, github_repo) = resolve_github_remote(None, github_host).await?;
-    println!("Host: {}", github_repo.host);
-
-    let auth_token = auth::resolve_token(&github_repo.host).await?;
-    println!("Authentication source: {}", auth_token.source);
-
-    let forge = forge::github::GitHubForge::new(
-        &auth_token.token,
-        github_repo.owner.clone(),
-        github_repo.repo.clone(),
-        github_repo.api_base_uri().as_deref(),
-    )?;
-
-    let username = forge.get_authenticated_user().await?;
-    println!("Authenticated as: {username}");
-
-    Ok(())
-}
-
-fn auth_setup() {
-    println!("stakk resolves a GitHub token for the host your remote points at.\n");
-    println!("For github.com, in this order:\n");
-    println!("  1. GitHub CLI:    Run `gh auth login` to authenticate.");
-    println!("                    This is the recommended method.\n");
-    println!("  2. GITHUB_TOKEN:  Set the GITHUB_TOKEN environment variable");
-    println!("                    to a personal access token with `repo` scope.\n");
-    println!("  3. GH_TOKEN:      Set the GH_TOKEN environment variable");
-    println!("                    (same as GITHUB_TOKEN, alternative name).\n");
-    println!("For a GitHub Enterprise Server host, name the host first with");
-    println!("--github-host, STAKK_GITHUB_HOST, github_host in stakk.toml, or");
-    println!("GH_HOST. stakk then resolves the token in this order:\n");
-    println!("  1. GitHub CLI:    Run `gh auth login --hostname <host>`.\n");
-    println!("  2. GH_ENTERPRISE_TOKEN, then GITHUB_ENTERPRISE_TOKEN.\n");
-    println!("To verify: run `stakk auth test`");
-}
-
-/// Submits a bookmark as a stacked pull request using the three-phase pipeline:
-/// analyze, plan, execute.
+/// Submits a selection of bookmarks as stacked pull requests using the
+/// three-phase pipeline: analyze, plan, execute.
 async fn submit_bookmark(args: &SubmitArgs, github_host: Option<&str>) -> Result<(), StakkError> {
     let pb = indicatif::ProgressBar::new_spinner();
     pb.enable_steady_tick(std::time::Duration::from_millis(120));
@@ -192,66 +158,58 @@ async fn submit_bookmark(args: &SubmitArgs, github_host: Option<&str>) -> Result
     pb.set_message("Detecting default branch...");
     let default_branch = jj.get_default_branch().await?;
 
-    // Resolve bookmark: explicit argument or interactive selection.
     pb.finish_and_clear();
 
-    // Phase 1: Analyze. A positional bookmark argument submits the target
-    // and all its bookmarked ancestors as stacked PRs (no folding). The
-    // selection flags (--keep/--new/...) and the interactive TUI instead
-    // yield explicit assignments on a selected path; the analysis is built
-    // directly from those, so new bookmarks need not exist yet — they are
-    // created in the execute phase, which keeps --dry-run free of side
-    // effects.
-    let (analysis, bookmark_creations) = if let Some(name) = &args.bookmark {
-        let analysis = submit::analyze_submission(name, &change_graph, &default_branch)?;
-        (analysis, Vec::new())
+    // Phase 1: Analyze. Selection always comes from the same place: the
+    // interactive TUI when no selection flag is given, the explicit
+    // --keep/--new/... marks otherwise. Both yield explicit assignments on a
+    // selected path, and the analysis is built directly from those, so new
+    // bookmarks need not exist yet — they are created in the execute phase,
+    // which keeps --dry-run free of side effects.
+    let spec = select::explicit::SelectionSpec::from_args(args)?;
+    // Every local bookmark name in the repo, not just the ones on the graph: a
+    // new bookmark must not collide with trunk's own bookmark or with anything
+    // the bookmarks revset filtered out.
+    let reserved_names = jj.get_local_bookmark_names().await?;
+    let selection = if spec.is_empty() {
+        select::resolve_bookmark_interactively(
+            &change_graph,
+            args.bookmark_command.as_deref(),
+            args.auto_prefix.as_deref(),
+            &reserved_names,
+        )?
     } else {
-        let spec = select::explicit::SelectionSpec::from_args(args)?;
-        // Every local bookmark name in the repo, not just the ones on the
-        // graph: a new bookmark must not collide with trunk's own bookmark or
-        // with anything the bookmarks revset filtered out. Only the selection
-        // paths create bookmarks, so the positional path skips this.
-        let reserved_names = jj.get_local_bookmark_names().await?;
-        let selection = if spec.is_empty() {
-            select::resolve_bookmark_interactively(
+        Some(
+            select::explicit::resolve_bookmarks_explicitly(
                 &change_graph,
-                args.bookmark_command.as_deref(),
+                &spec,
                 args.auto_prefix.as_deref(),
+                args.bookmark_command.as_deref(),
                 &reserved_names,
-            )?
-        } else {
-            Some(
-                select::explicit::resolve_bookmarks_explicitly(
-                    &change_graph,
-                    &spec,
-                    args.auto_prefix.as_deref(),
-                    args.bookmark_command.as_deref(),
-                    &reserved_names,
-                )
-                .await?,
             )
-        };
-        match selection {
-            Some(result) => {
-                let analysis = submit::analysis_from_selection(
-                    &result.path,
-                    &result.assignments,
-                    &default_branch,
-                )?;
-                let creations: Vec<submit::BookmarkCreation> = result
-                    .assignments
-                    .iter()
-                    .filter(|a| a.is_new)
-                    .map(|a| submit::BookmarkCreation {
-                        bookmark_name: a.bookmark_name.clone(),
-                        change_id: a.change_id.clone(),
-                        short_change_id: a.short_change_id.clone(),
-                    })
-                    .collect();
-                (analysis, creations)
-            }
-            None => return Ok(()),
+            .await?,
+        )
+    };
+    let (analysis, bookmark_creations) = match selection {
+        Some(result) => {
+            let analysis = submit::analysis_from_selection(
+                &result.path,
+                &result.assignments,
+                &default_branch,
+            )?;
+            let creations: Vec<submit::BookmarkCreation> = result
+                .assignments
+                .iter()
+                .filter(|a| a.is_new)
+                .map(|a| submit::BookmarkCreation {
+                    bookmark_name: a.bookmark_name.clone(),
+                    change_id: a.change_id.clone(),
+                    short_change_id: a.short_change_id.clone(),
+                })
+                .collect();
+            (analysis, creations)
         }
+        None => return Ok(()),
     };
 
     // Phase 2: Plan.
@@ -263,7 +221,7 @@ async fn submit_bookmark(args: &SubmitArgs, github_host: Option<&str>) -> Result
         bookmark_creations,
         &forge,
         &remote_name,
-        args.pr_mode(),
+        args.pr_mode,
         args.sync_pr_content,
         args.trailers,
     )
@@ -284,7 +242,7 @@ async fn submit_bookmark(args: &SubmitArgs, github_host: Option<&str>) -> Result
     // Load template. In `none`/`ignore` placement no stack content is ever
     // rendered, so a custom template is neither read nor compiled — a broken
     // or missing one must not fail a submission that will not use it.
-    let template_source = match (&args.template, args.stack_placement) {
+    let template_source = match (&args.template_path, args.stack_placement) {
         (Some(path), StackPlacement::Comment | StackPlacement::Body) => Some(
             std::fs::read_to_string(path).map_err(|e| StakkError::TemplateLoadFailed {
                 path: path.clone(),
@@ -384,10 +342,10 @@ async fn show_status(args: &ShowArgs, github_host: Option<&str>) -> Result<(), S
         graph: &change_graph,
         github_host,
     };
-    match args.format {
-        ShowFormat::Pretty => print!("{}", show::render_pretty(&data, console::colors_enabled())),
-        ShowFormat::Json => print!("{}", show::render_json(&data)),
-    }
+    print!(
+        "{}",
+        show::render(&data, args.format, console::colors_enabled())
+    );
 
     Ok(())
 }
