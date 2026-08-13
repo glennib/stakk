@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.25.0](https://github.com/glennib/stakk/compare/v1.24.0...v1.25.0) - 2026-08-13
+
+### Added
+
+- *(remote)* support GitHub Enterprise Server hosts
+
+### Fixed
+
+- point bookmark_not_found at `stakk show`, document subcommand shadowing
+
+### Other
+
+- prune README redundancies and fix docs/ inaccuracies
+
 ## [1.24.0](https://github.com/glennib/stakk/compare/v1.23.0...v1.24.0) - 2026-08-13
 
 ### Added
