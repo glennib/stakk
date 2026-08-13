@@ -13,6 +13,18 @@ stakk submit --keep base --new qzvs=my-feature --new-auto wmtk
 
 `stakk show` is fully offline — it queries only `jj`, never GitHub — so discovery is cheap and safe to run at any time.
 
+## Always name the subcommand
+
+Write `stakk submit`, never the bare `stakk <bookmark>` form.
+A leading subcommand name wins over the positional bookmark,
+so `stakk show` runs the `show` subcommand even when a bookmark of that name exists.
+The reserved set is `submit`, `auth`, `show`, `completions`, `docs` and `help`,
+and it grows whenever stakk gains a subcommand.
+Both `stakk submit show` and `stakk -- show` submit the bookmark.
+
+Flags belong after the subcommand.
+`stakk submit --dry-run my-feature` works, while `stakk --dry-run submit my-feature` is rejected.
+
 ## Selection flags
 
 The selection flags replace the TUI with a fully explicit selection.

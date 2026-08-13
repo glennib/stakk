@@ -278,6 +278,21 @@ or several that agree on their bookmarks
 (e.g. differing only in unbookmarked heads such as the working copy); anchor it with `--keep`/`--new` otherwise.
 Commits already carrying an explicit mark are skipped by `--keep-all` (explicit beats bulk).
 
+#### Bookmark names that collide with subcommands
+
+A leading subcommand name wins over the positional bookmark.
+`stakk show` runs the `show` subcommand even when a bookmark of that name exists, and the same holds for `submit`,
+`auth`, `docs`, `completions` and `help`.
+Name the subcommand, or end option parsing with `--`, to submit such a bookmark:
+
+```console
+stakk submit show
+stakk -- show
+```
+
+Submit flags belong after the subcommand: `stakk submit --dry-run show` works,
+while `stakk --dry-run submit show` is rejected.
+
 #### Agent / scripting usage
 
 Non-interactive submission is a two-command loop — discover, then submit.
