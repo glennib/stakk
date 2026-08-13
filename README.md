@@ -350,6 +350,8 @@ Changing these needs a major release.
 - The TUI layout and keybindings.
 - Spinner and progress text.
 - Error message wording — the diagnostic codes are the contract, not the prose.
+- Advisory warnings printed to stderr.
+  They may be added or removed in any release.
 
 **Not a breaking change:** raising the minimum supported jj version.
 The check is warn-only — stakk runs against an older jj and says so — so the floor can move in any release,

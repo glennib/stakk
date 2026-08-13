@@ -38,6 +38,66 @@ pub fn pre_parse_config_path() -> Option<PathBuf> {
     std::env::var("STAKK_CONFIG").ok().map(PathBuf::from)
 }
 
+/// An environment variable stakk no longer reads, paired with the advice that
+/// replaces it.
+#[derive(Debug, PartialEq, Eq)]
+pub struct RemovedEnvVar {
+    pub name: &'static str,
+    /// Imperative advice, rendered after "`<name>` is no longer read; ".
+    pub advice: &'static str,
+}
+
+/// The `STAKK_*` environment variables stakk used to read and no longer does.
+///
+/// Removed *flags* need no entry: clap rejects an unknown argument. Removed
+/// *config keys* need none either: `Config` denies unknown fields and lists the
+/// valid ones. The environment is the only configuration surface where a stale
+/// setting is silently ignored, which is why this table exists.
+///
+/// **Removal:** this table, [`removed_env_vars`] and its caller in `main.rs` go
+/// at v3.0.0 at the latest, and may go in any 2.x once the 1.x population has
+/// moved. Advisory warnings are explicitly not stable surface (see the
+/// **Stability** section of `README.md`), so deleting them is not a break.
+static REMOVED_ENV_VARS: &[RemovedEnvVar] = &[
+    RemovedEnvVar {
+        name: "STAKK_DRAFT",
+        advice: "use STAKK_PR_MODE=draft or pr_mode in stakk.toml",
+    },
+    RemovedEnvVar {
+        name: "STAKK_TEMPLATE",
+        advice: "use STAKK_TEMPLATE_PATH or template_path in stakk.toml",
+    },
+];
+
+/// The removed environment variables that are currently set to a non-empty
+/// value.
+///
+/// `lookup` is injected so tests do not have to mutate the process
+/// environment, the way `auth::token_from_env` takes its lookup.
+///
+/// An empty value counts as absent — the same rule `main.rs` applies to
+/// `GH_HOST` — so `STAKK_DRAFT=` is not reported, and emptying the variable is
+/// a way to silence the warning where the export cannot be dropped.
+pub fn removed_env_vars(lookup: impl Fn(&str) -> Option<String>) -> Vec<&'static RemovedEnvVar> {
+    REMOVED_ENV_VARS
+        .iter()
+        .filter(|removed| lookup(removed.name).is_some_and(|value| !value.is_empty()))
+        .collect()
+}
+
+/// Print one stderr warning per removed environment variable that is still set.
+///
+/// Advisory only: the variable may well belong to something other than stakk,
+/// so this never fails the command.
+pub fn warn_removed_env_vars() {
+    for removed in removed_env_vars(|name| std::env::var(name).ok()) {
+        eprintln!(
+            "Warning: {} is no longer read; {}",
+            removed.name, removed.advice
+        );
+    }
+}
+
 /// Persistent configuration loaded from a config file.
 ///
 /// All fields are optional — absent fields fall back to CLI defaults.
@@ -251,6 +311,63 @@ mod tests {
         let config = Config::load_from(Path::new("/nonexistent/stakk.toml")).unwrap();
         assert!(config.remote.is_none());
         assert!(config.inherit);
+    }
+
+    /// The lookup closure the tests inject: a fixed table, so the process
+    /// environment is never read or written.
+    fn lookup_from<'a>(pairs: &'a [(&'a str, &'a str)]) -> impl Fn(&str) -> Option<String> + 'a {
+        move |name| {
+            pairs
+                .iter()
+                .find(|(key, _)| *key == name)
+                .map(|(_, value)| (*value).to_string())
+        }
+    }
+
+    fn matched(vars: &[&RemovedEnvVar]) -> Vec<(&'static str, &'static str)> {
+        vars.iter().map(|v| (v.name, v.advice)).collect()
+    }
+
+    #[test]
+    fn removed_env_vars_none_set() {
+        assert!(removed_env_vars(lookup_from(&[])).is_empty());
+    }
+
+    #[test]
+    fn removed_env_vars_reports_draft_and_template() {
+        let found = removed_env_vars(lookup_from(&[
+            ("STAKK_DRAFT", "1"),
+            ("STAKK_TEMPLATE", "/path/to/template.md.jinja"),
+        ]));
+        assert_eq!(
+            matched(&found),
+            vec![
+                (
+                    "STAKK_DRAFT",
+                    "use STAKK_PR_MODE=draft or pr_mode in stakk.toml"
+                ),
+                (
+                    "STAKK_TEMPLATE",
+                    "use STAKK_TEMPLATE_PATH or template_path in stakk.toml"
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn removed_env_vars_treats_empty_as_unset() {
+        let found = removed_env_vars(lookup_from(&[("STAKK_DRAFT", ""), ("STAKK_TEMPLATE", "")]));
+        assert!(matched(&found).is_empty());
+    }
+
+    #[test]
+    fn removed_env_vars_ignores_current_names() {
+        // Names are matched exactly: STAKK_TEMPLATE_PATH is not STAKK_TEMPLATE.
+        let found = removed_env_vars(lookup_from(&[
+            ("STAKK_PR_MODE", "draft"),
+            ("STAKK_TEMPLATE_PATH", "/path/to/template.md.jinja"),
+        ]));
+        assert!(matched(&found).is_empty());
     }
 
     #[test]

@@ -184,5 +184,10 @@ an Enterprise Server reachable only over plain HTTP is not supported.
 | `GH_ENTERPRISE_TOKEN` | Access token for a GitHub Enterprise Server host |
 | `GITHUB_ENTERPRISE_TOKEN` | Alternative to `GH_ENTERPRISE_TOKEN` |
 
+`STAKK_DRAFT` and `STAKK_TEMPLATE` are gone: `STAKK_PR_MODE=draft` replaces the first, `STAKK_TEMPLATE_PATH` the second.
+A stale one is not an error — stakk cannot know the variable is still meant for it —
+but `stakk submit` warns on stderr while either is set.
+Unset it to fix the setting, or set it empty to silence the warning.
+
 `--dry-run` and the selection flags (`--keep`, `--new`, `--new-auto`, `--new-command`) deliberately have no environment
 variables or config keys: they are per-invocation decisions, and a persisted default would be surprising.

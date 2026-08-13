@@ -53,6 +53,14 @@ async fn run() -> Result<(), StakkError> {
     let cmd = cli::apply_config_defaults(config.clone(), Cli::command());
     let cli = Cli::from_arg_matches(&cmd.get_matches())?;
 
+    // Warn about environment variables stakk stopped reading, for the two paths
+    // that consume submit args. `show`, `docs` and `completions` never read
+    // them and never did, so they pay nothing — not even a stray stderr line in
+    // a shell that evaluates `stakk completions zsh`.
+    if matches!(&cli.command, Some(Commands::Submit(_)) | None) {
+        config::warn_removed_env_vars();
+    }
+
     // Warn about an outdated jj for commands that shell out to it. Commands that
     // never touch jj (completions, docs) skip the check.
     let runs_jj = match &cli.command {
