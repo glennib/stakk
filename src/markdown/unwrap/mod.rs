@@ -1,11 +1,12 @@
-/// Reflow hard-wrapped Markdown text into soft-wrapped paragraphs.
-///
-/// Joins consecutive prose lines with a space while preserving structural
-/// Markdown elements (headers, lists, code blocks, tables, blockquotes,
-/// thematic breaks) verbatim.
+//! Reflow hard-wrapped Markdown text into soft-wrapped paragraphs.
+//!
+//! Joins consecutive prose lines with a space while preserving structural
+//! Markdown elements (headers, lists, code blocks, tables, blockquotes,
+//! thematic breaks) verbatim.
+
 /// Returns true if the line is a thematic break: 3+ of the same marker
 /// char (`-`, `*`, `_`) with only spaces between.
-fn is_thematic_break(line: &str) -> bool {
+pub(crate) fn is_thematic_break(line: &str) -> bool {
     let trimmed = line.trim();
     if trimmed.len() < 3 {
         return false;
@@ -21,7 +22,7 @@ fn is_thematic_break(line: &str) -> bool {
 }
 
 /// Returns the fence marker if the line opens or closes a fenced code block.
-fn fence_marker(line: &str) -> Option<String> {
+pub(crate) fn fence_marker(line: &str) -> Option<String> {
     let trimmed = line.trim_start();
     if trimmed.starts_with("```") {
         Some("```".to_string())
@@ -38,7 +39,7 @@ fn fence_marker(line: &str) -> Option<String> {
 /// (blank, header, thematic break, code, table, blockquote),
 /// `Some(false)` for structural lines that allow continuation (list
 /// items), and `None` for prose lines.
-fn classify(line: &str, prev_blocks_continuation: bool) -> Option<bool> {
+pub(crate) fn classify(line: &str, prev_blocks_continuation: bool) -> Option<bool> {
     let trimmed = line.trim_start();
     // Blank line
     if line.trim().is_empty() {
@@ -80,6 +81,8 @@ fn classify(line: &str, prev_blocks_continuation: bool) -> Option<bool> {
     None
 }
 
+/// Join hard-wrapped prose lines into soft-wrapped paragraphs, leaving
+/// structural Markdown byte-identical.
 pub(crate) fn unwrap_markdown(text: &str) -> String {
     #[derive(PartialEq)]
     enum State {
@@ -145,7 +148,10 @@ mod tests {
     /// (expected output). Trailing newlines are stripped for comparison since
     /// editors tend to add them.
     fn corpus(name: &str) -> (String, String) {
-        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/src/submit/unwrap/test_corpus");
+        let dir = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/markdown/unwrap/test_corpus"
+        );
         let input =
             std::fs::read_to_string(format!("{dir}/{name}.md")).expect("missing input file");
         let expected = std::fs::read_to_string(format!("{dir}/{name}.expected.md"))

@@ -95,8 +95,12 @@ or stay invisible in the docs.
 src/
 ├── main.rs          # CLI entry point (clap)
 ├── auth.rs          # GitHub token resolution (gh CLI, env vars)
-├── cli/             # clap subcommand definitions (Cli, SubmitArgs, ShowArgs, GraphArgs, AuthArgs)
+├── cli/             # clap subcommand definitions (Cli, SubmitArgs, ShowArgs, GraphArgs, AuthArgs, DocTopic)
 ├── config/          # TOML config discovery, merging, and clap-default injection
+├── docs/            # `stakk docs` — include_str!s docs/*.md, renders them, generates the topic index
+├── markdown/        # Markdown transforms shared by submit/ and docs/
+│   ├── unwrap/      # unwrap_markdown: hard-wrapped prose → soft-wrapped paragraphs
+│   └── wrap.rs      # wrap_markdown: prose → folded to a target width
 ├── jj/              # jj CLI interface — all VCS ops go here
 │   ├── mod.rs       # Jj<R: JjRunner> — every jj invocation
 │   ├── runner.rs    # JjRunner trait + real/mock runners
@@ -164,6 +168,9 @@ There is intentionally no `git/` module.
   and run `mise run md` in the same change so the reformat does not land as unrelated churn.
 - Semantic line breaks mean prose edits should stay on their own line rather than re-wrapping a paragraph;
   it keeps docs diffs readable.
+- `docs/*.md` *is* rumdl-formatted, unlike `src/`, even though it is `include_str!`ed into the binary.
+  Semantic line breaks are harmless there because `stakk docs` re-flows prose at runtime for a terminal
+  (see the `stakk docs` entry under Patterns & Gotchas).
 
 ### Version Control
 
@@ -324,6 +331,26 @@ If you change any of the following, update `scripts/record-demo.py` in the same 
 
 - `#[cfg_attr(not(test), expect(dead_code, reason = "..."))]` for fields used
   only in tests — satisfies both `--all-targets` clippy and `-D warnings`.
+- `stakk docs` `include_str!`s `docs/*.md`,
+  so those files are the single source of truth and cargo rebuilds the crate when they change (no `build.rs` needed).
+  Adding a topic means a `DocTopic` variant, a `docs::source` arm, and the file —
+  the index is generated from `DocTopic::value_variants()`, so it cannot drift.
+  The variant doc comments are load-bearing:
+  clap prints them as possible-value help *and* `docs::index` reads them back.
+  `DocTopic` has no `Default` on purpose — `None` means "print the index", not "print a default topic".
+  `stakk docs` is exempt from the four-touchpoint rule (§8): no env var, no config key,
+  so README is the only other touchpoint.
+  Add it to the `runs_jj` false-arm in `main.rs` alongside `Completions`,
+  or the `_ => true` fallthrough makes it shell out to jj for a version check it does not need.
+- `stakk docs` output depends on where it goes: a TTY gets prose re-flowed to the terminal width,
+  a redirect gets the source verbatim.
+  The verbatim path is what makes `stakk docs scripting >> AGENTS.md` reproduce the file byte for byte,
+  and it is asserted by a test — do not "improve" it by always rendering.
+  Width resolution checks `COLUMNS` before `console`, which reads the terminal over ioctl and never consults it;
+  without that there is no way to exercise a narrow terminal.
+  Fenced blocks pass through the wrapper unwrapped
+  (a folded shell command is a broken one),
+  so a test caps fenced lines in `docs/*.md` at 76 chars — rumdl formats at 120 and will not catch it.
 - jj JSON output uses NDJSON (one JSON object per line).
   Parse with `lines()` plus a per-line `serde_json::from_str`.
 - `jj git remote list` outputs plain text, not JSON.
@@ -336,11 +363,14 @@ If you change any of the following, update `scripts/record-demo.py` in the same 
 - octocrab `pulls().create()` borrows the handler — bind to a variable first.
 - Commit-derived PR body is only set on creation, not on update — avoids overwriting manually-edited PR bodies.
   Body-mode stack placement updates only the fenced section.
-- `submit::unwrap::unwrap_markdown` reflows hard-wrapped description prose into soft-wrapped paragraphs
+- `markdown::unwrap::unwrap_markdown` reflows hard-wrapped description prose into soft-wrapped paragraphs
   (structural Markdown passes through verbatim).
   It runs on *both* sides of the body-sync comparison — the generated body and the existing PR body —
   so a body GitHub stores unchanged does not look different just because of line breaks.
   Changing the reflow rules changes change-detection; the round-trip must stay idempotent.
+  It is shared with `stakk docs`, which uses it as the join pass
+  before `markdown::wrap::wrap_markdown` folds prose to the terminal width —
+  so a change here moves rendered docs as well as PR bodies.
 - Stack comment metadata line (`<!--- STAKK_STACK: ... --->`) is always prepended programmatically —
   not part of the minijinja template.
   Warning/repo-URL preambles are added per-placement-mode: comment mode uses `with_comment_preamble()`,

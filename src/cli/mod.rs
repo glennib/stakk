@@ -55,6 +55,27 @@ pub enum Commands {
         /// The shell to generate completions for.
         shell: Shell,
     },
+    /// Print stakk's bundled documentation, or list the available topics.
+    Docs {
+        /// Topic to print. Omit to list the available topics.
+        #[arg(value_enum)]
+        topic: Option<DocTopic>,
+    },
+}
+
+/// A topic of the documentation bundled into the binary.
+///
+/// The variant docs below are load-bearing: clap surfaces them as
+/// possible-value help, and `docs::index` reads them back to build the topic
+/// list, so they cannot drift from each other.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub enum DocTopic {
+    /// Non-interactive submission, for scripts and coding agents.
+    Scripting,
+    /// Config files, precedence, and environment variables.
+    Config,
+    /// Stack info placement and stack comment templates.
+    Template,
 }
 
 /// Output format for the show subcommand.
@@ -495,6 +516,44 @@ mod tests {
             }
             other => panic!("expected Show, got {other:?}"),
         }
+    }
+
+    // -- docs subcommand --
+
+    #[test]
+    fn docs_without_topic_is_none() {
+        // `None` means "print the index", not "print a default topic".
+        let cli = parse_with_config(Config::default(), &["stakk", "docs"]);
+        match &cli.command {
+            Some(Commands::Docs { topic }) => assert_eq!(*topic, None),
+            other => panic!("expected Docs, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn docs_parses_each_topic() {
+        for (arg, expected) in [
+            ("scripting", DocTopic::Scripting),
+            ("config", DocTopic::Config),
+            ("template", DocTopic::Template),
+        ] {
+            let cli = parse_with_config(Config::default(), &["stakk", "docs", arg]);
+            match &cli.command {
+                Some(Commands::Docs { topic }) => assert_eq!(*topic, Some(expected)),
+                other => panic!("expected Docs, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn docs_rejects_an_unknown_topic() {
+        use clap::error::ErrorKind;
+
+        let cmd = apply_config_defaults(Config::default(), Cli::command());
+        let err = cmd
+            .try_get_matches_from(["stakk", "docs", "nonsense"])
+            .unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::InvalidValue);
     }
 
     // -- explicit selection flags --
