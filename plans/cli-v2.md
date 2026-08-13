@@ -42,7 +42,7 @@ Removing it eliminates the whole class by construction, and retires `args_confli
 stakk                       # TUI (submit with defaults)
 stakk submit                # TUI (same thing, named)
 stakk submit --keep A --new qzvs=B ...   # non-interactive selection
-stakk submit --dry-run --keep A          # inert plan preview
+stakk submit --dry-run --keep A          # plan preview, no writes
 stakk show [--format=json]  # discovery, offline
 stakk docs [topic]
 stakk completions <shell>
@@ -163,7 +163,13 @@ stakk submit $(stakk show --format=json \
 
 One `--keep` per *segment*, not per bookmark name: a commit can carry several bookmarks,
 and two `--keep`s on one commit are two marks on one boundary (`stakk::selection::duplicate_mark`).
-Unbookmarked segments are skipped — they fold into the boundary above, which is what they did under `--keep-all` too.
+Unbookmarked segments are skipped.
+
+Corrected after the fact: skipping them does *not* fold them into the boundary above, and `--keep-all` did not either —
+anchored, it expanded along the marked path.
+An unbookmarked segment is always the last in its stack,
+so it sits *above* the topmost `--keep` and is left out of the submission entirely.
+Ask for it by name (`--new-auto <rev>`) when you want it; `docs/scripting.md` carries the discovery snippet.
 
 Agents already run `stakk show --format=json` first per `docs/scripting.md`, so for them the cost is near zero.
 If the verbosity turns out to hurt humans, a replacement can ship in any 2.x.
