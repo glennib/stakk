@@ -404,8 +404,10 @@ If you change any of the following, update `scripts/record-demo.py` in the same 
   the two are not one template.
   Always `https`, even for an `http://` remote.
 - The remote must be resolved *before* the token:
-  `auth::resolve_token(host)` picks `GITHUB_TOKEN`/`GH_TOKEN` for github.com
+  `auth::resolve_token(host)` picks `GH_TOKEN`/`GITHUB_TOKEN` for github.com
   and `GH_ENTERPRISE_TOKEN`/`GITHUB_ENTERPRISE_TOKEN` otherwise, and passes `--hostname` to `gh auth token`.
+  Both pairs are in the order `gh help environment` documents,
+  so stakk's fallback and gh's own answer agree on which variable wins.
   Without `--hostname`, gh answers for whatever `GH_HOST` names, which need not be this repo's host.
   `env_sources`/`token_from_env` take the lookup as a closure so tests never mutate the process environment.
 - jj JSON output uses NDJSON (one JSON object per line).

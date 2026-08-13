@@ -33,18 +33,22 @@ or the other way around:
 
 | Host | Environment variables |
 |------|-----------------------|
-| `github.com` | `GITHUB_TOKEN`, `GH_TOKEN` |
+| `github.com` | `GH_TOKEN`, `GITHUB_TOKEN` |
 | anything else | `GH_ENTERPRISE_TOKEN`, `GITHUB_ENTERPRISE_TOKEN` |
 
-stakk's own fallback reads them in the order listed.
-`gh` applies the same host split but does not promise the same order within a host,
-so do not rely on which one wins when both are set — export one.
+Both stakk and `gh` read them in the order listed — it is the precedence `gh help environment` documents.
+So when several are set, the winner is the same whether the token came from `gh` or from stakk's own fallback.
+
+One exception: `gh` treats a subdomain of `ghe.com` as github.com and reads `GH_TOKEN`/`GITHUB_TOKEN` there,
+while stakk treats every host other than github.com as Enterprise.
+On such a host the two disagree about which *variables* apply, not merely their order,
+so set `GH_ENTERPRISE_TOKEN` for stakk.
 
 Four details worth knowing:
 
 - **An exported token takes effect immediately.**
   Because `gh auth token` returns the environment token when there is one,
-  setting `GITHUB_TOKEN` overrides the credential `gh` has stored.
+  setting `GH_TOKEN` overrides the credential `gh` has stored.
   There is no need to log out of `gh` to make it apply.
 - **`--hostname` is always passed to `gh`.**
   Without it `gh` would answer for whatever `GH_HOST` names, which need not be the host this repo's remote points at.

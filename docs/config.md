@@ -160,7 +160,7 @@ or has no token for that host:
 
 | Host | Environment variables |
 |------|-----------------------|
-| `github.com` | `GITHUB_TOKEN`, `GH_TOKEN` |
+| `github.com` | `GH_TOKEN`, `GITHUB_TOKEN` |
 | anything else | `GH_ENTERPRISE_TOKEN`, `GITHUB_ENTERPRISE_TOKEN` |
 
 So a github.com token is never sent to an Enterprise host, or the other way around.
@@ -198,8 +198,8 @@ an Enterprise Server reachable only over plain HTTP is not supported.
 | `STAKK_BOOKMARKS_REVSET` | Revset for discovering bookmarks (overridden by `--bookmarks-revset`) |
 | `STAKK_HEADS_REVSET` | Revset for discovering unbookmarked heads (overridden by `--heads-revset`) |
 | `GH_HOST` | The GitHub CLI's host setting; used as the `github_host` fallback |
-| `GITHUB_TOKEN` | GitHub personal access token for github.com (see `stakk docs auth`) |
-| `GH_TOKEN` | Alternative to `GITHUB_TOKEN` |
+| `GH_TOKEN` | GitHub personal access token for github.com (see `stakk docs auth`) |
+| `GITHUB_TOKEN` | Alternative to `GH_TOKEN` |
 | `GH_ENTERPRISE_TOKEN` | Access token for a GitHub Enterprise Server host |
 | `GITHUB_ENTERPRISE_TOKEN` | Alternative to `GH_ENTERPRISE_TOKEN` |
 

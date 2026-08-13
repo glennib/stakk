@@ -5,7 +5,7 @@
 //!    environment variables itself and hands their value back, so an exported
 //!    token wins over gh's stored credential without this module ever seeing
 //!    the variable.
-//! 2. the host's environment variables — `GITHUB_TOKEN`/`GH_TOKEN` for
+//! 2. the host's environment variables — `GH_TOKEN`/`GITHUB_TOKEN` for
 //!    github.com, `GH_ENTERPRISE_TOKEN`/`GITHUB_ENTERPRISE_TOKEN` for a GitHub
 //!    Enterprise Server host. This is the fallback for when gh is absent or has
 //!    no token for the host, not a lower-priority alternative to it.
@@ -74,13 +74,14 @@ pub enum AuthError {
 
 /// The token environment variables that apply to `host`, most preferred first.
 ///
-/// github.com keeps stakk's long-standing `GITHUB_TOKEN` before `GH_TOKEN`
-/// order. Other hosts use the enterprise pair in the GitHub CLI's own order.
+/// Both pairs follow the order `gh help environment` documents, so this
+/// fallback and gh's own answer resolve to the same token — which one applies
+/// does not depend on whether gh happens to be installed.
 fn env_sources(host: &str) -> &'static [(&'static str, TokenSource)] {
     if host == GITHUB_COM {
         &[
-            ("GITHUB_TOKEN", TokenSource::GitHubTokenEnv),
             ("GH_TOKEN", TokenSource::GhTokenEnv),
+            ("GITHUB_TOKEN", TokenSource::GitHubTokenEnv),
         ]
     } else {
         &[
@@ -182,19 +183,19 @@ mod tests {
     }
 
     #[test]
-    fn github_com_prefers_github_token() {
+    fn github_com_prefers_gh_token() {
         let found = token_from_env(GITHUB_COM, env(&[("GITHUB_TOKEN", "a"), ("GH_TOKEN", "b")]))
             .expect("a token should be found");
-        assert_eq!(found.token, "a");
-        assert_eq!(found.source, TokenSource::GitHubTokenEnv);
+        assert_eq!(found.token, "b");
+        assert_eq!(found.source, TokenSource::GhTokenEnv);
     }
 
     #[test]
-    fn github_com_falls_back_to_gh_token() {
-        let found =
-            token_from_env(GITHUB_COM, env(&[("GH_TOKEN", "b")])).expect("a token should be found");
-        assert_eq!(found.token, "b");
-        assert_eq!(found.source, TokenSource::GhTokenEnv);
+    fn github_com_falls_back_to_github_token() {
+        let found = token_from_env(GITHUB_COM, env(&[("GITHUB_TOKEN", "a")]))
+            .expect("a token should be found");
+        assert_eq!(found.token, "a");
+        assert_eq!(found.source, TokenSource::GitHubTokenEnv);
     }
 
     #[test]
@@ -233,9 +234,10 @@ mod tests {
 
     #[test]
     fn empty_values_are_skipped() {
-        let found = token_from_env(GITHUB_COM, env(&[("GITHUB_TOKEN", ""), ("GH_TOKEN", "b")]))
+        let found = token_from_env(GITHUB_COM, env(&[("GH_TOKEN", ""), ("GITHUB_TOKEN", "a")]))
             .expect("a token should be found");
-        assert_eq!(found.token, "b");
+        assert_eq!(found.token, "a");
+        assert_eq!(found.source, TokenSource::GitHubTokenEnv);
     }
 
     #[test]
@@ -250,8 +252,9 @@ mod tests {
         let help = miette::Diagnostic::help(&err).expect("NoAuthFound should have diagnostic help");
         let help_text = help.to_string();
         assert!(help_text.contains("gh auth login --hostname github.com"));
-        assert!(help_text.contains("GITHUB_TOKEN"));
-        assert!(help_text.contains("GH_TOKEN"));
+        // The joined list, not the two names separately: it is what pins that
+        // the help repeats `env_sources`' preference order.
+        assert!(help_text.contains("GH_TOKEN/GITHUB_TOKEN"));
     }
 
     #[test]
@@ -262,7 +265,6 @@ mod tests {
         let help = miette::Diagnostic::help(&err).expect("NoAuthFound should have diagnostic help");
         let help_text = help.to_string();
         assert!(help_text.contains("gh auth login --hostname github.example.com"));
-        assert!(help_text.contains("GH_ENTERPRISE_TOKEN"));
-        assert!(help_text.contains("GITHUB_ENTERPRISE_TOKEN"));
+        assert!(help_text.contains("GH_ENTERPRISE_TOKEN/GITHUB_ENTERPRISE_TOKEN"));
     }
 }
