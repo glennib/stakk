@@ -502,6 +502,8 @@ If you change any of the following, update `scripts/record-demo.py` in the same 
   so new bookmarks need not exist yet and no graph rebuild happens;
   commits between boundaries fold into the boundary above.
   Marking every boundary reproduces the no-fold shape (issue #184): each segment keeps exactly its own commit.
+  Commits *above* the topmost mark are dropped from the submission entirely:
+  `pending` is never flushed past the last boundary, so an unbookmarked head is not submitted unless it is marked.
 - Explicit selection (`select/explicit.rs`):
   `--keep`/`--new REV[=NAME]`/`--new-auto REV`/`--new-command REV` marks fully determine the PR set —
   every PR boundary is named on the command line, nothing is implicit and there is no bulk flag.
@@ -585,9 +587,10 @@ If you change any of the following, update `scripts/record-demo.py` in the same 
   a persisted default would silently change what gets submitted.
   CLI + README touchpoints only (deliberate exception to the four-touchpoint rule).
 - **Generic `Jj<R: JjRunner>`** — zero-cost dispatch, edition 2024 async traits.
-- **Three-phase submission** — analyze (pure) → plan (queries forge) → execute.
+- **Three-phase submission** — analyze → plan (queries forge) → execute.
   All repo mutations (bookmark creation, pushes) live in execute, so `--dry-run` —
-  which returns after printing the plan — is fully inert.
+  which returns after printing the plan — writes nothing.
+  Analyze is not side-effect-free: a configured `--bookmark-command` runs during selection, under `--dry-run` too.
 - **ratatui over inquire** — visual graph rendering, bookmark assignment TUI.
 - **minijinja for stack comments** — customizable templates, metadata outside template.
 - **Interleaved push+update** — `execute_submission_plan` processes each bookmark sequentially

@@ -29,8 +29,8 @@ and idempotent updates.
   See [Stack info placement](#stack-info-placement).
 - **Idempotent** — re-running `stakk submit` is always safe.
   Existing PRs are updated, never duplicated.
-- **Dry-run mode** — `--dry-run` shows exactly what would happen without
-  touching GitHub — or the repo: no bookmarks are created, nothing is pushed.
+- **Dry-run mode** — `--dry-run` shows exactly what would happen: no bookmarks are
+  created, nothing is pushed, and nothing is written to GitHub.
 - **Non-interactive selection** — `--keep`/`--new`/`--new-auto`/`--new-command` build the exact same
   submission the TUI would, without a terminal.
 - **PR titles and bodies from descriptions** — populated from jj change descriptions on creation, so manual edits on
@@ -193,7 +193,8 @@ The selection flags below replace the TUI with an explicit, scriptable selection
 
 `--keep`, `--new`, `--new-auto` and `--new-command` replace the TUI with a fully explicit, scriptable selection:
 every PR boundary is named on the command line, all marks must lie on one trunk-to-tip path,
-the topmost mark is the tip, and bookmarks on the path that are not kept fold into the PR above them.
+the topmost mark is the tip, unmarked commits below it fold into the PR above them, and anything above it —
+an unbookmarked work-in-progress head, typically — is not submitted at all.
 `rev` is a change id or commit id prefix as printed by `stakk show`, which makes submission a two-command loop:
 
 ```console
@@ -335,17 +336,24 @@ Changing these needs a major release.
 - Subcommand names and their flags.
 - `STAKK_`-prefixed environment variables.
 - Config file keys and their defaults.
-- The `stakk show` JSON document, under its `schema_version`
+- The `stakk show` JSON document, under its `schema_version` — field names, types and meanings
   (currently `2`; both the sparse `json` and the `json-full` projection report it).
+  The *order* of `stacks[]` is not part of it.
 - The JSON handed to `--bookmark-command` on stdin, under its own `schema_version` (currently `1`).
 - Diagnostic codes (`stakk::…`).
-- Exit codes.
+- Exit codes: `0` success, `1` failure, `130` interrupted.
+  `2` is clap's usage-error convention and follows clap, not this contract.
+  The table is in `stakk docs scripting`.
 
 **Not stable.** These may change in any release.
 
 - The rendered text of `stakk docs` and `--help`.
   Doc topics may be added, reworded, or restructured at any time;
   only the `stakk docs <topic>` invocation shape is stable.
+- The order of `stacks[]` in the `stakk show` JSON.
+  It tracks commit recency, so it moves as you commit anywhere in the repository,
+  and it is computed separately from the TUI's leaf numbering.
+  Choose a stack by its bookmark names or its contents, never by index.
 - The `pretty` output of `stakk show`.
 - The TUI layout and keybindings.
 - Spinner and progress text.

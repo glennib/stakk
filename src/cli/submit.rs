@@ -78,8 +78,9 @@ impl std::fmt::Display for TrailerHandling {
 pub struct SubmitArgs {
     /// Print the submission plan and stop.
     ///
-    /// Fully inert: no bookmark is created, nothing is pushed, and no
-    /// pull request is touched.
+    /// No bookmark is created, nothing is pushed, and no pull request is
+    /// touched — but a configured --bookmark-command still runs during
+    /// selection.
     #[arg(long, verbatim_doc_comment)]
     pub dry_run: bool,
 

@@ -45,9 +45,14 @@ A commit only becomes a PR boundary if you mark it.
 **All marks must lie on one trunk-to-tip path**, and the topmost mark is the tip of the submission.
 Marks on diverging branches are rejected with `stakk::selection::not_colinear`.
 
-**Bookmarks on the path that are not kept fold into the PR above them.**
-This means the minimal selection produces the *fewest* PRs, not the most —
-an unmarked commit is absorbed into the next boundary, it does not silently get a PR of its own.
+**Unmarked commits *below* the topmost mark fold into the PR above them.**
+The minimal selection produces the *fewest* PRs, not the most —
+a commit between two marks is absorbed into the next boundary, it does not get a PR of its own.
+
+**Commits *above* the topmost mark are not submitted at all.**
+The topmost mark is the tip, so anything newer than it — usually an unbookmarked work-in-progress head —
+is left out of the submission, silently.
+Mark it with `--new`, `--new-auto` or `--new-command` to include it.
 
 **`--new-auto` falls back** to `stakk-<change_id>` when no name can be derived from the commit,
 or when the derived name is already taken.
@@ -64,21 +69,44 @@ stakk submit $(stakk show --format=json \
            | "--keep=\(.bookmark_names[0])"')
 ```
 
-`.stacks[0]` is the first stack in the document; index another one, or filter on a bookmark name,
-when the repository has several.
+`.stacks[0]` is the first stack in the document.
+Stacks are ordered by commit recency — newest committer timestamp first, compared as instants —
+and ties are broken deterministically, so one repository state always yields one order.
+That order is *not* part of the stability contract and is *not* the TUI's leaf numbering:
+`stakk show` and the TUI compute their orders separately and can disagree when two stacks are close in age.
+`.stacks[0]` also moves as soon as you commit anywhere in the repository.
+Index another stack, or filter on a bookmark name, when the repository has several.
+
+With no bookmarked segment at all the substitution expands to nothing and `stakk submit` runs bare,
+which means the TUI — or, without a terminal, `stakk::not_interactive` and exit `1`.
+That is the correct failure for a script; test the jq output for emptiness first if you want a clearer one.
 
 One `--keep` per *segment*, not per bookmark name.
 A commit can carry several bookmarks,
 and two `--keep`s naming bookmarks on the same commit are two marks on one boundary —
 `stakk::selection::duplicate_mark`.
 Taking `bookmark_names[0]` picks one name per boundary; name a different one explicitly when the choice matters.
-Segments with no bookmark are skipped: there is nothing to keep, and they fold into the boundary above.
+A segment with no bookmark is skipped, and there is at most one — the unbookmarked head, always last.
+Skipping it means those commits are **not submitted**: they sit above the topmost `--keep`,
+which puts them outside the submission rather than folding them into the PR below.
+Ask for them by name when you want them:
+
+```console
+stakk show --format=json \
+  | jq -r '.stacks[0].segments[-1]
+           | select(.bookmark_names | length == 0)
+           | "--new-auto=\(.commits[-1].change_id)"'
+```
+
+Append its output — empty when the tip is already bookmarked — to the `--keep`s.
 
 ## Dry runs
 
-`--dry-run` is fully inert.
-It prints the planned bookmark creations and PR actions without creating bookmarks, pushing, or touching GitHub —
-so it is always safe to run first and diff against what you expected.
+`--dry-run` prints the planned bookmark creations and PR actions, then stops.
+It creates no bookmark, pushes nothing and makes no write to GitHub — though the plan phase does *read* GitHub,
+to find the pull requests that already exist.
+One thing does run: a configured `--bookmark-command` is executed during selection, before the plan is printed,
+both for `--new-command` marks and for TUI rows cycled to `[*]custom`.
 
 Note that `--dry-run` returns before the execute phase,
 so it does not preview the *removal* of stack artifacts that `--stack-placement none` would perform.
@@ -101,6 +129,18 @@ Selection failures carry machine-readable diagnostic codes and point back at `st
 | `stakk::selection::duplicate_name` | Two marks would create the same bookmark name |
 | `stakk::selection::name_exists` | The requested name is already taken by a local bookmark |
 | `stakk::selection::bookmark_command_not_configured` | `--new-command` was used without `--bookmark-command` |
+
+## Exit codes
+
+| Code | Meaning |
+|------|---------|
+| `0` | Success. `--help` and `--version` also exit `0` |
+| `1` | stakk failed; the diagnostic, with its `stakk::…` code, is on stderr |
+| `2` | Usage error — unknown flag, unknown subcommand, invalid enum value |
+| `130` | Interrupted (`Ctrl-C` in the TUI) |
+
+`2` comes from clap, stakk's argument parser, rather than from stakk itself,
+so it follows clap's usage-error convention rather than stakk's stability contract.
 
 ## The `stakk show --format=json` document
 
@@ -138,7 +178,9 @@ Sparse carries:
 - `title` — the first line of the commit message
 - `is_immutable`
 - `local_bookmark_names[]` — unfiltered; includes bookmarks the bookmarks revset excluded
-- `is_boundary` — the commit its segment's bookmarks point at
+- `is_boundary` — the newest commit of its segment.
+  For a bookmarked segment that is the commit the bookmarks point at; an unbookmarked head segment has one too,
+  pointing at nothing
 - `is_leaf` — the tip of its stack
 
 `--format=json-full` adds, on every commit:

@@ -401,8 +401,12 @@ fn group_segments_into_stacks(
 /// Timestamps are parsed with jiff so that the UTC offset in the RFC 3339
 /// string does not affect ordering: string comparison would place
 /// `12:30:00+02:00` after `12:00:00+00:00` even though it is the earlier
-/// instant. `graph::layout` compares the same timestamps the same way, so the
-/// JSON stack order and the TUI leaf order do not contradict each other.
+/// instant. `graph::layout` reads the same field the same way, so the two
+/// cannot disagree about which stack is *newer*. They are still not the same
+/// order: layout ranks a sibling subtree by its maximum instant and tiebreaks
+/// on the subtree root's change_id, while this ranks a stack by its whole
+/// descending instant vector and tiebreaks on the leaf segment's — so JSON
+/// `stacks[0]` and the TUI's leaf 1 are not guaranteed to be one stack.
 ///
 /// Unparseable timestamps become `None`, which sorts as oldest — the same
 /// tolerance `graph::layout` applies. jj always emits RFC 3339, so this is a

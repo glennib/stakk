@@ -41,7 +41,7 @@ Unknown fields cause a parse error, so typos are caught early.
 remote = "origin"
 
 # Extra host to treat as GitHub, for GitHub Enterprise Server
-# (default: none — only github.com is accepted)
+# (default: unset — falls back to GH_HOST; github.com is always accepted)
 github_host = "github.example.com"
 
 # PR creation mode: "regular" or "draft" (default: "regular")
