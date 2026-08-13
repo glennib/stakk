@@ -357,7 +357,7 @@ That is a separate divergence, out of scope for a precedence fix.
 | `stakk show --format=json` (full document)    | `stakk show --format=json-full` (sparse is the new `json`)   |
 | `GITHUB_TOKEN` beats `GH_TOKEN` (no gh)       | `GH_TOKEN` beats `GITHUB_TOKEN`, matching the GitHub CLI      |
 | `stakk auth setup`                            | `stakk docs auth`                                            |
-| `stakk auth test`                             | `gh auth status --hostname <host>`, or `stakk submit --dry-run` |
+| `stakk auth test`                             | `gh auth status --hostname <host>`, or `stakk submit --dry-run` *with selection flags* |
 
 Removed machine-readable surface (scripts matching diagnostic codes): `stakk::submit::bookmark_not_found`,
 `stakk::selection::keep_all_ambiguous`, `stakk::selection::no_marks`.
