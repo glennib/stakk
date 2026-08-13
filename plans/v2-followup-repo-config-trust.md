@@ -1,6 +1,13 @@
 # Plan: repo-level `stakk.toml` and the trust it should not carry
 
-Status: proposal, undecided.
+Status: **decided against for v2.0.0 — option (a), do nothing.**
+The recommendation below (option (b)) was not adopted; the exposure argument in **Threat calibration** carried.
+Revisit on any of the triggers named under **Recommendation**: a third dangerous key, a hook or plugin mechanism,
+or a report of a `stakk.toml` in the wild that a user did not write.
+Still outstanding from the (a) branch:
+the "repo config runs with your privileges" note `docs/config.md` owes either way,
+which is a semver-free change available in any release.
+
 Pre-existing since repo config discovery landed — v2 introduces none of it. v2.0.0 is the deadline, not the cause:
 the new **Stability** section in `README.md` declares "Config file keys and their defaults" semver-stable,
 so whatever semantics repo config has when v2.0.0 ships is the semantics we owe users until v3.

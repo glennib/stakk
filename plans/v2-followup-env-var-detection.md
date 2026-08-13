@@ -1,6 +1,6 @@
 # Plan: detect removed `STAKK_*` environment variables
 
-Status: proposed.
+Status: implemented in `feat: warn when a removed STAKK_ environment variable is still set`.
 Follow-up to [`cli-v2.md`](cli-v2.md) C4 (`--draft`/`STAKK_DRAFT` removed) and C5
 (`--template`/`STAKK_TEMPLATE` renamed to `--template-path`/`STAKK_TEMPLATE_PATH`).
 

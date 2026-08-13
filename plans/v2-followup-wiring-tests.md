@@ -1,6 +1,6 @@
 # Plan: pin the two v2 claims that nothing crosses `main.rs` to check
 
-Status: proposed.
+Status: implemented in `test: pin the wiring that selects a JSON projection and asks gh for a host`.
 Two gaps found by mutation-testing the shipped v2 series — not a strategy revision.
 
 ## The finding, reproduced

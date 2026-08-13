@@ -1,10 +1,11 @@
 # Plan: CLI v2 — one parse path, fully explicit selection
 
-Status: accepted and in progress.
-C1–C6 and C8 are decided.
+Status: implemented.
+C1–C6 and C8–C10 have landed; C7 needed no code change.
 C7 is superseded (no version bump; its policy moved into C8's contract).
 C9 was added after C3 landed; its field list is decided.
 C10 was added after C6 landed, from a token-precedence bug found while writing `docs/auth.md`.
+Four follow-ups came out of the release review — see `v2-followup-*.md` in this directory.
 Implements the "breaking" half of issue #202 and collects every other worthwhile break into one major release (v2.0.0).
 
 ## Goals
@@ -412,7 +413,9 @@ Order (each lands green through `mise run ci`):
 
 ## Decision record
 
-All eight changes (C1–C8) ship in v2.0.0; none are optional.
+All ten changes (C1–C10) ship in v2.0.0; none are optional.
+C9 and C10 were added after the original eight were accepted, and C7 turned out to need no code —
+its policy ships as part of C8's contract.
 
 - **No deprecation pre-release on 1.x.**
   Given stakk's audience size, the changelog, migration table, and rewritten docs suffice;

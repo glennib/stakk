@@ -1,6 +1,8 @@
 # Plan: v2 follow-up — documentation falsehoods and contract gaps
 
-Status: proposed.
+Status: implemented.
+A–E and G landed in `docs: correct what a submission includes, and document ordering and exit codes`;
+F landed in `chore: keep internal files out of the published crate`.
 Seven defects from the post-v2 review — six wording, one packaging, none behavioural —
 each checked against the code and, where observable, against a run of the binary.
 
