@@ -179,8 +179,8 @@ fn apply_submit_defaults(config: &Config, mut cmd: Command) -> Command {
     if let Some(pr_mode) = config.pr_mode {
         cmd = set_default(cmd, "pr_mode", &pr_mode.to_string());
     }
-    if let Some(ref template) = config.template {
-        cmd = set_default(cmd, "template", template);
+    if let Some(ref template_path) = config.template_path {
+        cmd = set_default(cmd, "template_path", template_path);
     }
     if let Some(sp) = config.stack_placement {
         cmd = set_default(cmd, "stack_placement", &sp.to_string());
@@ -237,7 +237,7 @@ mod tests {
     #[test]
     fn pr_mode_default_no_config() {
         let cli = parse_with_config(Config::default(), &["stakk", "submit"]);
-        assert_eq!(submit_args(&cli).pr_mode(), PrMode::Regular);
+        assert_eq!(submit_args(&cli).pr_mode, PrMode::Regular);
     }
 
     #[test]
@@ -247,7 +247,7 @@ mod tests {
             ..Default::default()
         };
         let cli = parse_with_config(config, &["stakk", "submit"]);
-        assert_eq!(submit_args(&cli).pr_mode(), PrMode::Draft);
+        assert_eq!(submit_args(&cli).pr_mode, PrMode::Draft);
     }
 
     #[test]
@@ -257,17 +257,19 @@ mod tests {
             ..Default::default()
         };
         let cli = parse_with_config(config, &["stakk", "submit"]);
-        assert_eq!(submit_args(&cli).pr_mode(), PrMode::Regular);
+        assert_eq!(submit_args(&cli).pr_mode, PrMode::Regular);
     }
 
     #[test]
-    fn pr_mode_config_regular_cli_draft() {
+    fn pr_mode_cli_draft() {
+        // Config says regular, so this pins CLI-beats-config in the draft
+        // direction; pr_mode_config_draft_cli_regular covers the reverse.
         let config = Config {
             pr_mode: Some(PrMode::Regular),
             ..Default::default()
         };
-        let cli = parse_with_config(config, &["stakk", "submit", "--draft"]);
-        assert_eq!(submit_args(&cli).pr_mode(), PrMode::Draft);
+        let cli = parse_with_config(config, &["stakk", "submit", "--pr-mode", "draft"]);
+        assert_eq!(submit_args(&cli).pr_mode, PrMode::Draft);
     }
 
     #[test]
@@ -277,22 +279,7 @@ mod tests {
             ..Default::default()
         };
         let cli = parse_with_config(config, &["stakk", "submit", "--pr-mode", "regular"]);
-        assert_eq!(submit_args(&cli).pr_mode(), PrMode::Regular);
-    }
-
-    #[test]
-    fn pr_mode_no_config_cli_draft_flag() {
-        let cli = parse_with_config(Config::default(), &["stakk", "submit", "--draft"]);
-        assert_eq!(submit_args(&cli).pr_mode(), PrMode::Draft);
-    }
-
-    #[test]
-    fn pr_mode_draft_flag_overrides_pr_mode_regular() {
-        let cli = parse_with_config(
-            Config::default(),
-            &["stakk", "submit", "--pr-mode", "regular", "--draft"],
-        );
-        assert_eq!(submit_args(&cli).pr_mode(), PrMode::Draft);
+        assert_eq!(submit_args(&cli).pr_mode, PrMode::Regular);
     }
 
     // -- the bare `stakk` form --
@@ -319,7 +306,7 @@ mod tests {
             ..Default::default()
         };
         let args = default_submit_args(config).unwrap();
-        assert_eq!(args.pr_mode(), PrMode::Draft);
+        assert_eq!(args.pr_mode, PrMode::Draft);
     }
 
     #[test]
@@ -438,6 +425,43 @@ mod tests {
         };
         let cli = parse_with_config(config, &["stakk"]);
         assert_eq!(cli.github_host.as_deref(), Some("github.example.com"));
+    }
+
+    // -- template_path tests --
+
+    #[test]
+    fn template_path_default_none() {
+        let cli = parse_with_config(Config::default(), &["stakk", "submit"]);
+        assert_eq!(submit_args(&cli).template_path, None);
+    }
+
+    #[test]
+    fn template_path_config_override() {
+        let config = Config {
+            template_path: Some("/from/config.jinja".into()),
+            ..Default::default()
+        };
+        let cli = parse_with_config(config, &["stakk", "submit"]);
+        assert_eq!(
+            submit_args(&cli).template_path.as_deref(),
+            Some("/from/config.jinja"),
+        );
+    }
+
+    #[test]
+    fn template_path_cli_overrides_config() {
+        let config = Config {
+            template_path: Some("/from/config.jinja".into()),
+            ..Default::default()
+        };
+        let cli = parse_with_config(
+            config,
+            &["stakk", "submit", "--template-path", "/from/cli.jinja"],
+        );
+        assert_eq!(
+            submit_args(&cli).template_path.as_deref(),
+            Some("/from/cli.jinja"),
+        );
     }
 
     // -- stack_placement tests --
@@ -728,7 +752,7 @@ mod tests {
 remote = "upstream"
 github_host = "github.example.com"
 pr_mode = "draft"
-template = "/path/to/template.jinja"
+template_path = "/path/to/template.jinja"
 stack_placement = "body"
 sync_pr_content = "all"
 trailers = "strip"
@@ -741,7 +765,10 @@ heads_revset = "heads(all())"
         assert_eq!(config.remote.as_deref(), Some("upstream"));
         assert_eq!(config.github_host.as_deref(), Some("github.example.com"));
         assert_eq!(config.pr_mode, Some(PrMode::Draft));
-        assert_eq!(config.template.as_deref(), Some("/path/to/template.jinja"));
+        assert_eq!(
+            config.template_path.as_deref(),
+            Some("/path/to/template.jinja"),
+        );
         assert_eq!(config.stack_placement, Some(StackPlacement::Body));
         assert_eq!(
             config.sync_pr_content,

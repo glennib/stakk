@@ -4,8 +4,8 @@ stakk loads settings from TOML config files, environment variables, and CLI flag
 
 The full precedence order, highest to lowest:
 
-1. **CLI flags** — `--remote`, `--draft`, `--pr-mode`, etc.
-2. **Environment variables** — `STAKK_REMOTE`, `STAKK_DRAFT`, etc.
+1. **CLI flags** — `--remote`, `--pr-mode`, etc.
+2. **Environment variables** — `STAKK_REMOTE`, `STAKK_PR_MODE`, etc.
 3. **Repository config** — `stakk.toml`, found by walking up from the current directory
 4. **User config** — `~/.config/stakk/config.toml` (Linux),
    `~/Library/Application Support/stakk/config.toml` (macOS),
@@ -48,7 +48,8 @@ github_host = "github.example.com"
 pr_mode = "draft"
 
 # Path to a custom minijinja template for stack comments
-template = "/path/to/my-template.md.jinja"
+# (default: none — the built-in template is used)
+template_path = "/path/to/my-template.md.jinja"
 
 # Where to place stack info: "comment", "body", "none", or "ignore"
 # (default: "comment")
@@ -181,8 +182,7 @@ an Enterprise Server reachable only over plain HTTP is not supported.
 | `STAKK_REMOTE` | Default git remote to push to (overridden by `--remote`) |
 | `STAKK_GITHUB_HOST` | Extra host to treat as GitHub, for GitHub Enterprise Server (overridden by `--github-host`) |
 | `STAKK_PR_MODE` | PR creation mode: `regular` or `draft` (overridden by `--pr-mode`) |
-| `STAKK_DRAFT` | Set to `true` to always create draft PRs (overridden by `--draft`) |
-| `STAKK_TEMPLATE` | Path to a custom minijinja template for stack comments (overridden by `--template`) |
+| `STAKK_TEMPLATE_PATH` | Path to a custom minijinja template for stack comments (overridden by `--template-path`) |
 | `STAKK_STACK_PLACEMENT` | Where to place the stack info: `comment` (default), `body`, `none`, or `ignore` (overridden by `--stack-placement`) |
 | `STAKK_AUTO_PREFIX` | Prefix for auto-generated bookmark names (overridden by `--auto-prefix`) |
 | `STAKK_SYNC_PR_CONTENT` | Sync PR title/body from commits: `none` (default), `title`, `body`, or `all` (overridden by `--sync-pr-content`) |
@@ -195,11 +195,6 @@ an Enterprise Server reachable only over plain HTTP is not supported.
 | `GH_TOKEN` | Alternative to `GITHUB_TOKEN` |
 | `GH_ENTERPRISE_TOKEN` | Access token for a GitHub Enterprise Server host |
 | `GITHUB_ENTERPRISE_TOKEN` | Alternative to `GH_ENTERPRISE_TOKEN` |
-
-`--draft` is a shortcut for `--pr-mode draft`, and draft-ness wins from whichever source sets it:
-`--draft` *or* `STAKK_DRAFT=true` forces a draft even alongside an explicit `--pr-mode regular`.
-Unset `STAKK_DRAFT` rather than passing `--pr-mode regular` when you want a non-draft PR.
-There is no `draft` config key — use `pr_mode = "draft"` in a config file.
 
 `--dry-run` and the selection flags (`--keep`, `--new`, `--new-auto`, `--new-command`) deliberately have no environment
 variables or config keys: they are per-invocation decisions, and a persisted default would be surprising.

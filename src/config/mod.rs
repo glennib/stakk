@@ -51,7 +51,7 @@ pub struct Config {
     /// Extra host to treat as GitHub, for GitHub Enterprise Server.
     pub github_host: Option<String>,
     pub pr_mode: Option<PrMode>,
-    pub template: Option<String>,
+    pub template_path: Option<String>,
     pub stack_placement: Option<StackPlacement>,
     pub sync_pr_content: Option<SyncPrContent>,
     pub trailers: Option<TrailerHandling>,
@@ -68,7 +68,7 @@ impl Default for Config {
             remote: None,
             github_host: None,
             pr_mode: None,
-            template: None,
+            template_path: None,
             stack_placement: None,
             sync_pr_content: None,
             trailers: None,
@@ -137,7 +137,7 @@ impl Config {
             remote: self.remote.or(fallback.remote),
             github_host: self.github_host.or(fallback.github_host),
             pr_mode: self.pr_mode.or(fallback.pr_mode),
-            template: self.template.or(fallback.template),
+            template_path: self.template_path.or(fallback.template_path),
             stack_placement: self.stack_placement.or(fallback.stack_placement),
             sync_pr_content: self.sync_pr_content.or(fallback.sync_pr_content),
             trailers: self.trailers.or(fallback.trailers),
@@ -214,13 +214,13 @@ mod tests {
         let b = Config {
             remote: Some("from-user".into()),
             pr_mode: Some(PrMode::Regular),
-            template: Some("user-template".into()),
+            template_path: Some("user-template".into()),
             ..Default::default()
         };
         let merged = a.merge(b);
         assert_eq!(merged.remote.as_deref(), Some("from-repo"));
         assert_eq!(merged.pr_mode, Some(PrMode::Draft));
-        assert_eq!(merged.template.as_deref(), Some("user-template"));
+        assert_eq!(merged.template_path.as_deref(), Some("user-template"));
     }
 
     #[test]

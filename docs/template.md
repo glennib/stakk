@@ -21,7 +21,7 @@ Content you write outside the body fences is preserved; the fenced section itsel
 Use `none` to retire stakk's stack comments cleanly (for example when moving to GitHub's own stacked-PR UI).
 Use `ignore` to leave the existing comments and fences frozen in place — handy while trying another tool,
 or when another process owns that part of the PR.
-Neither mode reads or compiles a custom `--template`,
+Neither mode reads or compiles a custom `--template-path`,
 so a broken template cannot fail a submission that will not render it.
 
 A submission that produces a single PR is not a stack: no stack info is written, and stale artifacts from an earlier,
@@ -30,7 +30,7 @@ larger stack are cleaned up (unless the mode is `ignore`).
 ## Templates
 
 Stack comments are rendered with [minijinja](https://github.com/mitsuhiko/minijinja).
-`--template <path>` (or `template` in a config file, or `STAKK_TEMPLATE`) replaces the built-in template.
+`--template-path <path>` (or `template_path` in a config file, or `STAKK_TEMPLATE_PATH`) replaces the built-in template.
 
 The context holds `stack`, `stack_size`, `default_branch`, `current_bookmark` and `stakk_url`.
 The `stack` array is ordered **trunk-first** — `position` is 1 for the entry nearest the trunk.

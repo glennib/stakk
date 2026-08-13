@@ -438,12 +438,12 @@ If you change any of the following, update `scripts/record-demo.py` in the same 
   (one PR is not a stack),
   so the two share one branch that runs *before* the template and context setup that only `comment`/`body` need.
   PRs created in the same run are skipped — they cannot yet carry a stack comment.
-  In `none` mode the custom `--template` is never read or compiled,
+  In `none` mode the custom `--template-path` is never read or compiled,
   so a broken template does not fail a submission that will not render it.
 - `--stack-placement ignore` writes nothing *and* cleans up nothing:
   the `EffectivePlacement::Ignore` arm short-circuits before the cleanup branch,
   so it also wins over the single-bookmark cleanup rule.
-  Like `none`, it never reads or compiles `--template`.
+  Like `none`, it never reads or compiles `--template-path`.
 - ratatui inline viewport: `enable_raw_mode()` before, `disable_raw_mode()` after.
 - The inline viewport is sized per screen
   (graph vs bookmark rows).

@@ -262,7 +262,7 @@ async fn submit_bookmark(args: &SubmitArgs, github_host: Option<&str>) -> Result
         bookmark_creations,
         &forge,
         &remote_name,
-        args.pr_mode(),
+        args.pr_mode,
         args.sync_pr_content,
         args.trailers,
     )
@@ -283,7 +283,7 @@ async fn submit_bookmark(args: &SubmitArgs, github_host: Option<&str>) -> Result
     // Load template. In `none`/`ignore` placement no stack content is ever
     // rendered, so a custom template is neither read nor compiled — a broken
     // or missing one must not fail a submission that will not use it.
-    let template_source = match (&args.template, args.stack_placement) {
+    let template_source = match (&args.template_path, args.stack_placement) {
         (Some(path), StackPlacement::Comment | StackPlacement::Body) => Some(
             std::fs::read_to_string(path).map_err(|e| StakkError::TemplateLoadFailed {
                 path: path.clone(),

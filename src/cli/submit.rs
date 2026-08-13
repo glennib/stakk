@@ -124,8 +124,7 @@ pub struct SubmitArgs {
 
     /// Whether new pull requests are created as regular or draft PRs.
     ///
-    /// Existing PRs keep their current draft/ready state. Overridden by
-    /// --draft.
+    /// Existing PRs keep their current draft/ready state.
     #[arg(
         long,
         env = "STAKK_PR_MODE",
@@ -134,10 +133,6 @@ pub struct SubmitArgs {
         verbatim_doc_comment
     )]
     pub pr_mode: PrMode,
-
-    /// Shortcut for --pr-mode=draft. Overrides --pr-mode if both are given.
-    #[arg(long, env = "STAKK_DRAFT")]
-    draft: bool,
 
     /// Git remote to push to.
     #[arg(long, default_value = "origin", env = "STAKK_REMOTE")]
@@ -177,8 +172,8 @@ pub struct SubmitArgs {
         clippy::doc_lazy_continuation,
         reason = "endfor must align with the for-loop, not the list item"
     )]
-    #[arg(long, env = "STAKK_TEMPLATE", verbatim_doc_comment)]
-    pub template: Option<String>,
+    #[arg(long, env = "STAKK_TEMPLATE_PATH", verbatim_doc_comment)]
+    pub template_path: Option<String>,
 
     /// Where to place the stack overview on each pull request.
     ///
@@ -317,15 +312,4 @@ pub struct SubmitArgs {
     ///     | head -c 50
     #[arg(long, env = "STAKK_BOOKMARK_COMMAND", verbatim_doc_comment)]
     pub bookmark_command: Option<String>,
-}
-
-impl SubmitArgs {
-    /// Effective PR mode. `--draft` forces `PrMode::Draft`.
-    pub fn pr_mode(&self) -> PrMode {
-        if self.draft {
-            PrMode::Draft
-        } else {
-            self.pr_mode
-        }
-    }
 }

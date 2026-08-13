@@ -22,7 +22,7 @@ and idempotent updates.
 - **Auto bookmark naming** — the `[~]auto` state derives names from commit descriptions and file paths via TF-IDF
   scoring; `r` cycles alternatives and `--auto-prefix` brands them (e.g. `gb-caching-database`).
 - **Stacked PR submission** — creates or updates GitHub PRs with correct base branches so each PR shows only its own
-  diff; `--draft` creates new ones as drafts.
+  diff; `--pr-mode draft` creates new ones as drafts.
 - **Stack-awareness comments** — every PR gets the full stack with links,
   updated in place on re-runs and rendered with customizable [minijinja](https://github.com/mitsuhiko/minijinja)
   templates.
