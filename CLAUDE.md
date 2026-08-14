@@ -480,16 +480,32 @@ If you change any of the following, update `scripts/record-demo.py` in the same 
   (`stack | reverse`) so the rendered graph reads leaf-at-top like `stakk graph` and the TUI.
   Reversing in Rust instead would silently flip iteration for every user template —
   keep the order change in the template.
-- The default template draws one node glyph per line at column 0 — `●` current, `○` other, `◆` trunk,
-  the same glyphs as `graph/layout.rs`.
+- The default template renders each stack entry as a **Markdown list item holding nothing but the bare PR URL**
+  (`- <url>`), plus `👈 **this PR**` on the current one, and a final `` - `<default_branch>` `` row for the trunk.
+  **The list is load-bearing, not styling.**
+  GitHub's comment JS upgrades a bare PR link into a reference carrying the PR's live title and merge state *only*
+  when the link sits inside a list item.
+  Bullet, numbered and task lists all work, and a glyph may precede the link inside the item.
+  A link in a plain paragraph, a table cell or a blockquote stays a bare `#N`,
+  and that holds even for a lone link alone in its own paragraph.
+  So a template that lays entries out with `<br>` line breaks instead of a list silently downgrades every entry.
+  Verified empirically on a real comment; `gh api /markdown` *cannot* show it,
+  because the server returns the same `js-issue-link` anchor either way and the upgrade happens in the page.
+  Two other dead ends found the same way: inline `style`
+  (`list-style: none`)
+  is stripped by GitHub's sanitizer, so the bullet cannot be hidden,
+  and an explicit `<a href>` keeps the hovercard but loses the title expansion.
+  The comment therefore carries no `●`/`○`/`◆` glyphs, unlike `graph/layout.rs` and the TUI:
+  GitHub's own bullet is the node marker, since a glyph next to a bullet reads as two markers.
+  Only the leaf-first *ordering* is shared with `stakk graph`.
   GitHub renders comments in a proportional font, so nothing may depend on horizontal alignment: no `│` gutter,
   no indentation, and no code fence (fenced links are dead).
-  Lines separate on GitHub's soft-break-as-`<br>` rendering.
 - Entry `title` is the *commit-derived* title,
   which can differ from the PR's live title on GitHub when `--sync-pr-content` does not include titles.
-  The default template deliberately shows the bare `pr_url`
-  (GitHub renders it as `#N` with the real title on hover)
-  plus the bookmark name, so the comment cannot contradict the PR page.
+  The default template deliberately shows the bare `pr_url` and no link text of its own,
+  so the comment cannot contradict the PR page: GitHub's reference carries the PR's live title and state,
+  while a Markdown link with our own text would replace that with a caption stakk has to keep correct.
+  The bookmark name is not written next to it either — the reference is the whole label.
 - Body-mode fences (`STAKK_BODY_START`/`STAKK_BODY_END`) are HTML comments, invisible on GitHub.
   Migration between placement modes is automatic.
 - `StackPlacement` (4 CLI modes) resolves to `EffectivePlacement`

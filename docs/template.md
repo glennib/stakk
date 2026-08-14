@@ -41,8 +41,10 @@ Each entry carries `bookmark_name`, `pr_url`, `pr_number`, `title`, `base`, `is_
 `stakk submit --help` prints the same list with a worked example template.
 Note that `title` is the *commit-derived* title,
 which can differ from the PR's live title on GitHub when `--sync-pr-content` does not include titles.
-The default template deliberately shows the bare `pr_url` — GitHub renders it as `#N` with the real title on hover —
-so the comment cannot contradict the PR page.
+The default template deliberately shows the bare `pr_url` and no link text of its own,
+so the comment cannot contradict the PR page:
+GitHub renders the link as a reference carrying the PR's live title and merge state.
+The bookmark name is not written next to it — the reference is the whole label.
 
 Two things are added outside the template and cannot be overridden:
 
@@ -53,8 +55,19 @@ Two things are added outside the template and cannot be overridden:
 
 GitHub renders comments in a proportional font, so a template must not depend on horizontal alignment: no `│` gutter,
 no indentation for structure, and no code fence (links inside a fence are dead).
-The default template draws one node glyph per line at column 0 — `●` current, `○` other, `◆` trunk —
-the same glyphs `stakk graph` uses, and relies on GitHub rendering soft breaks as `<br>`.
+Each row of the default template is a **Markdown list item**, and that is functional rather than decorative.
+GitHub expands a bare PR link into a reference showing the PR's live title and merge state only
+when the link sits inside a list item.
+A link in a plain paragraph, a table cell or a blockquote stays a bare `#N`,
+and so does a link alone in its own paragraph.
+A custom template that lays entries out with line breaks instead of a list still works,
+but every entry loses its title and state.
+
+The bullet GitHub draws for each item *is* the node marker,
+which is why the comment carries no `●`/`○`/`◆` glyphs of its own even though `stakk graph` and the TUI do:
+a glyph next to a bullet reads as two markers, and the bullet cannot be turned off
+(GitHub's sanitizer strips inline `style`).
+A glyph *is* allowed before the link inside an item if a custom template wants one.
 
 A template that fails to render fails the submission, and `--dry-run` does not exercise it:
 dry-run returns before the template is read at all.

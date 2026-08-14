@@ -1,8 +1,8 @@
-**Stack of {{ stack_size }} PRs** — merges into `{{ default_branch }}`
+**Stack of {{ stack_size }} PRs** merging into `{{ default_branch }}`
 
 {% for entry in stack | reverse -%}
-{% if entry.is_current %}●{% else %}○{% endif %} {{ entry.pr_url }} `{{ entry.bookmark_name }}`{% if entry.is_current %} ← **this PR**{% endif %}
+- {{ entry.pr_url }}{% if entry.is_current %} 👈 **this PR**{% endif %}
 {% endfor -%}
-◆ `{{ default_branch }}`
+- `{{ default_branch }}`
 
 <sub>Created with [stakk]({{ stakk_url }})</sub>

@@ -281,17 +281,16 @@ mod tests {
         let env = default_env();
         let tmpl = env.get_template("stack_comment").unwrap();
         let body = format_stack_comment(&data, &ctx, &tmpl).unwrap();
-        // The current PR carries the filled node glyph and the "this PR" marker;
-        // the others carry the hollow glyph.
+        // The current PR carries the pointing marker; the others carry nothing but
+        // their link. Each row is a list item and the URL is bare, which is what
+        // makes GitHub render it as a reference with the PR's live title and state.
         assert!(
-            body.contains(
-                "\u{25cf} https://github.com/owner/repo/pull/2 `feat-b` \u{2190} **this PR**"
-            ),
+            body.contains("- https://github.com/owner/repo/pull/2 \u{1f448} **this PR**"),
             "expected current entry to be marked: {body}"
         );
         assert!(
-            body.contains("\u{25cb} https://github.com/owner/repo/pull/1 `feat-a`"),
-            "expected non-current entry to use the hollow glyph: {body}"
+            body.contains("- https://github.com/owner/repo/pull/1\n"),
+            "expected non-current entry to be a bare list item: {body}"
         );
         assert_eq!(
             body.matches("**this PR**").count(),
@@ -309,7 +308,7 @@ mod tests {
         let body = format_stack_comment(&data, &ctx, &tmpl).unwrap();
         let leaf = body.find("pull/2").expect("leaf entry rendered");
         let root = body.find("pull/1").expect("root entry rendered");
-        let trunk = body.find("\u{25c6} `main`").expect("trunk anchor rendered");
+        let trunk = body.find("- `main`").expect("trunk anchor rendered");
         assert!(
             leaf < root && root < trunk,
             "entries run leaf-first with trunk at the bottom: {body}"
@@ -424,7 +423,7 @@ mod tests {
     }
 
     #[test]
-    fn format_single_entry_graph() {
+    fn format_single_entry_list() {
         let data = StackCommentData {
             version: 0,
             stack: vec![StackEntry {
@@ -453,8 +452,8 @@ mod tests {
         let tmpl = env.get_template("stack_comment").unwrap();
         let body = format_stack_comment(&data, &ctx, &tmpl).unwrap();
         assert!(
-            body.contains("\u{25cf} https://github.com/o/r/pull/1 `solo`"),
-            "expected graph entry: {body}"
+            body.contains("- https://github.com/o/r/pull/1 \u{1f448} **this PR**"),
+            "expected list entry: {body}"
         );
     }
 
@@ -469,14 +468,14 @@ mod tests {
     }
 
     #[test]
-    fn format_header_mentions_merges_into() {
+    fn format_header_mentions_merge_target() {
         let data = sample_data();
         let ctx = sample_context(0);
         let env = default_env();
         let tmpl = env.get_template("stack_comment").unwrap();
         let body = format_stack_comment(&data, &ctx, &tmpl).unwrap();
         assert!(
-            body.contains("merges into `main`"),
+            body.contains("merging into `main`"),
             "expected merge target in header: {body}"
         );
     }

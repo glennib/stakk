@@ -94,16 +94,17 @@ pushes every one of them and creates or updates one PR per bookmark, basing each
 - `feat-ui` → PR targeting `feat-api`
 
 Each PR shows only its own diff, and a stack comment on every PR links all related PRs together.
-The comment draws the stack the same way `stakk graph` and the TUI do — leaf at the top, trunk at the bottom —
-and marks the PR you are looking at:
+The comment orders the stack the way `stakk graph` and the TUI do, leaf at the top and trunk at the bottom,
+and marks the PR you are looking at.
+Each row is a bare PR link, which GitHub renders as a reference carrying that PR's live title and merge state:
 
 ```text
-Stack of 3 PRs — merges into main
+Stack of 3 PRs merging into main
 
-○ #14 feat-ui
-● #13 feat-api ← this PR
-○ #12 feat-auth
-◆ main
+• Add the search UI #14
+• Add the search API #13 👈 this PR
+• Add user authentication #12
+• main
 ```
 
 ## Stack info placement
