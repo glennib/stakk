@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.1.0](https://github.com/glennib/stakk/compare/v2.0.0...v2.1.0) - 2026-08-14
+
+### Added
+
+- *(cli)* add one-letter aliases for submit, graph and docs
+- *(cli)* rename `stakk show` to `stakk graph`
+
+### Other
+
+- *(cli)* rename GraphArgs to RevsetArgs
+- move the stability contract into a `stakk docs` topic
+- improve README
+- *(media)* update gif
+
 ## [2.0.0](https://github.com/glennib/stakk/compare/v1.25.0...v2.0.0) - 2026-08-13
 
 v2 is a surface release.
