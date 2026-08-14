@@ -152,7 +152,27 @@ fn variant_name(path: &Path, name: &str) -> String {
         .collect()
 }
 
+/// A line without its terminator, whichever terminator it has.
+///
+/// The documents are stored with LF, but what is on disk when this runs is
+/// decided by git: a Windows checkout with the default `core.autocrlf` converts
+/// them to CRLF, and a preamble line would then end in a stray `\r` that no
+/// comparison here expects.
+fn without_terminator(line: &str) -> &str {
+    let line = line.strip_suffix('\n').unwrap_or(line);
+    line.strip_suffix('\r').unwrap_or(line)
+}
+
+/// Strip one line terminator, for the blank line below the preamble.
+fn strip_blank_line(text: &str) -> Option<&str> {
+    text.strip_prefix("\r\n")
+        .or_else(|| text.strip_prefix('\n'))
+}
+
 /// Split a document into its `summary` and the body below the preamble.
+///
+/// The body keeps the line terminators it was read with — it is what
+/// `stakk docs <topic>` prints, and a redirect must reproduce the file.
 fn split_preamble(path: &Path, text: &str) -> (String, String) {
     let mut fields: Vec<(String, String)> = Vec::new();
     let mut seen: BTreeSet<String> = BTreeSet::new();
@@ -162,7 +182,7 @@ fn split_preamble(path: &Path, text: &str) -> (String, String) {
 
     for line in text.split_inclusive('\n') {
         consumed += line.len();
-        let line = line.strip_suffix('\n').unwrap_or(line);
+        let line = without_terminator(line);
 
         if !opened {
             if line != PREAMBLE_OPEN {
@@ -226,13 +246,13 @@ fn split_preamble(path: &Path, text: &str) -> (String, String) {
     };
 
     let rest = &text[body_start..];
-    let Some(body) = rest.strip_prefix('\n') else {
+    let Some(body) = strip_blank_line(rest) else {
         fail(
             path,
             &format!("`{PREAMBLE_CLOSE}` must be followed by a blank line, then the document"),
         );
     };
-    if body.starts_with('\n') {
+    if strip_blank_line(body).is_some() {
         fail(
             path,
             &format!("`{PREAMBLE_CLOSE}` must be followed by exactly one blank line"),

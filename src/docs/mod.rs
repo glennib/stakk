@@ -176,7 +176,10 @@ mod tests {
                 "{topic:?}: the bundled text is not the tail of its file",
             );
 
-            let preamble = &file[..file.len() - body.len()];
+            // Compared with LF terminators: a Windows checkout converts the
+            // documents to CRLF, and what this asserts is the shape of the
+            // preamble, not what git wrote to disk.
+            let preamble = file[..file.len() - body.len()].replace("\r\n", "\n");
             assert!(
                 preamble.starts_with("<!--- stakk-docs\n"),
                 "{topic:?}: dropped a prefix that is not a preamble: {preamble:?}",
