@@ -151,9 +151,12 @@ async fn submit_bookmark(args: &SubmitArgs, github_host: Option<&str>) -> Result
 
     // Build the change graph.
     pb.set_message("Building change graph...");
-    let change_graph =
-        graph::build_change_graph(&jj, &args.graph.bookmarks_revset, &args.graph.heads_revset)
-            .await?;
+    let change_graph = graph::build_change_graph(
+        &jj,
+        &args.revset.bookmarks_revset,
+        &args.revset.heads_revset,
+    )
+    .await?;
 
     pb.set_message("Detecting default branch...");
     let default_branch = jj.get_default_branch().await?;
@@ -328,9 +331,12 @@ async fn show_status(args: &ShowArgs, github_host: Option<&str>) -> Result<(), S
 
     let remotes = jj.get_git_remote_list().await?;
 
-    let change_graph =
-        graph::build_change_graph(&jj, &args.graph.bookmarks_revset, &args.graph.heads_revset)
-            .await?;
+    let change_graph = graph::build_change_graph(
+        &jj,
+        &args.revset.bookmarks_revset,
+        &args.revset.heads_revset,
+    )
+    .await?;
 
     if let Some(pb) = spinner {
         pb.finish_and_clear();

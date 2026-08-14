@@ -1,7 +1,7 @@
 use clap::Args;
 use clap::ValueEnum;
 
-use crate::cli::graph::GraphArgs;
+use crate::cli::revset::RevsetArgs;
 use crate::forge::comment::StackPlacement;
 
 /// Whether new pull requests are created as regular or draft PRs.
@@ -125,7 +125,7 @@ pub struct SubmitArgs {
     pub new_command: Vec<String>,
 
     #[command(flatten)]
-    pub graph: GraphArgs,
+    pub revset: RevsetArgs,
 
     /// Whether new pull requests are created as regular or draft PRs.
     ///

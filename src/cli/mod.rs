@@ -1,4 +1,4 @@
-pub mod graph;
+pub mod revset;
 pub mod submit;
 
 use std::path::PathBuf;
@@ -11,7 +11,7 @@ use clap::Parser;
 use clap::Subcommand;
 use clap_complete::Shell;
 
-use crate::cli::graph::GraphArgs;
+use crate::cli::revset::RevsetArgs;
 use crate::cli::submit::SubmitArgs;
 use crate::config::Config;
 
@@ -125,7 +125,7 @@ pub struct ShowArgs {
     pub format: ShowFormat,
 
     #[command(flatten)]
-    pub graph: GraphArgs,
+    pub revset: RevsetArgs,
 }
 
 /// Apply config-file defaults to clap's `Command` before parsing.
@@ -144,9 +144,9 @@ pub fn apply_config_defaults(config: Config, cmd: Command) -> Command {
     let config2 = config.clone();
     let cmd = cmd.mut_subcommand("submit", |sub| {
         let sub = apply_submit_defaults(&config, sub);
-        apply_graph_defaults(&config, sub)
+        apply_revset_defaults(&config, sub)
     });
-    cmd.mut_subcommand("show", |sub| apply_graph_defaults(&config2, sub))
+    cmd.mut_subcommand("show", |sub| apply_revset_defaults(&config2, sub))
 }
 
 /// Parse the `SubmitArgs` that a bare `stakk` runs with.
@@ -215,7 +215,7 @@ fn apply_submit_defaults(config: &Config, mut cmd: Command) -> Command {
     cmd
 }
 
-fn apply_graph_defaults(config: &Config, mut cmd: Command) -> Command {
+fn apply_revset_defaults(config: &Config, mut cmd: Command) -> Command {
     if let Some(ref br) = config.bookmarks_revset {
         cmd = set_default(cmd, "bookmarks_revset", br);
     }
@@ -613,7 +613,7 @@ mod tests {
         assert_eq!(submit_args(&cli).auto_prefix.as_deref(), Some("xx-"));
     }
 
-    // -- graph revset tests --
+    // -- revset tests --
 
     #[test]
     fn bookmarks_revset_config_override() {
@@ -622,7 +622,7 @@ mod tests {
             ..Default::default()
         };
         let cli = parse_with_config(config, &["stakk", "submit"]);
-        assert_eq!(submit_args(&cli).graph.bookmarks_revset, "all()");
+        assert_eq!(submit_args(&cli).revset.bookmarks_revset, "all()");
     }
 
     #[test]
@@ -632,7 +632,7 @@ mod tests {
             ..Default::default()
         };
         let cli = parse_with_config(config, &["stakk", "submit"]);
-        assert_eq!(submit_args(&cli).graph.heads_revset, "heads(all())");
+        assert_eq!(submit_args(&cli).revset.heads_revset, "heads(all())");
     }
 
     #[test]
@@ -642,13 +642,13 @@ mod tests {
             ..Default::default()
         };
         let cli = parse_with_config(config, &["stakk", "submit", "--bookmarks-revset", "mine()"]);
-        assert_eq!(submit_args(&cli).graph.bookmarks_revset, "mine()");
+        assert_eq!(submit_args(&cli).revset.bookmarks_revset, "mine()");
     }
 
-    // -- show subcommand gets graph defaults --
+    // -- show subcommand gets revset defaults --
 
     #[test]
-    fn show_inherits_graph_defaults() {
+    fn show_inherits_revset_defaults() {
         let config = Config {
             bookmarks_revset: Some("custom()".into()),
             heads_revset: Some("heads(custom())".into()),
@@ -657,8 +657,8 @@ mod tests {
         let cli = parse_with_config(config, &["stakk", "show"]);
         match &cli.command {
             Some(Commands::Show(args)) => {
-                assert_eq!(args.graph.bookmarks_revset, "custom()");
-                assert_eq!(args.graph.heads_revset, "heads(custom())");
+                assert_eq!(args.revset.bookmarks_revset, "custom()");
+                assert_eq!(args.revset.heads_revset, "heads(custom())");
             }
             other => panic!("expected Show, got {other:?}"),
         }

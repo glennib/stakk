@@ -79,7 +79,7 @@ When adding, renaming, or changing the default of one, update all of them in the
 2. **`src/config/mod.rs`** — add `Option<T>` field on `Config`, default to
    `None`, and merge in `Config::merge`.
 3. **`src/cli/mod.rs`** — wire it into `apply_submit_defaults`
-   (or `apply_graph_defaults`)
+   (or `apply_revset_defaults`)
    via `set_default(...)`, and add tests mirroring the `sync_pr_content_*` set: `default`, `config_*`,
    `cli_overrides_config`.
    Extend `toml_deserialize_full`.
@@ -111,7 +111,7 @@ and non-interactive submission is spelled with the `--keep`/`--new*` selection f
 src/
 ├── main.rs          # CLI entry point (clap)
 ├── auth.rs          # Per-host GitHub token resolution (gh CLI, env vars)
-├── cli/             # clap subcommand definitions (Cli, SubmitArgs, ShowArgs, GraphArgs, DocTopic)
+├── cli/             # clap subcommand definitions (Cli, SubmitArgs, ShowArgs, RevsetArgs, DocTopic)
 ├── config/          # TOML config discovery, merging, and clap-default injection
 ├── docs/            # `stakk docs` — include_str!s docs/*.md, renders them, generates the topic index
 ├── markdown/        # Markdown transforms shared by submit/ and docs/

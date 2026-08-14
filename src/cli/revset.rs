@@ -1,8 +1,12 @@
 use clap::Args;
 
-/// Arguments controlling graph discovery revsets.
+/// Revsets controlling which bookmarks and heads enter the change graph.
+///
+/// Flattened into every subcommand that builds a change graph, so the same
+/// flags, environment variables and config keys mean the same thing wherever
+/// they appear.
 #[derive(Debug, Args)]
-pub struct GraphArgs {
+pub struct RevsetArgs {
     /// Revset passed to `jj bookmark list -r <REVSET>` to discover
     /// bookmarks.
     ///
