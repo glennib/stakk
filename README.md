@@ -152,6 +152,9 @@ The `gh` commands that set the host up, the per-host token order, what to do whe
 `stakk --help` and `stakk <subcommand> --help` are the flag reference: every flag, its default,
 and its environment variable.
 
+`submit`, `graph` and `docs` each answer to their initial letter, so `stakk s`, `stakk g` and `stakk d` work too.
+`completions` has no short form.
+
 ### `stakk`, `stakk submit`
 
 Submit a stack of bookmarks as stacked PRs.

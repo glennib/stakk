@@ -44,18 +44,24 @@ pub struct Cli {
     pub command: Option<Commands>,
 }
 
+/// The subcommands, each with its initial letter as a visible alias.
+///
+/// `completions` has none: it is typed once per shell setup, never
+/// interactively, so the letter buys nothing and `c` is better left free.
+/// Aliases are stable surface — see `docs/stability.md`.
 #[derive(Debug, Subcommand)]
 pub enum Commands {
     /// Submit bookmarks as GitHub pull requests (default when no command
     /// given).
     // Boxed: SubmitArgs is by far the largest payload (clippy
     // large_enum_variant).
+    #[command(visible_alias = "s")]
     Submit(Box<SubmitArgs>),
     /// Render the repository's bookmark stacks as a graph.
     // `show` is a supported alias, visible so `--help` answers for it. It is
     // deprecated and will be removed in a future major — see
     // docs/stability.md.
-    #[command(visible_alias = "show")]
+    #[command(visible_aliases = ["g", "show"])]
     Graph(GraphArgs),
     /// Generate shell completions for the given shell.
     Completions {
@@ -63,6 +69,7 @@ pub enum Commands {
         shell: Shell,
     },
     /// Print stakk's bundled documentation, or list the available topics.
+    #[command(visible_alias = "d")]
     Docs {
         /// Topic to print. Omit to list the available topics.
         #[arg(value_enum)]
@@ -684,6 +691,51 @@ mod tests {
             }
             other => panic!("expected Graph, got {other:?}"),
         }
+    }
+
+    // -- one-letter aliases --
+
+    /// `completions` deliberately has none.
+    #[test]
+    fn one_letter_aliases_reach_their_subcommands() {
+        let cli = parse_with_config(Config::default(), &["stakk", "s"]);
+        assert!(matches!(cli.command, Some(Commands::Submit(_))));
+
+        let cli = parse_with_config(Config::default(), &["stakk", "g"]);
+        assert!(matches!(cli.command, Some(Commands::Graph(_))));
+
+        let cli = parse_with_config(Config::default(), &["stakk", "d", "config"]);
+        match &cli.command {
+            Some(Commands::Docs { topic }) => assert_eq!(*topic, Some(DocTopic::Config)),
+            other => panic!("expected Docs, got {other:?}"),
+        }
+    }
+
+    /// The letter goes through the same config-applied `Command` as the name it
+    /// stands for, which `mut_subcommand` only ever sees by its canonical
+    /// spelling.
+    #[test]
+    fn one_letter_aliases_still_get_config_defaults() {
+        let config = Config {
+            bookmarks_revset: Some("custom()".into()),
+            ..Default::default()
+        };
+        let cli = parse_with_config(config.clone(), &["stakk", "s"]);
+        assert_eq!(submit_args(&cli).revset.bookmarks_revset, "custom()");
+
+        let cli = parse_with_config(config, &["stakk", "g"]);
+        match &cli.command {
+            Some(Commands::Graph(args)) => {
+                assert_eq!(args.revset.bookmarks_revset, "custom()");
+            }
+            other => panic!("expected Graph, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn completions_has_no_one_letter_alias() {
+        let cmd = apply_config_defaults(Config::default(), Cli::command());
+        assert!(cmd.try_get_matches_from(["stakk", "c", "zsh"]).is_err());
     }
 
     // -- docs subcommand --

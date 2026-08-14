@@ -413,8 +413,10 @@ If you change any of the following, update `scripts/record-demo.py` in the same 
   Only `global = true` args (`--config`, `--github-host`) are accepted on either side of the subcommand.
 - Subcommand aliases are part of the stable contract (`docs/stability.md`),
   so they are added deliberately and removed only in a major.
-  `Commands::Graph` carries `visible_alias = "show"`,
+  `submit`, `graph` and `docs` carry their initial letter as a visible alias; `completions` deliberately does not.
+  `Commands::Graph` additionally carries `show`,
   announced in the stability doc's **Deprecated** section as due for removal.
+  Note that `s` is submit while `show` is graph — the two are unrelated, and the collision retires with `show`.
   `DocTopic` has *no* aliases: topic names are explicitly not stable, so a renamed topic is renamed outright.
   `apply_config_defaults` reaches a subcommand with `mut_subcommand("graph", …)`, which matches the *canonical* name —
   an alias resolves to the same command, so config defaults follow it,
