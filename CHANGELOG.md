@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.1.1](https://github.com/glennib/stakk/compare/v2.1.0...v2.1.1) - 2026-08-14
+
+### Fixed
+
+- *(comment)* render stack entries as list items so GitHub expands the PR links
+
 ## [2.1.0](https://github.com/glennib/stakk/compare/v2.0.0...v2.1.0) - 2026-08-14
 
 ### Added
