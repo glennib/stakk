@@ -1,45 +1,33 @@
 # stakk
 
 **stakk** bridges [Jujutsu](https://github.com/jj-vcs/jj) bookmarks to GitHub stacked pull requests.
+It reads your change graph, lets you select a stack and name bookmarks for the commits that need them,
+then pushes and maintains one PR per bookmark: correct base branches, stack comments, no duplicates on re-runs.
 
-It is not a jj wrapper.
-It complements jj by reading your local bookmark state and turning it into a coherent set of GitHub PRs
-that merge into each other in the correct order — with stack-awareness comments, correct base branches,
-and idempotent updates.
+It is not a jj wrapper. jj stays in charge of your commits and bookmarks;
+stakk takes over only where that local state has to exist on GitHub.
 
 ![Interactive stakk submission flow](media/stakk.gif)
 
 ## Features
 
-- **Automatic stack detection** — analyzes the jj change graph to find bookmark
-  chains and their topological order.
-- **No bookmarks required** — stakk discovers unbookmarked heads and creates bookmarks for them,
-  interactively or from explicit flags.
-- **Interactive TUI** — `stakk` opens a graph of every branch stack,
-  then a screen for assigning bookmarks to the commits that need them.
+- **Automatic stack detection** — finds bookmark chains and their topological order in the jj change graph,
+  including unbookmarked heads, which stakk can bookmark for you.
+- **Interactive TUI** — a graph of every branch stack, then a screen for assigning bookmarks.
   Each commit cycles through: `[x]` existing → `[~]` auto → `[>]` typed by hand → `[+]` generated `stakk-xxxx` → `[*]`
   custom command → `[ ]` skip.
 - **Auto bookmark naming** — the `[~]auto` state derives names from commit descriptions and file paths via TF-IDF
   scoring; `r` cycles alternatives and `--auto-prefix` brands them (e.g. `gb-caching-database`).
-- **Stacked PR submission** — creates or updates GitHub PRs with correct base branches so each PR shows only its own
-  diff; `--pr-mode draft` creates new ones as drafts.
+- **Non-interactive selection** — `--keep`/`--new`/`--new-auto`/`--new-command` build the exact same
+  submission the TUI would, without a terminal.
 - **Stack-awareness comments** — every PR gets the full stack with links,
   updated in place on re-runs and rendered with customizable [minijinja](https://github.com/mitsuhiko/minijinja)
   templates.
   See [Stack info placement](#stack-info-placement).
-- **Idempotent** — re-running `stakk submit` is always safe.
-  Existing PRs are updated, never duplicated.
-- **Dry-run mode** — `--dry-run` shows exactly what would happen: no bookmarks are
-  created, nothing is pushed, and nothing is written to GitHub.
-- **Non-interactive selection** — `--keep`/`--new`/`--new-auto`/`--new-command` build the exact same
-  submission the TUI would, without a terminal.
-- **PR titles and bodies from descriptions** — populated from jj change descriptions on creation, so manual edits on
-  GitHub survive; `--sync-pr-content` opts into keeping them in sync.
-- **Self-documenting** — `stakk docs` prints the bundled documentation, version-locked to the binary you are running.
+- **Dry-run mode** — `--dry-run` prints the submission plan and stops: no bookmark is created,
+  nothing is pushed, and nothing is written to GitHub.
 - **No direct git usage** — all VCS operations go through `jj` commands, so
   workspaces and non-colocated repos work automatically.
-- **Forge-agnostic core** — GitHub is the first implementation, but the
-  submission logic is decoupled behind a `Forge` trait.
 
 ## Installation
 
@@ -52,46 +40,36 @@ Raising that floor is not a breaking change — see [Stability](#stability).
 
 ### mise (recommended)
 
-```text
+```shell
 mise use -g 'github:glennib/stakk'
 ```
 
-Or from crates.io:
+### Other methods
 
-```text
-mise use -g 'cargo:stakk'
+```shell
+mise use -g 'cargo:stakk' # from crates.io
+cargo binstall stakk # using cargo-binstall
+cargo install stakk # install from source
 ```
 
-### cargo-binstall
-
-```text
-cargo binstall stakk
-```
-
-### cargo install
-
-```text
-cargo install stakk
-```
-
-### Pre-built binaries
-
-Download from the [latest release](https://github.com/glennib/stakk/releases/latest).
+Or pre-built binaries from the [latest release](https://github.com/glennib/stakk/releases/latest).
 
 ## Quick start
 
-```text
+```shell
 # Submit interactively — pick a stack and assign bookmarks in the TUI
 stakk
 
-# See your stacks without submitting (offline: jj only, never GitHub)
+# See your stacks, and the change ids to name on the command line
+# (offline: jj only, never GitHub)
 stakk show
 
-# Preview a submission without touching the repo or GitHub
-stakk submit --keep feat-auth --keep feat-api --keep my-feature --dry-run
+# Submit without the TUI — one mark per PR boundary: keep an existing
+# bookmark, name a new one at change qzvs, auto-name one at wmtk
+stakk submit --keep feat-auth --new qzvs=feat-api --new-auto wmtk
 
-# Submit without the TUI — every --keep is one PR boundary
-stakk submit --keep feat-auth --keep feat-api --keep my-feature
+# Add --dry-run to any submission to see the plan and stop
+stakk submit --keep feat-auth --new qzvs=feat-api --new-auto wmtk --dry-run
 ```
 
 ## How stacking works
@@ -127,8 +105,6 @@ Stack of 3 PRs — merges into main
 ○ #12 feat-auth
 ◆ main
 ```
-
-Re-running `stakk submit` is always safe — it updates existing PRs rather than creating duplicates.
 
 ## Stack info placement
 
@@ -176,17 +152,13 @@ The `gh` commands that set the host up, the per-host token order, what to do whe
 `stakk --help` and `stakk <subcommand> --help` are the flag reference: every flag, its default,
 and its environment variable.
 
-### `stakk`
-
-Launches the interactive submission flow.
-A ratatui TUI shows a graph of all branch stacks; select a leaf branch, then toggle bookmarks on commits that need them.
-Works even in repos with no pre-existing bookmarks — stakk creates `stakk-<change_id>` bookmarks for unmarked commits.
-Identical to `stakk submit` with no arguments.
-
-### `stakk submit`
+### `stakk`, `stakk submit`
 
 Submit a stack of bookmarks as stacked PRs.
-With no selection flags it runs the interactive flow above — `stakk` and `stakk submit` are the same thing.
+The two spellings are one command: with no selection flags, both launch the interactive flow —
+a TUI graph of all branch stacks where you pick a leaf,
+then a screen for toggling bookmarks onto the commits that need them.
+Repos with no pre-existing bookmarks work too; unmarked commits get `stakk-<change_id>`.
 The selection flags below replace the TUI with an explicit, scriptable selection.
 
 #### Non-interactive selection
@@ -199,7 +171,6 @@ an unbookmarked work-in-progress head, typically — is not submitted at all.
 
 ```console
 stakk show --format=json
-stakk submit --keep base --new qzvs=my-feature --new-auto wmtk --dry-run
 stakk submit --keep base --new qzvs=my-feature --new-auto wmtk
 ```
 
@@ -238,12 +209,9 @@ Commits that jj considers immutable cannot get a new bookmark: the default bookm
 so stakk would create a PR it could never see again on the next run.
 The TUI locks such rows to `[ ]` and explains why, `--new <rev>` on one fails with `stakk::selection::rev_immutable`,
 and the commits are annotated in `stakk show`.
-A row only unlocks when the commit is a real segment boundary —
-a bookmark exists on it *and* the bookmarks revset does not filter that bookmark out
-(the default `~ immutable()` term does).
-So if you really need a PR there, create the bookmark yourself and drop `~ immutable()` from `--bookmarks-revset`;
-otherwise move the work onto mutable commits.
-The non-interactive side of this is in [docs/agents.md](docs/agents.md), or run `stakk docs agents`.
+Move the work onto mutable commits — or, if you really need a PR there,
+create the bookmark yourself and drop `~ immutable()` from `--bookmarks-revset`.
+Details, including the non-interactive side: [docs/agents.md](docs/agents.md), or run `stakk docs agents`.
 
 ### `stakk show`
 
@@ -274,12 +242,11 @@ Bookmarks whose history contains a merge commit cannot be stacked and are left o
 
 `--format=json` emits a schema-versioned document for machine consumption
 (scripts, agents); its change id prefixes and bookmark names can be passed directly to `stakk submit`.
-It is a sparse projection — identifiers, commit titles, bookmarks and stack position, and nothing else —
-while `--format=json-full` adds each commit's `commit_id`, full `description`, `author` and `files[]`.
-Sparse is a strict subset of full: same schema, same field names, same values.
-Each segment also reports its bookmarks' push state
-(`unpushed`, `diverged`, `synced`),
-derived from `jj` alone, so a consumer can tell new work from an update without a network round trip.
+It is a sparse projection — identifiers, commit titles, bookmarks and stack position —
+and `--format=json-full` is a strict superset that adds each commit's `commit_id`, full `description`,
+`author` and `files[]`.
+Bookmarks carry their push state (`unpushed`, `diverged`, `synced`), derived from `jj` alone,
+so a consumer can tell new work from an update without a network round trip.
 Field-by-field schema: [docs/show.md](docs/show.md), or run `stakk docs show`.
 
 ### `stakk docs [topic]`
@@ -321,14 +288,8 @@ All forge interaction goes through a `Forge` trait.
 GitHub is the first (and currently only) implementation, but the core submission logic is forge-agnostic.
 This opens the door to Forgejo, GitLab, or other platforms in the future.
 
-The submission pipeline is split into three phases:
-
-- **Analyze** — pure function, no I/O, fully testable with mock data
-- **Plan** — queries the forge for existing PRs, determines actions
-- **Execute** — pushes bookmarks, creates/updates PRs, manages comments
-
-This separation makes the business logic testable without hitting real APIs, and `--dry-run` falls out naturally
-(run phases 1 and 2, skip 3).
+Submission runs as analyze → plan → execute, with every repository and GitHub mutation confined to the last phase.
+That is why `--dry-run` can stop after the plan and be guaranteed to have written nothing.
 
 ## Stability
 
