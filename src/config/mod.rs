@@ -56,8 +56,8 @@ pub struct RemovedEnvVar {
 ///
 /// **Removal:** this table, [`removed_env_vars`] and its caller in `main.rs` go
 /// at v3.0.0 at the latest, and may go in any 2.x once the 1.x population has
-/// moved. Advisory warnings are explicitly not stable surface (see the
-/// **Stability** section of `README.md`), so deleting them is not a break.
+/// moved. Advisory warnings are explicitly not stable surface (see
+/// `docs/stability.md`), so deleting them is not a break.
 static REMOVED_ENV_VARS: &[RemovedEnvVar] = &[
     RemovedEnvVar {
         name: "STAKK_DRAFT",

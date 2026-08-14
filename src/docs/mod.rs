@@ -27,6 +27,7 @@ const SHOW: &str = include_str!("../../docs/show.md");
 const CONFIG: &str = include_str!("../../docs/config.md");
 const TEMPLATE: &str = include_str!("../../docs/template.md");
 const AUTH: &str = include_str!("../../docs/auth.md");
+const STABILITY: &str = include_str!("../../docs/stability.md");
 
 /// Used when stdout is a terminal of unknown size.
 const FALLBACK_WIDTH: usize = 80;
@@ -42,6 +43,7 @@ pub(crate) fn source(topic: DocTopic) -> &'static str {
         DocTopic::Config => CONFIG,
         DocTopic::Template => TEMPLATE,
         DocTopic::Auth => AUTH,
+        DocTopic::Stability => STABILITY,
     }
 }
 

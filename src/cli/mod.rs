@@ -85,6 +85,8 @@ pub enum DocTopic {
     Auth,
     /// Stack info placement and stack comment templates.
     Template,
+    /// What semantic versioning covers, and what may change in any release.
+    Stability,
 }
 
 /// Output format for the show subcommand.

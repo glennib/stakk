@@ -294,42 +294,15 @@ That is why `--dry-run` can stop after the plan and be guaranteed to have writte
 ## Stability
 
 stakk follows semantic versioning.
-What that guarantee covers — the surface a script, an agent, or another tool may rely on:
+Stable surface: subcommands and their flags, `STAKK_` environment variables, config keys and their defaults,
+the two `schema_version`-ed JSON documents
+(`stakk show` and `--bookmark-command`'s stdin), diagnostic codes, and exit codes.
+Free to change in any release: rendered `--help` and `stakk docs` text, error and progress *wording*,
+the `pretty` output of `stakk show`, the order of `stacks[]` in its JSON, and the TUI layout and keybindings.
+Raising the minimum supported jj version is not a breaking change.
 
-**Stable.**
-Changing these needs a major release.
-
-- Subcommand names and their flags.
-- `STAKK_`-prefixed environment variables.
-- Config file keys and their defaults.
-- The `stakk show` JSON document, under its `schema_version` — field names, types and meanings
-  (currently `2`; both the sparse `json` and the `json-full` projection report it).
-  The *order* of `stacks[]` is not part of it.
-- The JSON handed to `--bookmark-command` on stdin, under its own `schema_version` (currently `1`).
-- Diagnostic codes (`stakk::…`).
-- Exit codes: `0` success, `1` failure, `130` interrupted.
-  `2` is clap's usage-error convention and follows clap, not this contract.
-  The table is in `stakk docs scripting`, alongside the rules a program should follow.
-
-**Not stable.** These may change in any release.
-
-- The rendered text of `stakk docs` and `--help`.
-  Doc topics may be added, reworded, or restructured at any time;
-  only the `stakk docs <topic>` invocation shape is stable.
-- The order of `stacks[]` in the `stakk show` JSON.
-  It tracks commit recency, so it moves as you commit anywhere in the repository,
-  and it is computed separately from the TUI's leaf numbering.
-  Choose a stack by its bookmark names or its contents, never by index.
-- The `pretty` output of `stakk show`.
-- The TUI layout and keybindings.
-- Spinner and progress text.
-- Error message wording — the diagnostic codes are the contract, not the prose.
-- Advisory warnings printed to stderr.
-  They may be added or removed in any release.
-
-**Not a breaking change:** raising the minimum supported jj version.
-The check is warn-only — stakk runs against an older jj and says so — so the floor can move in any release,
-normally the one that actually adopts a newer jj's behaviour.
+The contract itself — every entry, with the reasoning: [docs/stability.md](docs/stability.md),
+or run `stakk docs stability`.
 
 ## License
 

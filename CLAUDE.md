@@ -16,8 +16,10 @@ four stack-placement modes, stack comment templating, layered config
 The CLI surface: `stakk` and `stakk submit` both open the TUI,
 every PR boundary of a non-interactive submission is named with a selection flag, and there is no positional bookmark,
 no `--keep-all`, no `--draft`, and no `stakk auth`.
-Which parts of that surface are semver-guarded is stated in the README's **Stability** section —
-the contract lives there, not in a doc topic, because doc-topic text is exactly what it declares unstable.
+Which parts of that surface are semver-guarded is stated in [`docs/stability.md`](docs/stability.md)
+(`stakk docs stability`); the README keeps a one-paragraph summary that links to it.
+That document declares its own *wording* unstable, like every doc topic, while what it describes is the contract —
+say so explicitly if you reword it, because the self-reference is the whole reason the note is there.
 
 Versions are managed by release-plz from conventional-commit messages.
 Never edit `CHANGELOG.md` or the `version` field by hand, and do not pin a version number here — release-plz owns it.

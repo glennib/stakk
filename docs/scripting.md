@@ -2,10 +2,11 @@
 
 Driving `stakk` from a program: exit codes, the properties that matter to automation, and a worked example.
 
-Two other topics carry the rest.
+Three other topics carry the rest.
 `stakk docs agents` has the submission model — the selection flags,
 the rules that decide which commits become pull requests, and the diagnostic codes.
 `stakk docs show` has the JSON schema field by field.
+`stakk docs stability` has what a program may rely on across releases, and what it may not.
 
 ## Properties worth knowing
 
