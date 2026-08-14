@@ -1,3 +1,7 @@
+<!--- stakk-docs
+summary: Config files, precedence, and environment variables.
+--->
+
 # Configuration
 
 stakk loads settings from TOML config files, environment variables, and CLI flags.

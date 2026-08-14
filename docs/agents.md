@@ -1,3 +1,7 @@
+<!--- stakk-docs
+summary: Submitting without the TUI, written for coding agents.
+--->
+
 # Driving stakk from a coding agent
 
 Submitting a stack of pull requests without the TUI.

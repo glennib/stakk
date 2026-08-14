@@ -264,6 +264,7 @@ Each topic is one of the Markdown files in [docs/](docs/), which is also where t
 At a terminal the prose is re-flowed to your terminal width.
 Redirected, the source is emitted verbatim —
 so `stakk docs agents >> AGENTS.md` writes exactly the Markdown in `docs/agents.md`,
+below the HTML comment that names the topic,
 which makes it a one-line way to give a coding agent the full non-interactive workflow.
 
 ### `stakk completions <shell>`

@@ -1,3 +1,7 @@
+<!--- stakk-docs
+summary: Driving stakk from a program: exit codes and a worked example.
+--->
+
 # Scripting stakk
 
 Driving `stakk` from a program: exit codes, the properties that matter to automation, and a worked example.

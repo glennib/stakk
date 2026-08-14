@@ -108,12 +108,13 @@ and non-interactive submission is spelled with the `--keep`/`--new*` selection f
 ## Architecture
 
 ```text
+build.rs             # Generates DocTopic + docs::source from the docs/ directory
 src/
 ├── main.rs          # CLI entry point (clap)
 ├── auth.rs          # Per-host GitHub token resolution (gh CLI, env vars)
-├── cli/             # clap subcommand definitions (Cli, SubmitArgs, GraphArgs, RevsetArgs, DocTopic)
+├── cli/             # clap subcommand definitions (Cli, SubmitArgs, GraphArgs, RevsetArgs)
 ├── config/          # TOML config discovery, merging, and clap-default injection
-├── docs/            # `stakk docs` — include_str!s docs/*.md, renders them, generates the topic index
+├── docs/            # `stakk docs` — includes the generated topics, renders them, generates the index
 ├── markdown/        # Markdown transforms shared by submit/ and docs/
 │   ├── unwrap/      # unwrap_markdown: hard-wrapped prose → soft-wrapped paragraphs
 │   └── wrap.rs      # wrap_markdown: prose → folded to a target width
@@ -374,20 +375,37 @@ If you change any of the following, update `scripts/record-demo.py` in the same 
   (a parallel implementation of production logic, a parse for a value nothing writes) justifies nothing — delete both.
   `#[expect]` warns once a suppression becomes unnecessary, so `mise run ci` catches stale ones —
   find the current set with `grep -rn dead_code src/`.
-- **Every file in `docs/` must be reachable as a `stakk docs` topic.**
+- **Every file in `docs/` is a `stakk docs` topic, and adding one is a single edit — the file.**
   A Markdown file there is not "documentation in the repo" — it is payload compiled into the binary,
-  and one with no `DocTopic` variant ships as a document nobody can print and nobody can find in the index.
-  Adding a file to `docs/` therefore means three edits in the same change: the file, a `DocTopic` variant,
-  and a `docs::source` arm.
-  `docs::tests::every_docs_file_is_a_topic` reads the directory at test time and fails the build otherwise,
-  so this is enforced rather than remembered.
-  The reverse direction needs no test — a `source` arm without a file fails to compile.
+  so a file that cannot become a topic would ship as a document nobody can print and nobody can find in the index.
+  `build.rs` reads the directory and generates `DocTopic` and `docs::source` from it,
+  so there is no variant and no match arm to keep in sync,
+  and a file it cannot turn into a topic fails the build by name rather than shipping unreachable.
+  Each file carries a preamble — an HTML comment, so GitHub drops it when rendering and `rumdl` leaves it alone:
+
+  ```markdown
+  <!--- stakk-docs
+  summary: Config files, precedence, and environment variables.
+  --->
+  ```
+
+  It is `key: value` lines and nothing else — *not* YAML, despite the shape; the value is the rest of the line,
+  verbatim, so a summary may contain a colon and needs no quoting.
+  `summary` is the only key and is required; anything else is a build error,
+  which is what stops the format growing by accident.
+  Keep the trailing period: clap strips it when rendering help, and the summaries read as sentences in the source.
+  What `stakk docs <topic>` prints is the file *below* its preamble;
+  `build.rs` writes that part to `OUT_DIR` and the generated `source` `include_str!`s it from there.
+  Topics are listed alphabetically because `read_dir` order is whatever the filesystem says —
+  `topics_are_listed_alphabetically` pins the sort,
+  and `the_topics_are_the_docs_directory` re-reads the directory at test time to catch a stale `OUT_DIR` or a filter
+  that quietly drops a document.
   Anything that genuinely is not a topic (a README for the directory, say) does not belong in `docs/`.
-- `stakk docs` `include_str!`s `docs/*.md`,
-  so those files are the single source of truth and cargo rebuilds the crate when they change (no `build.rs` needed).
-  The index is generated from `DocTopic::value_variants()`, so it cannot drift.
-  The variant doc comments are load-bearing:
-  clap prints them as possible-value help *and* `docs::index` reads them back.
+- The generated variant doc comments are load-bearing:
+  clap prints them as possible-value help *and* `docs::index` reads them back,
+  which is why the summary lives in the preamble rather than being written twice.
+  `docs::tests::index_output` and `docs_help_output` snapshot both renderings,
+  so a change to how topics are derived has to show its effect on what the user sees.
   `DocTopic` has no `Default` on purpose — `None` means "print the index", not "print a default topic".
   `stakk docs` is exempt from the four-touchpoint rule (§8): no env var, no config key,
   so README is the only other touchpoint.
@@ -395,7 +413,7 @@ If you change any of the following, update `scripts/record-demo.py` in the same 
   or the `_ => true` fallthrough makes it shell out to jj for a version check it does not need.
 - `stakk docs` output depends on where it goes: a TTY gets prose re-flowed to the terminal width,
   a redirect gets the source verbatim.
-  The verbatim path is what makes `stakk docs agents >> AGENTS.md` reproduce the file byte for byte,
+  The verbatim path is what makes `stakk docs agents >> AGENTS.md` reproduce the file byte for byte below its preamble,
   and it is asserted by a test — do not "improve" it by always rendering.
   Width resolution checks `COLUMNS` before `console`, which reads the terminal over ioctl and never consults it;
   without that there is no way to exercise a narrow terminal.

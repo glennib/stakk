@@ -1,3 +1,7 @@
+<!--- stakk-docs
+summary: The `stakk graph` document, field by field.
+--->
+
 # The `stakk graph` document
 
 `stakk graph` renders the change graph.

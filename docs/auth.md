@@ -1,3 +1,7 @@
+<!--- stakk-docs
+summary: GitHub authentication: tokens, hosts, and troubleshooting.
+--->
+
 # Authentication
 
 stakk talks to the GitHub REST API with a token it resolves itself, per host, every time it runs.

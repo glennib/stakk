@@ -1,3 +1,7 @@
+<!--- stakk-docs
+summary: What semantic versioning covers, and what may change in any release.
+--->
+
 # Stability
 
 stakk follows semantic versioning.

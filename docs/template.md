@@ -1,3 +1,7 @@
+<!--- stakk-docs
+summary: Stack info placement and stack comment templates.
+--->
+
 # Stack info and templates
 
 Where stakk writes the stack overview on each PR, and how to customize what it says.
