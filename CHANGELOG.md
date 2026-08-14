@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.1.3](https://github.com/glennib/stakk/compare/v2.1.2...v2.1.3) - 2026-08-14
+
+### Fixed
+
+- *(docs)* parse the topic preamble with either line ending
+
+### Other
+
+- *(deps)* update dependency uv to v0.12.5 ([#213](https://github.com/glennib/stakk/pull/213))
+
 ## [2.1.2](https://github.com/glennib/stakk/compare/v2.1.1...v2.1.2) - 2026-08-14
 
 ### Other
