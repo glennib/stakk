@@ -1,5 +1,5 @@
 ---
-source: src/show/mod.rs
+source: src/graph/output.rs
 expression: "render_json(&data, JsonProjection::Sparse)"
 ---
 {

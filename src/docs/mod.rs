@@ -23,7 +23,7 @@ use crate::markdown::wrap::wrap_markdown;
 
 const AGENTS: &str = include_str!("../../docs/agents.md");
 const SCRIPTING: &str = include_str!("../../docs/scripting.md");
-const SHOW: &str = include_str!("../../docs/show.md");
+const GRAPH: &str = include_str!("../../docs/graph.md");
 const CONFIG: &str = include_str!("../../docs/config.md");
 const TEMPLATE: &str = include_str!("../../docs/template.md");
 const AUTH: &str = include_str!("../../docs/auth.md");
@@ -39,7 +39,7 @@ pub(crate) fn source(topic: DocTopic) -> &'static str {
     match topic {
         DocTopic::Agents => AGENTS,
         DocTopic::Scripting => SCRIPTING,
-        DocTopic::Show => SHOW,
+        DocTopic::Graph => GRAPH,
         DocTopic::Config => CONFIG,
         DocTopic::Template => TEMPLATE,
         DocTopic::Auth => AUTH,

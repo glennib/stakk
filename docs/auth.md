@@ -86,7 +86,7 @@ stakk submit --dry-run --keep my-bookmark
 
 `--dry-run` returns after printing the plan, so nothing is pushed, created or commented on.
 
-`stakk show` is *not* an authentication check: it is offline and reads only jj, never the token.
+`stakk graph` is *not* an authentication check: it is offline and reads only jj, never the token.
 
 ## GitHub Enterprise Server
 

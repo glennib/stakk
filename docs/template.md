@@ -35,7 +35,7 @@ Stack comments are rendered with [minijinja](https://github.com/mitsuhiko/miniji
 The context holds `stack`, `stack_size`, `default_branch`, `current_bookmark` and `stakk_url`.
 The `stack` array is ordered **trunk-first** — `position` is 1 for the entry nearest the trunk.
 The default template reverses it (`stack | reverse`) so the rendered graph reads leaf-at-top,
-matching `stakk show` and the TUI.
+matching `stakk graph` and the TUI.
 
 Each entry carries `bookmark_name`, `pr_url`, `pr_number`, `title`, `base`, `is_draft`, `position` and `is_current`.
 `stakk submit --help` prints the same list with a worked example template.
@@ -54,7 +54,7 @@ Two things are added outside the template and cannot be overridden:
 GitHub renders comments in a proportional font, so a template must not depend on horizontal alignment: no `│` gutter,
 no indentation for structure, and no code fence (links inside a fence are dead).
 The default template draws one node glyph per line at column 0 — `●` current, `○` other, `◆` trunk —
-the same glyphs `stakk show` uses, and relies on GitHub rendering soft breaks as `<br>`.
+the same glyphs `stakk graph` uses, and relies on GitHub rendering soft breaks as `<br>`.
 
 A template that fails to render fails the submission, and `--dry-run` does not exercise it:
 dry-run returns before the template is read at all.

@@ -39,8 +39,8 @@ pub enum ExplicitSelectionError {
     #[diagnostic(
         code(stakk::selection::invalid_new_spec),
         help(
-            "pass a change or commit id prefix, optionally followed by =NAME; run `stakk show` to \
-             list ids"
+            "pass a change or commit id prefix, optionally followed by =NAME; run `stakk graph` \
+             to list ids"
         )
     )]
     InvalidNewSpec { arg: String },
@@ -49,7 +49,7 @@ pub enum ExplicitSelectionError {
     #[error("{flag} requires a non-empty REV")]
     #[diagnostic(
         code(stakk::selection::empty_rev),
-        help("pass a change or commit id prefix; run `stakk show` to list ids")
+        help("pass a change or commit id prefix; run `stakk graph` to list ids")
     )]
     EmptyRev { flag: String },
 
@@ -59,7 +59,7 @@ pub enum ExplicitSelectionError {
         code(stakk::selection::no_stacks),
         help(
             "there is nothing to submit; check --bookmarks-revset / --heads-revset, or run `stakk \
-             show` to inspect the repository"
+             graph` to inspect the repository"
         )
     )]
     NoStacks,
@@ -70,7 +70,7 @@ pub enum ExplicitSelectionError {
         code(stakk::selection::rev_not_found),
         help(
             "the rev must prefix-match a change or commit id on a stack; trunk, immutable, and \
-             revset-excluded commits are not submittable — run `stakk show` (or `stakk show \
+             revset-excluded commits are not submittable — run `stakk graph` (or `stakk graph \
              --format=json`) to list candidates"
         )
     )]
@@ -80,7 +80,7 @@ pub enum ExplicitSelectionError {
     #[error("revision {rev:?} is ambiguous: matches {}", candidates.join(", "))]
     #[diagnostic(
         code(stakk::selection::rev_ambiguous),
-        help("use a longer prefix; run `stakk show` to see short change ids")
+        help("use a longer prefix; run `stakk graph` to see short change ids")
     )]
     RevAmbiguous {
         rev: String,
@@ -103,7 +103,7 @@ pub enum ExplicitSelectionError {
     #[diagnostic(
         code(stakk::selection::keep_not_found),
         help(
-            "run `stakk show` to list bookmarks; only bookmarks matched by --bookmarks-revset \
+            "run `stakk graph` to list bookmarks; only bookmarks matched by --bookmarks-revset \
              appear"
         )
     )]
@@ -114,7 +114,7 @@ pub enum ExplicitSelectionError {
     #[diagnostic(
         code(stakk::selection::not_colinear),
         help(
-            "all marks must be ancestors or descendants of one another — run `stakk show` to \
+            "all marks must be ancestors or descendants of one another — run `stakk graph` to \
              inspect the stacks"
         )
     )]

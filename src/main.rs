@@ -8,7 +8,6 @@ mod graph;
 mod jj;
 mod markdown;
 mod select;
-mod show;
 mod submit;
 
 use clap::CommandFactory;
@@ -16,8 +15,8 @@ use clap::FromArgMatches;
 
 use crate::cli::Cli;
 use crate::cli::Commands;
-use crate::cli::ShowArgs;
-use crate::cli::ShowFormat;
+use crate::cli::GraphArgs;
+use crate::cli::GraphFormat;
 use crate::cli::submit::SubmitArgs;
 use crate::error::StakkError::Interrupted;
 use crate::error::StakkError::{self};
@@ -54,7 +53,7 @@ async fn run() -> Result<(), StakkError> {
     let cli = Cli::from_arg_matches(&cmd.get_matches())?;
 
     // Warn about environment variables stakk stopped reading, for the two paths
-    // that consume submit args. `show`, `docs` and `completions` never read
+    // that consume submit args. `graph`, `docs` and `completions` never read
     // them and never did, so they pay nothing — not even a stray stderr line in
     // a shell that evaluates `stakk completions zsh`.
     if matches!(&cli.command, Some(Commands::Submit(_)) | None) {
@@ -65,7 +64,7 @@ async fn run() -> Result<(), StakkError> {
     // never touch jj (completions, docs) skip the check.
     let runs_jj = match &cli.command {
         Some(Commands::Completions { .. } | Commands::Docs { .. }) => false,
-        _ => true, // Submit, Show, and None (= submit) all use jj.
+        _ => true, // Submit, Graph, and None (= submit) all use jj.
     };
     if runs_jj {
         warn_if_jj_too_old().await;
@@ -84,8 +83,8 @@ async fn run() -> Result<(), StakkError> {
         Some(Commands::Submit(args)) => {
             submit_bookmark(&args, github_host).await?;
         }
-        Some(Commands::Show(args)) => {
-            show_status(&args, github_host).await?;
+        Some(Commands::Graph(args)) => {
+            print_graph(&args, github_host).await?;
         }
         Some(Commands::Completions { shell }) => {
             clap_complete::generate(shell, &mut Cli::command(), "stakk", &mut std::io::stdout());
@@ -316,9 +315,9 @@ async fn resolve_github_remote(
     Err(StakkError::NoGithubRemote)
 }
 
-async fn show_status(args: &ShowArgs, github_host: Option<&str>) -> Result<(), StakkError> {
+async fn print_graph(args: &GraphArgs, github_host: Option<&str>) -> Result<(), StakkError> {
     // No spinner in json mode: machine-readable output stays quiet.
-    let spinner = matches!(args.format, ShowFormat::Pretty).then(|| {
+    let spinner = matches!(args.format, GraphFormat::Pretty).then(|| {
         let pb = indicatif::ProgressBar::new_spinner();
         pb.enable_steady_tick(std::time::Duration::from_millis(120));
         pb.set_message("Loading repository status...");
@@ -342,7 +341,7 @@ async fn show_status(args: &ShowArgs, github_host: Option<&str>) -> Result<(), S
         pb.finish_and_clear();
     }
 
-    let data = show::ShowData {
+    let data = graph::output::GraphData {
         default_branch: &default_branch,
         remotes: &remotes,
         graph: &change_graph,
@@ -350,7 +349,7 @@ async fn show_status(args: &ShowArgs, github_host: Option<&str>) -> Result<(), S
     };
     print!(
         "{}",
-        show::render(&data, args.format, console::colors_enabled())
+        graph::output::render(&data, args.format, console::colors_enabled())
     );
 
     Ok(())

@@ -8,7 +8,7 @@ It complements jj by turning local bookmark state into coherent GitHub PRs with 
 ## Current Status
 
 All core features are complete: stack detection, three-phase submission, interactive TUI selection,
-fully explicit non-interactive selection via `--keep`/`--new*`, offline `stakk show`
+fully explicit non-interactive selection via `--keep`/`--new*`, offline `stakk graph`
 (pretty graph + versioned JSON in sparse and full projections),
 four stack-placement modes, stack comment templating, layered config
 (CLI > env > repo/user TOML), bundled documentation via `stakk docs`, and comprehensive error handling.
@@ -95,7 +95,7 @@ When adding, renaming, or changing the default of one, update all of them in the
    Only touch the README when the option changes something it describes in prose: the four-key `stakk.toml` sample,
    the **Stack info placement** summary, **GitHub Enterprise Server**, **Non-interactive selection**,
    **PR titles and bodies**, **Custom bookmark names**, or **Immutable commits**.
-   Deeper reference material for those lives in `docs/template.md`, `docs/agents.md` and `docs/show.md`,
+   Deeper reference material for those lives in `docs/template.md`, `docs/agents.md` and `docs/graph.md`,
    which each README section links to alongside its `stakk docs <topic>` command.
 
 A change that lands in only some of these will silently drop config-file support, fail to appear in `--help` defaults,
@@ -111,7 +111,7 @@ and non-interactive submission is spelled with the `--keep`/`--new*` selection f
 src/
 ├── main.rs          # CLI entry point (clap)
 ├── auth.rs          # Per-host GitHub token resolution (gh CLI, env vars)
-├── cli/             # clap subcommand definitions (Cli, SubmitArgs, ShowArgs, RevsetArgs, DocTopic)
+├── cli/             # clap subcommand definitions (Cli, SubmitArgs, GraphArgs, RevsetArgs, DocTopic)
 ├── config/          # TOML config discovery, merging, and clap-default injection
 ├── docs/            # `stakk docs` — include_str!s docs/*.md, renders them, generates the topic index
 ├── markdown/        # Markdown transforms shared by submit/ and docs/
@@ -129,8 +129,11 @@ src/
 │   ├── comment.rs   # Stack comment formatting, parsing, and template context
 │   └── default_comment.md.jinja  # Default minijinja template for stack comments
 ├── graph/           # Change graph construction (ChangeGraph, BookmarkSegment, BranchStack)
-│   ├── types.rs     # Graph data types shared by select/, show/, and submit/
-│   └── layout.rs    # Convert ChangeGraph → jj-log-style row list (commit tree + display rows)
+│   ├── types.rs     # Graph data types shared by select/, submit/, and graph/output.rs
+│   ├── layout.rs    # Convert ChangeGraph → jj-log-style row list (commit tree + display rows)
+│   └── output.rs    # `stakk graph` rendering: pretty graph + schema-versioned JSON in two
+│                    # projections, sparse (`--format=json`) and full (`--format=json-full`)
+│                    # (offline, pure jj)
 ├── select/          # Interactive TUI selection (ratatui inline viewport)
 │   ├── mod.rs       # Public API: resolve_bookmark_interactively(), SelectionResult
 │   ├── app.rs       # App state machine, event loop, terminal init
@@ -140,9 +143,6 @@ src/
 │   ├── bookmark_gen.rs # Bookmark validation and external command execution
 │   ├── tfidf.rs     # TF-IDF algorithm for auto-generated bookmark names
 │   └── event.rs     # crossterm key event mapping to app actions
-├── show/            # `stakk show` rendering: pretty graph + schema-versioned JSON in two
-│                    # projections, sparse (`--format=json`) and full (`--format=json-full`)
-│                    # (offline, pure jj)
 ├── submit/          # Three-phase submission (analyze → plan → execute)
 └── error.rs         # Error types (thiserror)
 ```
@@ -411,6 +411,15 @@ If you change any of the following, update `scripts/record-demo.py` in the same 
   `SubmitArgs` deliberately has no `Default` impl, because hand-building one silently drops both
   (the bug 90718ef5cf97 fixed; `bare_stakk_submit_args_come_from_a_config_applied_clap_parse` pins the mechanism).
   Only `global = true` args (`--config`, `--github-host`) are accepted on either side of the subcommand.
+- Subcommand aliases are part of the stable contract (`docs/stability.md`),
+  so they are added deliberately and removed only in a major.
+  `Commands::Graph` carries `visible_alias = "show"`,
+  announced in the stability doc's **Deprecated** section as due for removal.
+  `DocTopic` has *no* aliases: topic names are explicitly not stable, so a renamed topic is renamed outright.
+  `apply_config_defaults` reaches a subcommand with `mut_subcommand("graph", …)`, which matches the *canonical* name —
+  an alias resolves to the same command, so config defaults follow it,
+  but renaming a subcommand without updating that string silently drops config-file defaults with no compile error.
+  `show_alias_is_graph_and_still_gets_revset_defaults` is the guard.
 - Remote host handling: `jj::remote::parse_remote_url` parses `<host>/<owner>/<repo>` for *any* host;
   `parse_github_url` layers the gate on top, accepting `GITHUB_COM` plus one configured host
   (`--github-host` / `STAKK_GITHUB_HOST` / `github_host` / `GH_HOST`, resolved once in `run()`).
@@ -466,7 +475,7 @@ If you change any of the following, update `scripts/record-demo.py` in the same 
 - `StackCommentContext.stack` is ordered trunk-first
   (`position` is 1 nearest the trunk);
   the default template reverses it in jinja
-  (`stack | reverse`) so the rendered graph reads leaf-at-top like `stakk show` and the TUI.
+  (`stack | reverse`) so the rendered graph reads leaf-at-top like `stakk graph` and the TUI.
   Reversing in Rust instead would silently flip iteration for every user template —
   keep the order change in the template.
 - The default template draws one node glyph per line at column 0 — `●` current, `○` other, `◆` trunk,
@@ -531,12 +540,12 @@ If you change any of the following, update `scripts/record-demo.py` in the same 
   `resolve_bookmarks_explicitly` requires at least one mark —
   an empty `SelectionSpec` means the TUI and `main.rs` routes it there,
   so the intersection `reduce` `expect`s a non-empty mark list.
-  Errors are `stakk::selection::*` diagnostics pointing at `stakk show`.
+  Errors are `stakk::selection::*` diagnostics pointing at `stakk graph`.
   "Submit my whole stack" emits one `--keep=` per *segment* — `bookmarks[0].name`, not one per `bookmarks[]` entry.
   A commit can carry several bookmarks,
   and two `--keep`s on one commit are two marks on one boundary (`stakk::selection::duplicate_mark`).
   `docs/scripting.md` works this through in Python; the `jq` one-liner is there too, marked as the shortcut it is.
-- `stakk show`'s JSON is one schema in two projections: `--format=json` is sparse, `--format=json-full` is everything.
+- `stakk graph`'s JSON is one schema in two projections: `--format=json` is sparse, `--format=json-full` is everything.
   Sparse must stay a *strict subset* of full — same names, types, values and emitted order.
   That is enforced by construction: full-only fields
   (`commit_id`, `description`, `author`, `files`)
@@ -549,7 +558,8 @@ If you change any of the following, update `scripts/record-demo.py` in the same 
   and it scans each commit object separately
   because a document-wide cursor scan accepts a permutation inside one commit by matching the later keys in the commits
   that follow.
-  `show::json_projection` maps `--format` to the projection so the wiring is testable rather than inline in `main`.
+  `graph::output::json_projection` maps `--format` to the projection
+  so the wiring is testable rather than inline in `main`.
   `title` is the first line of `description`; `description` stays the full message.
   Both projections report the same `SCHEMA_VERSION`.
   `committer_timestamp` is in *both* projections on purpose: stack order is derived from the committer timestamp

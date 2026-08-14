@@ -51,8 +51,12 @@ pub enum Commands {
     // Boxed: SubmitArgs is by far the largest payload (clippy
     // large_enum_variant).
     Submit(Box<SubmitArgs>),
-    /// Show repository status and bookmark stacks.
-    Show(ShowArgs),
+    /// Render the repository's bookmark stacks as a graph.
+    // `show` is a supported alias, visible so `--help` answers for it. It is
+    // deprecated and will be removed in a future major — see
+    // docs/stability.md.
+    #[command(visible_alias = "show")]
+    Graph(GraphArgs),
     /// Generate shell completions for the given shell.
     Completions {
         /// The shell to generate completions for.
@@ -77,8 +81,8 @@ pub enum DocTopic {
     Agents,
     /// Driving stakk from a program: exit codes and a worked example.
     Scripting,
-    /// The `stakk show` document, field by field.
-    Show,
+    /// The `stakk graph` document, field by field.
+    Graph,
     /// Config files, precedence, and environment variables.
     Config,
     /// GitHub authentication: tokens, hosts, and troubleshooting.
@@ -89,9 +93,9 @@ pub enum DocTopic {
     Stability,
 }
 
-/// Output format for the show subcommand.
+/// Output format for the graph subcommand.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, clap::ValueEnum)]
-pub enum ShowFormat {
+pub enum GraphFormat {
     /// Human-readable jj-log-style graph of all bookmark stacks.
     #[default]
     Pretty,
@@ -103,9 +107,9 @@ pub enum ShowFormat {
     JsonFull,
 }
 
-/// Arguments for the show subcommand.
+/// Arguments for the graph subcommand.
 #[derive(Debug, Args)]
-pub struct ShowArgs {
+pub struct GraphArgs {
     /// Output format.
     ///
     /// pretty renders a fully expanded jj-log-style commit graph: short
@@ -122,7 +126,7 @@ pub struct ShowArgs {
     /// author and files added back. Every json field is present in
     /// json-full with the same name, type and value.
     #[arg(long, default_value = "pretty", value_enum, verbatim_doc_comment)]
-    pub format: ShowFormat,
+    pub format: GraphFormat,
 
     #[command(flatten)]
     pub revset: RevsetArgs,
@@ -146,7 +150,7 @@ pub fn apply_config_defaults(config: Config, cmd: Command) -> Command {
         let sub = apply_submit_defaults(&config, sub);
         apply_revset_defaults(&config, sub)
     });
-    cmd.mut_subcommand("show", |sub| apply_revset_defaults(&config2, sub))
+    cmd.mut_subcommand("graph", |sub| apply_revset_defaults(&config2, sub))
 }
 
 /// Parse the `SubmitArgs` that a bare `stakk` runs with.
@@ -410,12 +414,12 @@ mod tests {
     }
 
     #[test]
-    fn github_host_from_config_reaches_show() {
+    fn github_host_from_config_reaches_graph() {
         let config = Config {
             github_host: Some("github.example.com".into()),
             ..Default::default()
         };
-        let cli = parse_with_config(config, &["stakk", "show"]);
+        let cli = parse_with_config(config, &["stakk", "graph"]);
         assert_eq!(cli.github_host.as_deref(), Some("github.example.com"));
     }
 
@@ -645,22 +649,40 @@ mod tests {
         assert_eq!(submit_args(&cli).revset.bookmarks_revset, "mine()");
     }
 
-    // -- show subcommand gets revset defaults --
+    // -- graph subcommand gets revset defaults --
 
     #[test]
-    fn show_inherits_revset_defaults() {
+    fn graph_inherits_revset_defaults() {
         let config = Config {
             bookmarks_revset: Some("custom()".into()),
             heads_revset: Some("heads(custom())".into()),
             ..Default::default()
         };
-        let cli = parse_with_config(config, &["stakk", "show"]);
+        let cli = parse_with_config(config, &["stakk", "graph"]);
         match &cli.command {
-            Some(Commands::Show(args)) => {
+            Some(Commands::Graph(args)) => {
                 assert_eq!(args.revset.bookmarks_revset, "custom()");
                 assert_eq!(args.revset.heads_revset, "heads(custom())");
             }
-            other => panic!("expected Show, got {other:?}"),
+            other => panic!("expected Graph, got {other:?}"),
+        }
+    }
+
+    /// `apply_config_defaults` reaches the subcommand by its canonical name,
+    /// so the alias must resolve to the same config-applied command rather
+    /// than to an unconfigured one.
+    #[test]
+    fn show_alias_is_graph_and_still_gets_revset_defaults() {
+        let config = Config {
+            bookmarks_revset: Some("custom()".into()),
+            ..Default::default()
+        };
+        let cli = parse_with_config(config, &["stakk", "show"]);
+        match &cli.command {
+            Some(Commands::Graph(args)) => {
+                assert_eq!(args.revset.bookmarks_revset, "custom()");
+            }
+            other => panic!("expected Graph, got {other:?}"),
         }
     }
 
@@ -681,7 +703,7 @@ mod tests {
         for (arg, expected) in [
             ("agents", DocTopic::Agents),
             ("scripting", DocTopic::Scripting),
-            ("show", DocTopic::Show),
+            ("graph", DocTopic::Graph),
             ("config", DocTopic::Config),
             ("template", DocTopic::Template),
         ] {

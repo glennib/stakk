@@ -1,9 +1,12 @@
-//! Change graph construction.
+//! Change graph construction and rendering.
 //!
 //! Builds `ChangeGraph`, `BookmarkSegment`, and `BranchStack` from jj output to
-//! determine the stacking order of bookmarks for PR submission.
+//! determine the stacking order of bookmarks for PR submission. [`layout`]
+//! turns a graph into display rows; [`output`] renders the `stakk graph`
+//! subcommand's two formats on top of them.
 
 pub mod layout;
+pub mod output;
 pub mod types;
 
 use std::collections::HashMap;
@@ -473,7 +476,7 @@ fn group_segments_into_stacks(
 ///
 /// Unparseable timestamps become `None`, which sorts as oldest — the same
 /// tolerance `graph::layout` applies. jj always emits RFC 3339, so this is a
-/// should-never-happen; failing here instead would make `stakk show` error out
+/// should-never-happen; failing here instead would make `stakk graph` error out
 /// on input the TUI still renders, which is the divergence this parsing
 /// exists to remove.
 fn collect_timestamps_desc(stack: &BranchStack) -> Vec<Option<Timestamp>> {

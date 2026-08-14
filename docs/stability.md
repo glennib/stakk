@@ -13,15 +13,16 @@ The contract changes when the contract changes, in a release that says so.
 
 Changing any of these needs a major release.
 
-- **Subcommand names and their flags.**
+- **Subcommand names, their aliases, and their flags.**
+  An alias is as binding as the name it stands for: removing one needs a major release, same as removing a flag.
 - **`STAKK_`-prefixed environment variables.**
 - **Config file keys and their defaults.**
   Precedence and the full key list: `stakk docs config`.
-- **The `stakk show` JSON document, under its `schema_version`** — field names, types and meanings.
+- **The `stakk graph` JSON document, under its `schema_version`** — field names, types and meanings.
   It is currently `2`, and both the sparse `json` and the `json-full` projection report it.
   Sparse stays a strict subset of full.
   The *order* of `stacks[]` is not part of this.
-  Field by field: `stakk docs show`.
+  Field by field: `stakk docs graph`.
 - **The JSON handed to `--bookmark-command` on stdin**, under its own `schema_version` (currently `1`).
   The schema, with a worked example, is in `stakk submit --help`.
 - **Diagnostic codes (`stakk::…`).**
@@ -31,17 +32,28 @@ Changing any of these needs a major release.
   `2` is clap's usage-error convention and follows clap, not this contract.
   The table, and the rules a program should follow around it: `stakk docs scripting`.
 
+## Deprecated
+
+Still supported, and still covered by the rules above until the major release that removes them.
+Listed here so a script has notice rather than a surprise.
+
+- **`stakk show`** — an alias for `stakk graph`.
+  The command builds and renders the change graph, and `show` says nothing about that;
+  in jj's own vocabulary `show` is a single commit, which is the opposite of what this prints.
+  The alias works exactly as `stakk graph` does and will be removed in the next major release.
+  Migration is the command name and nothing else: flags, output, `--format` values and `schema_version` are unchanged.
+
 ## Not stable
 
 These may change in any release.
 
 - **The rendered text of `stakk docs` and `--help`.**
   Topics may be added, reworded, or restructured at any time; only the `stakk docs <topic>` invocation shape is stable.
-- **The order of `stacks[]` in the `stakk show` JSON.**
+- **The order of `stacks[]` in the `stakk graph` JSON.**
   It tracks commit recency, so it moves as you commit anywhere in the repository,
   and it is computed separately from the TUI's leaf numbering.
   Choose a stack by its bookmark names or its contents, never by index.
-- **The `pretty` output of `stakk show`.**
+- **The `pretty` output of `stakk graph`.**
   It is drawn for a human; `--format=json` is the one for a program.
 - **The TUI layout and keybindings.**
 - **Spinner and progress text.**

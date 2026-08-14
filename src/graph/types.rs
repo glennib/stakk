@@ -64,7 +64,7 @@ pub enum RemoteState {
 }
 
 impl RemoteState {
-    /// The wire name used in `stakk show`'s JSON.
+    /// The wire name used in `stakk graph`'s JSON.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Unpushed => "unpushed",

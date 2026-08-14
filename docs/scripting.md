@@ -5,7 +5,7 @@ Driving `stakk` from a program: exit codes, the properties that matter to automa
 Three other topics carry the rest.
 `stakk docs agents` has the submission model — the selection flags,
 the rules that decide which commits become pull requests, and the diagnostic codes.
-`stakk docs show` has the JSON schema field by field.
+`stakk docs graph` has the JSON schema field by field.
 `stakk docs stability` has what a program may rely on across releases, and what it may not.
 
 ## Properties worth knowing
@@ -65,10 +65,10 @@ import sys
 from datetime import datetime
 
 
-def show_json() -> dict:
-    """stakk show is offline: it queries jj only, never GitHub."""
+def graph_json() -> dict:
+    """stakk graph is offline: it queries jj only, never GitHub."""
     proc = subprocess.run(
-        ["stakk", "show", "--format=json"],
+        ["stakk", "graph", "--format=json"],
         capture_output=True,
         text=True,
     )
@@ -152,7 +152,7 @@ def submit(flags: list, dry_run: bool) -> None:
 def main() -> None:
     dry_run = "--dry-run" in sys.argv[1:]
 
-    stack = latest_stack(show_json()["stacks"])
+    stack = latest_stack(graph_json()["stacks"])
     describe(stack)
 
     flags = selection_flags(stack)
@@ -169,7 +169,7 @@ if __name__ == "__main__":
     main()
 ```
 
-`describe` is there to show what `remote_state` makes possible: it comes out of `stakk show` without touching GitHub,
+`describe` is there to show what `remote_state` makes possible: it comes out of `stakk graph` without touching GitHub,
 so a script can report what a submission would do — "two already pushed, one new" — before running it.
 
 ## The same thing in shell
@@ -177,7 +177,7 @@ so a script can report what a submission would do — "two already pushed, one n
 For the common case where every segment is already bookmarked:
 
 ```console
-stakk submit $(stakk show --format=json \
+stakk submit $(stakk graph --format=json \
   | jq -r '.stacks[0].segments[]
            | select(.bookmarks | length > 0)
            | "--keep=\(.bookmarks[0].name)"')

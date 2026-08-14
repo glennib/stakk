@@ -96,14 +96,14 @@ pub struct SubmitArgs {
     /// all — an unbookmarked work-in-progress head is left out unless it
     /// is marked.
     ///
-    /// `stakk show [--format=json]` lists stacks, bookmarks and change
+    /// `stakk graph [--format=json]` lists stacks, bookmarks and change
     /// ids.
     #[arg(long, value_name = "BOOKMARK", verbatim_doc_comment)]
     pub keep: Vec<String>,
 
     /// Create a new bookmark at REV as a PR boundary (repeatable).
     ///
-    /// REV is a change id or commit id prefix (as shown by `stakk show`).
+    /// REV is a change id or commit id prefix (as shown by `stakk graph`).
     /// The bookmark is named stakk-<change_id> unless =NAME is given.
     #[arg(long, value_name = "REV[=NAME]", verbatim_doc_comment)]
     pub new: Vec<String>,
@@ -165,7 +165,7 @@ pub struct SubmitArgs {
     ///   is_current     — true for the PR being submitted
     ///
     /// Entries come trunk-first; the built-in template pipes them through
-    /// `reverse` to draw the stack leaf-first, like `stakk show`.
+    /// `reverse` to draw the stack leaf-first, like `stakk graph`.
     ///
     /// Example template:
     ///

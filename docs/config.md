@@ -178,7 +178,7 @@ and talks to its REST API at `https://<host>/api/v3`.
 The host is resolved highest to lowest:
 
 1. `--github-host <host>` — a global flag, so it works either side of the subcommand,
-   e.g. `stakk show --github-host <host>`
+   e.g. `stakk graph --github-host <host>`
 2. `STAKK_GITHUB_HOST`
 3. `github_host` in `stakk.toml`
 4. `GH_HOST` — the GitHub CLI's own setting, so an existing `gh` setup needs no stakk configuration

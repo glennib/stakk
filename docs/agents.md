@@ -2,13 +2,13 @@
 
 Submitting a stack of pull requests without the TUI.
 
-Two commands do everything: `stakk show` reports what exists, `stakk submit` acts on it.
-`stakk show` is offline — it queries `jj` only, never GitHub — so it is cheap to run at any point.
+Two commands do everything: `stakk graph` reports what exists, `stakk submit` acts on it.
+`stakk graph` is offline — it queries `jj` only, never GitHub — so it is cheap to run at any point.
 
 ## Reading the state
 
 ```console
-stakk show --format=json
+stakk graph --format=json
 ```
 
 Every segment reports its bookmarks with a `remote_state`,
@@ -24,9 +24,9 @@ This is derived from `jj` alone, so it describes what a *push* would do.
 It says nothing about whether a pull request exists; stakk learns that during `stakk submit`'s plan phase,
 which does query GitHub.
 
-One caveat: `stakk show` takes no `--remote`, so `synced` means "on some remote", not "on the one you push to".
+One caveat: `stakk graph` takes no `--remote`, so `synced` means "on some remote", not "on the one you push to".
 In a repository with several remotes, check `remotes[]` before reading `synced` as "nothing to do" —
-see `stakk docs show`.
+see `stakk docs graph`.
 
 ## Naming boundaries
 
@@ -46,7 +46,7 @@ because a persisted default would silently change what gets submitted.
 | `--new-auto <rev>` | New TF-IDF-named bookmark at `rev`, honoring `--auto-prefix` (repeatable) |
 | `--new-command <rev>` | New bookmark at `rev` named by `--bookmark-command` (repeatable) |
 
-`rev` is a change id or commit id prefix, exactly as printed by `stakk show`.
+`rev` is a change id or commit id prefix, exactly as printed by `stakk graph`.
 Either `change_id` or `short_change_id` resolves,
 but a short prefix is only unique against the repository as it stands right now,
 so one stored and used later can fail with `stakk::selection::rev_ambiguous`.
@@ -91,7 +91,7 @@ None of them leaves the repository in a modified state — selection happens bef
 
 | Code | Meaning |
 |------|---------|
-| `stakk::selection::rev_not_found` | No commit on the graph matches the prefix; it may have been rewritten since `stakk show` ran |
+| `stakk::selection::rev_not_found` | No commit on the graph matches the prefix; it may have been rewritten since `stakk graph` ran |
 | `stakk::selection::rev_ambiguous` | The prefix matches more than one commit; a longer prefix or the full `change_id` resolves it |
 | `stakk::selection::rev_immutable` | The commit is jj-immutable and cannot take a bookmark — see below |
 | `stakk::selection::empty_rev` | A selection flag was given an empty `REV`, e.g. from a shell expansion that produced nothing |
@@ -114,15 +114,15 @@ The default bookmarks revset excludes `immutable()`,
 so a bookmark created there would be filtered out on every subsequent run —
 stakk would create a pull request it could never see or manage again.
 `--new <rev>` on such a commit fails with `stakk::selection::rev_immutable`,
-and `stakk show` reports them as `is_immutable`.
+and `stakk graph` reports them as `is_immutable`.
 
 There are two ways out, and they are repository-owner decisions rather than stakk configuration:
 move the work onto mutable commits, or create the bookmark manually
 and drop the `~ immutable()` term from `--bookmarks-revset`.
 
-## What `stakk show` reports
+## What `stakk graph` reports
 
-Enough here to act on; `stakk docs show` has the field-by-field reference.
+Enough here to act on; `stakk docs graph` has the field-by-field reference.
 
 `--format=json` is the **sparse** projection — identifiers, titles and states,
 which is everything the selection flags need.
@@ -152,7 +152,7 @@ A stack has no name of its own either, and its tip need not carry a bookmark,
 so `committer_timestamp` is what identifies "the most recently modified stack":
 
 ```console
-stakk show --format=json | jq '
+stakk graph --format=json | jq '
   [.stacks[] | {
      stack: .,
      touched: ([.segments[].commits[].committer_timestamp] | max)
@@ -166,7 +166,7 @@ The `jq` above is string-comparing, which is fine only for a repository whose co
 `stakk docs scripting` has a version that parses.
 
 **`title` is empty when a commit has no description.**
-That is an ordinary jj state rather than an error — `stakk show`'s pretty format writes `(no description set)`,
+That is an ordinary jj state rather than an error — `stakk graph`'s pretty format writes `(no description set)`,
 but the document reports the empty string.
 
 ## Reading this later

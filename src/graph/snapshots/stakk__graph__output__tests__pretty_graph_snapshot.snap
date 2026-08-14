@@ -1,5 +1,5 @@
 ---
-source: src/show/mod.rs
+source: src/graph/output.rs
 expression: "render_pretty(&data, false)"
 ---
 Default branch: main

@@ -26,7 +26,7 @@ stakk submit --keep base --new qzvs=my-feature --new-auto wmtk --dry-run
 An indented code block is also left alone:
 
 ```text
-stakk show --format=json | jq '.stacks[0]'
+stakk graph --format=json | jq '.stacks[0]'
 ```
 
 ## Tables

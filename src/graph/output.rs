@@ -1,6 +1,6 @@
-//! Rendering for the `stakk show` subcommand.
+//! Rendering for the `stakk graph` subcommand.
 //!
-//! Both output formats derive from one source model ([`ShowData`]: the
+//! Both output formats derive from one source model ([`GraphData`]: the
 //! `ChangeGraph` plus repo metadata) so they cannot drift. `pretty` renders
 //! an always-expanded jj-log-style graph via [`crate::graph::layout`];
 //! `json` serializes a schema-versioned DTO document for machine
@@ -17,7 +17,7 @@ use std::fmt::Write as _;
 
 use serde::Serialize;
 
-use crate::cli::ShowFormat;
+use crate::cli::GraphFormat;
 use crate::graph::layout::CONNECTOR_TAIL;
 use crate::graph::layout::CONNECTOR_TEE;
 use crate::graph::layout::GUTTER_CELL;
@@ -37,8 +37,8 @@ use crate::jj::types::GitRemote;
 /// projections always report the same version, because they are one schema.
 const SCHEMA_VERSION: u32 = 2;
 
-/// Everything `stakk show` renders, gathered by the caller.
-pub struct ShowData<'a> {
+/// Everything `stakk graph` renders, gathered by the caller.
+pub struct GraphData<'a> {
     pub default_branch: &'a str,
     pub remotes: &'a [GitRemote],
     pub graph: &'a ChangeGraph,
@@ -63,7 +63,7 @@ pub enum JsonProjection {
 /// This is the module's only entry point: the format decision belongs with
 /// the renderer, so `main` prints what it is handed and cannot pair a
 /// `--format` value with the wrong projection.
-pub fn render(data: &ShowData, format: ShowFormat, colors: bool) -> String {
+pub fn render(data: &GraphData, format: GraphFormat, colors: bool) -> String {
     match json_projection(format) {
         None => render_pretty(data, colors),
         Some(projection) => render_json(data, projection),
@@ -72,11 +72,11 @@ pub fn render(data: &ShowData, format: ShowFormat, colors: bool) -> String {
 
 /// The JSON projection a `--format` value selects, or `None` for the
 /// human-readable format, which is not the JSON document at all.
-fn json_projection(format: ShowFormat) -> Option<JsonProjection> {
+fn json_projection(format: GraphFormat) -> Option<JsonProjection> {
     match format {
-        ShowFormat::Pretty => None,
-        ShowFormat::Json => Some(JsonProjection::Sparse),
-        ShowFormat::JsonFull => Some(JsonProjection::Full),
+        GraphFormat::Pretty => None,
+        GraphFormat::Json => Some(JsonProjection::Sparse),
+        GraphFormat::JsonFull => Some(JsonProjection::Full),
     }
 }
 
@@ -85,7 +85,7 @@ fn json_projection(format: ShowFormat) -> Option<JsonProjection> {
 // ---------------------------------------------------------------------------
 
 #[derive(Serialize)]
-struct ShowReport<'a> {
+struct GraphReport<'a> {
     schema_version: u32,
     default_branch: &'a str,
     remotes: Vec<RemoteReport<'a>>,
@@ -173,15 +173,16 @@ struct AuthorReport<'a> {
 }
 
 /// Render the machine-readable JSON document (trailing newline included).
-fn render_json(data: &ShowData, projection: JsonProjection) -> String {
+fn render_json(data: &GraphData, projection: JsonProjection) -> String {
     let report = build_report(data, projection);
-    let mut out = serde_json::to_string_pretty(&report).expect("ShowReport is always serializable");
+    let mut out =
+        serde_json::to_string_pretty(&report).expect("GraphReport is always serializable");
     out.push('\n');
     out
 }
 
-fn build_report<'a>(data: &ShowData<'a>, projection: JsonProjection) -> ShowReport<'a> {
-    ShowReport {
+fn build_report<'a>(data: &GraphData<'a>, projection: JsonProjection) -> GraphReport<'a> {
+    GraphReport {
         schema_version: SCHEMA_VERSION,
         default_branch: data.default_branch,
         remotes: data
@@ -283,7 +284,7 @@ fn segment_report<'a>(
 /// Render the human-readable graph view.
 ///
 /// `colors` enables ANSI styling; pass false when stdout is not a terminal.
-fn render_pretty(data: &ShowData, colors: bool) -> String {
+fn render_pretty(data: &GraphData, colors: bool) -> String {
     let mut out = String::new();
 
     let _ = writeln!(out, "Default branch: {}", data.default_branch);
@@ -557,7 +558,7 @@ mod tests {
     fn pretty_graph_snapshot() {
         let graph = sample_graph();
         let remotes = sample_remotes();
-        let data = ShowData {
+        let data = GraphData {
             default_branch: "main",
             remotes: &remotes,
             graph: &graph,
@@ -570,7 +571,7 @@ mod tests {
     fn pretty_no_stacks() {
         let graph = make_graph(vec![]);
         let remotes = sample_remotes();
-        let data = ShowData {
+        let data = GraphData {
             default_branch: "main",
             remotes: &remotes,
             graph: &graph,
@@ -582,7 +583,7 @@ mod tests {
     }
 
     /// Excluding every bookmark leaves no stack, and that is exactly when the
-    /// exclusion footers carry the whole answer: without them `stakk show`
+    /// exclusion footers carry the whole answer: without them `stakk graph`
     /// reports "no stacks" and never says the merge commits are why.
     #[test]
     fn pretty_reports_exclusions_when_no_stack_survives() {
@@ -590,7 +591,7 @@ mod tests {
         graph.excluded_bookmarks = vec!["bm_merge".to_string()];
         graph.excluded_head_count = 1;
         let remotes = sample_remotes();
-        let data = ShowData {
+        let data = GraphData {
             default_branch: "main",
             remotes: &remotes,
             graph: &graph,
@@ -605,7 +606,7 @@ mod tests {
     fn sample_json(projection: JsonProjection) -> serde_json::Value {
         let graph = sample_graph();
         let remotes = sample_remotes();
-        let data = ShowData {
+        let data = GraphData {
             default_branch: "main",
             remotes: &remotes,
             graph: &graph,
@@ -615,13 +616,13 @@ mod tests {
     }
 
     /// The same document, reached the way the binary reaches it: through a
-    /// `ShowFormat` value, with the projection chosen inside [`render`].
+    /// `GraphFormat` value, with the projection chosen inside [`render`].
     /// `sample_json` takes the projection as an argument and so pins the
     /// document's shape but nothing about which `--format` produces it.
-    fn sample_json_via_format(format: ShowFormat) -> serde_json::Value {
+    fn sample_json_via_format(format: GraphFormat) -> serde_json::Value {
         let graph = sample_graph();
         let remotes = sample_remotes();
-        let data = ShowData {
+        let data = GraphData {
             default_branch: "main",
             remotes: &remotes,
             graph: &graph,
@@ -634,7 +635,7 @@ mod tests {
     fn json_snapshot() {
         let graph = sample_graph();
         let remotes = sample_remotes();
-        let data = ShowData {
+        let data = GraphData {
             default_branch: "main",
             remotes: &remotes,
             graph: &graph,
@@ -647,7 +648,7 @@ mod tests {
     fn json_full_snapshot() {
         let graph = sample_graph();
         let remotes = sample_remotes();
-        let data = ShowData {
+        let data = GraphData {
             default_branch: "main",
             remotes: &remotes,
             graph: &graph,
@@ -825,7 +826,7 @@ mod tests {
     fn sparse_field_order_matches_full() {
         let graph = sample_graph();
         let remotes = sample_remotes();
-        let data = ShowData {
+        let data = GraphData {
             default_branch: "main",
             remotes: &remotes,
             graph: &graph,
@@ -921,8 +922,8 @@ mod tests {
         ];
 
         for (format, expected) in [
-            (ShowFormat::Json, sparse_keys.as_slice()),
-            (ShowFormat::JsonFull, full_keys.as_slice()),
+            (GraphFormat::Json, sparse_keys.as_slice()),
+            (GraphFormat::JsonFull, full_keys.as_slice()),
         ] {
             let v = sample_json_via_format(format);
             let commits = all_commits(&v);
@@ -943,13 +944,13 @@ mod tests {
         // Pretty is not the JSON document at all.
         let graph = sample_graph();
         let remotes = sample_remotes();
-        let data = ShowData {
+        let data = GraphData {
             default_branch: "main",
             remotes: &remotes,
             graph: &graph,
             github_host: None,
         };
-        let pretty = render(&data, ShowFormat::Pretty, false);
+        let pretty = render(&data, GraphFormat::Pretty, false);
         assert!(
             pretty.starts_with("Default branch: main\n"),
             "pretty rendered as: {pretty}"
@@ -960,13 +961,13 @@ mod tests {
     /// two JSON arms would make `--format=json` emit the full document.
     #[test]
     fn json_projection_per_format() {
-        assert_eq!(json_projection(ShowFormat::Pretty), None);
+        assert_eq!(json_projection(GraphFormat::Pretty), None);
         assert_eq!(
-            json_projection(ShowFormat::Json),
+            json_projection(GraphFormat::Json),
             Some(JsonProjection::Sparse)
         );
         assert_eq!(
-            json_projection(ShowFormat::JsonFull),
+            json_projection(GraphFormat::JsonFull),
             Some(JsonProjection::Full)
         );
     }
@@ -1047,7 +1048,7 @@ mod tests {
         assert_eq!(base_commits[0]["change_id"], "mnrqxtvo");
         assert_eq!(base_commits[0]["short_change_id"], "mnrq");
         // A shared segment repeats identically in every stack that carries
-        // it, as `stakk show` re-emits shared ancestors per stack.
+        // it, as `stakk graph` re-emits shared ancestors per stack.
         let base_again = stacks[1]["segments"][0]["commits"].as_array().unwrap();
         assert_eq!(base_again, base_commits);
         // Non-boundary commits carry no local bookmarks in this fixture.

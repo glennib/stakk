@@ -164,7 +164,7 @@ mod tests {
     fn indented_code_block_is_verbatim() {
         // Inline rather than in the fixture: a Markdown formatter would rewrite
         // an indented block into a fence and silently drop this case.
-        let input = "Intro paragraph.\n\n    stakk show --format=json | jq '.stacks[0]'";
+        let input = "Intro paragraph.\n\n    stakk graph --format=json | jq '.stacks[0]'";
         assert_eq!(wrap_markdown(input, 20), input);
     }
 

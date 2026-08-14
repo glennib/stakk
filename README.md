@@ -62,7 +62,7 @@ stakk
 
 # See your stacks, and the change ids to name on the command line
 # (offline: jj only, never GitHub)
-stakk show
+stakk graph
 
 # Submit without the TUI — one mark per PR boundary: keep an existing
 # bookmark, name a new one at change qzvs, auto-name one at wmtk
@@ -94,7 +94,7 @@ pushes every one of them and creates or updates one PR per bookmark, basing each
 - `feat-ui` → PR targeting `feat-api`
 
 Each PR shows only its own diff, and a stack comment on every PR links all related PRs together.
-The comment draws the stack the same way `stakk show` and the TUI do — leaf at the top, trunk at the bottom —
+The comment draws the stack the same way `stakk graph` and the TUI do — leaf at the top, trunk at the bottom —
 and marks the PR you are looking at:
 
 ```text
@@ -167,10 +167,10 @@ The selection flags below replace the TUI with an explicit, scriptable selection
 every PR boundary is named on the command line, all marks must lie on one trunk-to-tip path,
 the topmost mark is the tip, unmarked commits below it fold into the PR above them, and anything above it —
 an unbookmarked work-in-progress head, typically — is not submitted at all.
-`rev` is a change id or commit id prefix as printed by `stakk show`, which makes submission a two-command loop:
+`rev` is a change id or commit id prefix as printed by `stakk graph`, which makes submission a two-command loop:
 
 ```console
-stakk show --format=json
+stakk graph --format=json
 stakk submit --keep base --new qzvs=my-feature --new-auto wmtk
 ```
 
@@ -208,17 +208,18 @@ the surrounding context is in [docs/template.md](docs/template.md), or run `stak
 Commits that jj considers immutable cannot get a new bookmark: the default bookmarks revset excludes `immutable()`,
 so stakk would create a PR it could never see again on the next run.
 The TUI locks such rows to `[ ]` and explains why, `--new <rev>` on one fails with `stakk::selection::rev_immutable`,
-and the commits are annotated in `stakk show`.
+and the commits are annotated in `stakk graph`.
 Move the work onto mutable commits — or, if you really need a PR there,
 create the bookmark yourself and drop `~ immutable()` from `--bookmarks-revset`.
 Details, including the non-interactive side: [docs/agents.md](docs/agents.md), or run `stakk docs agents`.
 
-### `stakk show`
+### `stakk graph`
 
 Display repository status and all bookmark stacks without submitting.
 Fully offline: only `jj` is queried, never GitHub — PR state is `stakk submit --dry-run`'s job.
-`show` and `submit` build the graph the same way, so `--bookmarks-revset`/`--heads-revset` apply to both:
-what `show` prints is what `submit` would work on.
+`stakk show` is an alias for the same command, deprecated and due for removal in a future major release.
+`graph` and `submit` build the graph the same way, so `--bookmarks-revset`/`--heads-revset` apply to both:
+what `graph` prints is what `submit` would work on.
 
 The default `pretty` format renders a jj-log-style graph of all stacks, always fully expanded.
 Every commit row carries its short change id, bookmarks, and description summary;
@@ -247,7 +248,7 @@ and `--format=json-full` is a strict superset that adds each commit's `commit_id
 `author` and `files[]`.
 Bookmarks carry their push state (`unpushed`, `diverged`, `synced`), derived from `jj` alone,
 so a consumer can tell new work from an update without a network round trip.
-Field-by-field schema: [docs/show.md](docs/show.md), or run `stakk docs show`.
+Field-by-field schema: [docs/graph.md](docs/graph.md), or run `stakk docs graph`.
 
 ### `stakk docs [topic]`
 
@@ -294,11 +295,11 @@ That is why `--dry-run` can stop after the plan and be guaranteed to have writte
 ## Stability
 
 stakk follows semantic versioning.
-Stable surface: subcommands and their flags, `STAKK_` environment variables, config keys and their defaults,
-the two `schema_version`-ed JSON documents
-(`stakk show` and `--bookmark-command`'s stdin), diagnostic codes, and exit codes.
+Stable surface: subcommands, their aliases and their flags, `STAKK_` environment variables,
+config keys and their defaults, the two `schema_version`-ed JSON documents
+(`stakk graph` and `--bookmark-command`'s stdin), diagnostic codes, and exit codes.
 Free to change in any release: rendered `--help` and `stakk docs` text, error and progress *wording*,
-the `pretty` output of `stakk show`, the order of `stacks[]` in its JSON, and the TUI layout and keybindings.
+the `pretty` output of `stakk graph`, the order of `stacks[]` in its JSON, and the TUI layout and keybindings.
 Raising the minimum supported jj version is not a breaking change.
 
 The contract itself — every entry, with the reasoning: [docs/stability.md](docs/stability.md),

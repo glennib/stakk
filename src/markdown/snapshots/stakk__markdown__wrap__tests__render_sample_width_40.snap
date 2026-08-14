@@ -34,7 +34,7 @@ An indented code block is also left
 alone:
 
 ```text
-stakk show --format=json | jq '.stacks[0]'
+stakk graph --format=json | jq '.stacks[0]'
 ```
 
 ## Tables

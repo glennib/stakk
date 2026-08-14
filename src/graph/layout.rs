@@ -14,7 +14,7 @@ use crate::graph::types::ChangeGraph;
 use crate::jj::types::Signature;
 
 /// Glyphs shared by all renderers of the layout (the TUI graph widget and
-/// `stakk show`'s pretty format).
+/// `stakk graph`'s pretty format).
 ///
 /// Node glyph for a commit on the selected path (TUI only).
 pub const NODE_SELECTED: &str = "\u{25cf}"; // ●
