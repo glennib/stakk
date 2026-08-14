@@ -1,0 +1,16 @@
+---
+source: src/docs/mod.rs
+expression: index()
+---
+stakk documentation topics:
+
+  agents      Submitting without the TUI, written for coding agents
+  scripting   Driving stakk from a program: exit codes and a worked example
+  graph       The `stakk graph` document, field by field
+  config      Config files, precedence, and environment variables
+  auth        GitHub authentication: tokens, hosts, and troubleshooting
+  template    Stack info placement and stack comment templates
+  stability   What semantic versioning covers, and what may change in any release
+
+Run `stakk docs <topic>` to print one.
+The same documents live in docs/ at https://github.com/glennib/stakk

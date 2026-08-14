@@ -1,0 +1,42 @@
+---
+source: src/docs/mod.rs
+expression: without_env_values(&help)
+---
+Print stakk's bundled documentation, or list the available topics
+
+Usage: stakk docs [OPTIONS] [TOPIC]
+
+Arguments:
+  [TOPIC]
+          Topic to print. Omit to list the available topics
+
+          Possible values:
+          - agents:    Submitting without the TUI, written for coding agents
+          - scripting: Driving stakk from a program: exit codes and a worked example
+          - graph:     The `stakk graph` document, field by field
+          - config:    Config files, precedence, and environment variables
+          - auth:      GitHub authentication: tokens, hosts, and troubleshooting
+          - template:  Stack info placement and stack comment templates
+          - stability: What semantic versioning covers, and what may change in any release
+
+Options:
+      --config <CONFIG>
+          Path to a config file (overrides automatic discovery).
+          
+          Loaded in place of the repo-level stakk.toml; user-level config is
+          still merged unless inherit = false.
+          
+          [env: STAKK_CONFIG=]
+
+      --github-host <GITHUB_HOST>
+          Extra host to treat as GitHub, for GitHub Enterprise Server.
+          
+          github.com is always accepted. Naming a host here additionally accepts
+          remotes on that host and talks to its API at https://<host>/api/v3.
+          Falls back to GH_HOST when unset, so an existing GitHub CLI setup works
+          without further configuration.
+          
+          [env: STAKK_GITHUB_HOST=]
+
+  -h, --help
+          Print help (see a summary with '-h')

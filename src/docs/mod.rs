@@ -262,4 +262,48 @@ mod tests {
         unsafe { std::env::remove_var("COLUMNS") };
         assert_eq!(width, 37);
     }
+
+    /// Blank the *values* out of clap's `[env: NAME=value]` annotations.
+    ///
+    /// clap prints the value a variable currently holds, so a developer with
+    /// `STAKK_CONFIG` set would otherwise see the help snapshot fail for a
+    /// reason that has nothing to do with the code.
+    fn without_env_values(help: &str) -> String {
+        help.lines()
+            .map(|line| match line.split_once("[env: ") {
+                Some((before, rest)) => match rest.split_once('=') {
+                    Some((name, _)) => format!("{before}[env: {name}=]"),
+                    None => line.to_string(),
+                },
+                None => line.to_string(),
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// What a bare `stakk docs` prints.
+    ///
+    /// The topic names, their summaries, the order they come in and the layout
+    /// around them are all user-visible, and all of them are derived rather
+    /// than written out — so this pins the derivation itself.
+    #[test]
+    fn index_output() {
+        insta::assert_snapshot!(index());
+    }
+
+    /// What `stakk docs --help` prints.
+    ///
+    /// The same names and summaries reach the user by a second path, clap's
+    /// possible-value help, built from a different part of the same
+    /// definitions. Pinning both catches a change that moves only one of them.
+    #[test]
+    fn docs_help_output() {
+        use clap::CommandFactory as _;
+
+        let help = crate::cli::Cli::command()
+            .try_get_matches_from(["stakk", "docs", "--help"])
+            .expect_err("--help leaves clap through the error path")
+            .to_string();
+        insta::assert_snapshot!(without_env_values(&help));
+    }
 }
