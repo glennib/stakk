@@ -865,6 +865,7 @@ pub async fn execute_submission_plan<R: JjRunner, F: Forge>(
                     is_draft: plan.pr_mode == PrMode::Draft && bp.needs_create,
                     position: i + 1,
                     is_current: false, // set per-PR below
+                    is_leaf: i + 1 == stack_entries.len(),
                 }
             })
             .collect();
@@ -2446,6 +2447,7 @@ mod tests {
                     is_draft: false,
                     position: 1,
                     is_current: true,
+                    is_leaf: true,
                 }],
                 stack_size: 1,
                 default_branch: "main".to_string(),
@@ -3288,6 +3290,7 @@ mod tests {
                     is_draft: false,
                     position: 1,
                     is_current: true,
+                    is_leaf: true,
                 }],
                 stack_size: 1,
                 default_branch: "main".to_string(),
@@ -3494,6 +3497,7 @@ mod tests {
                     is_draft: false,
                     position: 1,
                     is_current: true,
+                    is_leaf: true,
                 }],
                 stack_size: 1,
                 default_branch: "main".to_string(),
@@ -3690,6 +3694,7 @@ mod tests {
                     is_draft: false,
                     position: 1,
                     is_current: true,
+                    is_leaf: true,
                 }],
                 stack_size: 1,
                 default_branch: "main".to_string(),

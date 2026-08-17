@@ -7,7 +7,7 @@ expression: with_comment_preamble(&body)
 <!-- https://github.com/glennib/stakk -->
 **Stack of 3 PRs** merging into `main`
 
-- https://github.com/owner/repo/pull/3
+- https://github.com/owner/repo/pull/3 (top of stack)
 - https://github.com/owner/repo/pull/2 👈 **this PR**
 - https://github.com/owner/repo/pull/1
 - `main`

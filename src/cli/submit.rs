@@ -163,6 +163,7 @@ pub struct SubmitArgs {
     ///   is_draft       — whether the PR is a draft
     ///   position       — 1-based position in the stack, 1 nearest the trunk
     ///   is_current     — true for the PR being submitted
+    ///   is_leaf        — true for the tip of the stack
     ///
     /// Entries come trunk-first; the built-in template pipes them through
     /// `reverse` to draw the stack leaf-first, like `stakk graph`.

@@ -41,7 +41,8 @@ The `stack` array is ordered **trunk-first** — `position` is 1 for the entry n
 The default template reverses it (`stack | reverse`) so the rendered graph reads leaf-at-top,
 matching `stakk graph` and the TUI.
 
-Each entry carries `bookmark_name`, `pr_url`, `pr_number`, `title`, `base`, `is_draft`, `position` and `is_current`.
+Each entry carries `bookmark_name`, `pr_url`, `pr_number`, `title`, `base`, `is_draft`, `position`,
+`is_current` and `is_leaf` — the last is true for the tip of the stack, the entry furthest from the trunk.
 `stakk submit --help` prints the same list with a worked example template.
 Note that `title` is the *commit-derived* title,
 which can differ from the PR's live title on GitHub when `--sync-pr-content` does not include titles.

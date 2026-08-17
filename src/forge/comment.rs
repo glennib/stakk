@@ -91,6 +91,8 @@ pub struct StackEntryContext {
     pub is_draft: bool,
     pub position: usize,
     pub is_current: bool,
+    /// True for the tip of the stack — the entry furthest from the trunk.
+    pub is_leaf: bool,
 }
 
 /// Build a minijinja environment with the stack comment template loaded.
@@ -249,6 +251,7 @@ mod tests {
                 is_draft: false,
                 position: 1,
                 is_current: current_index == 0,
+                is_leaf: false,
             },
             StackEntryContext {
                 bookmark_name: "feat-b".to_string(),
@@ -259,6 +262,7 @@ mod tests {
                 is_draft: false,
                 position: 2,
                 is_current: current_index == 1,
+                is_leaf: true,
             },
         ];
         StackCommentContext {
@@ -285,7 +289,9 @@ mod tests {
         // their link. Each row is a list item and the URL is bare, which is what
         // makes GitHub render it as a reference with the PR's live title and state.
         assert!(
-            body.contains("- https://github.com/owner/repo/pull/2 \u{1f448} **this PR**"),
+            body.contains(
+                "- https://github.com/owner/repo/pull/2 (top of stack) \u{1f448} **this PR**"
+            ),
             "expected current entry to be marked: {body}"
         );
         assert!(
@@ -296,6 +302,11 @@ mod tests {
             body.matches("**this PR**").count(),
             1,
             "exactly one entry is the current one: {body}"
+        );
+        assert_eq!(
+            body.matches("(top of stack)").count(),
+            1,
+            "exactly one entry is the leaf: {body}"
         );
     }
 
@@ -442,6 +453,7 @@ mod tests {
                 is_draft: false,
                 position: 1,
                 is_current: true,
+                is_leaf: true,
             }],
             stack_size: 1,
             default_branch: "main".to_string(),
@@ -452,7 +464,7 @@ mod tests {
         let tmpl = env.get_template("stack_comment").unwrap();
         let body = format_stack_comment(&data, &ctx, &tmpl).unwrap();
         assert!(
-            body.contains("- https://github.com/o/r/pull/1 \u{1f448} **this PR**"),
+            body.contains("- https://github.com/o/r/pull/1 (top of stack) \u{1f448} **this PR**"),
             "expected list entry: {body}"
         );
     }
@@ -538,6 +550,7 @@ mod tests {
                 is_draft: false,
                 position: i + 1,
                 is_current: i == 1,
+                is_leaf: i + 1 == names.len(),
             })
             .collect();
         StackCommentContext {

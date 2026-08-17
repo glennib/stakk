@@ -95,13 +95,13 @@ pushes every one of them and creates or updates one PR per bookmark, basing each
 
 Each PR shows only its own diff, and a stack comment on every PR links all related PRs together.
 The comment orders the stack the way `stakk graph` and the TUI do, leaf at the top and trunk at the bottom,
-and marks the PR you are looking at.
+and marks both the tip of the stack and the PR you are looking at.
 Each row is a bare PR link, which GitHub renders as a reference carrying that PR's live title and merge state:
 
 ```text
 Stack of 3 PRs merging into main
 
-• Add the search UI #14
+• Add the search UI #14 (top of stack)
 • Add the search API #13 👈 this PR
 • Add user authentication #12
 • main
