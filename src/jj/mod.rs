@@ -563,8 +563,11 @@ mod tests {
     where
         F: Fn(&[&str]) -> Result<String, JjError> + Send + Sync,
     {
-        async fn run_jj(&self, args: &[&str]) -> Result<String, JjError> {
-            (self.handler)(args)
+        fn run_jj(
+            &self,
+            args: &[&str],
+        ) -> impl std::future::Future<Output = Result<String, JjError>> + Send {
+            std::future::ready((self.handler)(args))
         }
     }
 
