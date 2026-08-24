@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.2.1](https://github.com/glennib/stakk/compare/v2.2.0...v2.2.1) - 2026-08-24
+
+### Fixed
+
+- cargo upgrade
+- *(lint)* satisfy clippy 1.98 unused_async_trait_impl in mock runners
+
+### Other
+
+- *(deps)* update dependency cargo-binstall to v1.22.0 ([#221](https://github.com/glennib/stakk/pull/221))
+- *(deps)* update dependency rumdl to v0.2.60 ([#220](https://github.com/glennib/stakk/pull/220))
+- *(deps)* update dependency rumdl to v0.2.58 ([#219](https://github.com/glennib/stakk/pull/219))
+- *(deps)* update dependency rumdl to v0.2.57 ([#218](https://github.com/glennib/stakk/pull/218))
+- *(deps)* update dependency rumdl to v0.2.56 ([#216](https://github.com/glennib/stakk/pull/216))
+
 ## [2.2.0](https://github.com/glennib/stakk/compare/v2.1.3...v2.2.0) - 2026-08-17
 
 ### Added
