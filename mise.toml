@@ -1,5 +1,5 @@
 [tools]
-uv = "0.12.5"
+uv = "0.12.6"
 "github:asciinema/asciinema" = "3.2.1"
 "github:asciinema/agg" = "1.9.0"
 cargo-binstall = "1.22.0"
