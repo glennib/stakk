@@ -225,8 +225,9 @@ Two-screen inline viewport TUI for choosing a branch path and assigning bookmark
 
 1. **GraphView** — Select a leaf node (branch tip) from a jj-log-style graph: one row per commit,
    `│ `-cell edge gutter on the left, `├─╯` connector rows where a sibling subtree merges into its parent's column.
-   Every row permanently carries its bookmark names and `"description"`;
-   navigation only re-colors the selected trunk→leaf path.
+   Every row permanently carries its change id
+   (jj-log style: shortest unique prefix bright magenta, the rest of the id dimmed, 8 characters total),
+   its bookmark names and `"description"`; navigation only re-colors the selected trunk→leaf path.
    Glyphs: `●` selected path (cyan; the leaf is bold with a trailing `◀`), `○` other commits
    (dark gray), `◆` trunk, `⋯ n commits` collapsed runs.
    Sibling subtrees are ordered newest-first by committer timestamp

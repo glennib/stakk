@@ -2,7 +2,7 @@
 source: src/select/graph_widget.rs
 expression: render_to_string(&graph)
 ---
- ●  alpha  "alpha work"  ◀
- │ ○  beta  "beta work"
+ ●  ch_alpha  alpha  "alpha work"  ◀
+ │ ○  ch_beta  beta  "beta work"
  ├─╯
  ◆  trunk

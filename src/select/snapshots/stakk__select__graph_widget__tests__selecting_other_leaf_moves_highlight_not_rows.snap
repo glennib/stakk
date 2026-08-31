@@ -2,8 +2,8 @@
 source: src/select/graph_widget.rs
 expression: "render_to_string_with_state(&graph, &GraphViewState { selected_leaf: 1 })"
 ---
- ○  alpha  "alpha work"
- │ ●  beta  "beta work"  ◀
- │ ●  "beta base"
+ ○  ch_alpha  alpha  "alpha work"
+ │ ●  ch_beta  beta  "beta work"  ◀
+ │ ●  ch_beta  "beta base"
  ├─╯
  ◆  trunk

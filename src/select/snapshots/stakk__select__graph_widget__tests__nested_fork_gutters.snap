@@ -2,11 +2,11 @@
 source: src/select/graph_widget.rs
 expression: render_to_string(&graph)
 ---
- ●  email  "email work"  ◀
- │ ○  integration  "integration work"
- │ │ ○  ratelimit  "ratelimit work"
+ ●  ch_email  email  "email work"  ◀
+ │ ○  ch_int  integration  "integration work"
+ │ │ ○  ch_rate  ratelimit  "ratelimit work"
  │ ├─╯
- │ ○  api  "api work"
+ │ ○  ch_api  api  "api work"
  ├─╯
- ●  auth  "auth work"
+ ●  ch_auth  auth  "auth work"
  ◆  trunk

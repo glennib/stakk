@@ -2,6 +2,6 @@
 source: src/select/graph_widget.rs
 expression: render_to_string(&graph)
 ---
- ●  leaf  "add leaf"  ◀
- ●  base  "add base"
+ ●  ch_b  leaf  "add leaf"  ◀
+ ●  ch_a  base  "add base"
  ◆  trunk

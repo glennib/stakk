@@ -3,8 +3,8 @@
 //! Renders the layout's display rows top-down: one row per commit with a
 //! `│ `-cell gutter on the left, `├─╯` connector rows where sibling subtrees
 //! merge, and `⋯ n commits` rows for collapsed runs of unselected commits.
-//! Every row permanently carries its bookmark names and description; leaf
-//! navigation only re-colors the selected trunk→leaf path.
+//! Every row permanently carries its change id, bookmark names and
+//! description; leaf navigation only re-colors the selected trunk→leaf path.
 
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -29,6 +29,11 @@ use crate::graph::layout::LayoutNode;
 use crate::graph::layout::NODE_OTHER;
 use crate::graph::layout::NODE_SELECTED;
 use crate::graph::layout::TRUNK_CHAR;
+
+/// Total characters of change id shown per row (matching jj log's default):
+/// the shortest unique prefix, padded with dimmed characters from the full
+/// id up to this width.
+const CHANGE_ID_WIDTH: usize = 8;
 
 /// State for the graph view widget.
 #[derive(Debug)]
@@ -329,6 +334,9 @@ impl<'a> GraphWidget<'a> {
             return spans;
         }
 
+        spans.extend(Self::change_id_spans(node, is_on_path));
+        spans.push(Span::raw("  "));
+
         if !node.bookmark_names.is_empty() {
             spans.push(Span::styled(node.bookmark_names.join(", "), name_style));
             spans.push(Span::raw("  "));
@@ -345,6 +353,42 @@ impl<'a> GraphWidget<'a> {
             spans.push(Span::styled(format!("\"{}\"", node.summary), text_style));
         }
 
+        spans
+    }
+
+    /// The change id rendered jj-log style: the shortest unique prefix
+    /// bright, the rest of the id dimmed, [`CHANGE_ID_WIDTH`] characters in
+    /// total (more when the unique prefix itself is longer).
+    fn change_id_spans(node: &LayoutNode, is_on_path: bool) -> Vec<Span<'static>> {
+        let (prefix_style, rest_style) = if is_on_path {
+            (
+                Style::default()
+                    .fg(Color::Magenta)
+                    .add_modifier(Modifier::BOLD),
+                Style::default().fg(Color::DarkGray),
+            )
+        } else {
+            (
+                Style::default().fg(Color::DarkGray),
+                Style::default()
+                    .fg(Color::DarkGray)
+                    .add_modifier(Modifier::DIM),
+            )
+        };
+
+        let prefix = node.short_change_id.as_str();
+        let rest: String = node
+            .change_id
+            .strip_prefix(prefix)
+            .unwrap_or("")
+            .chars()
+            .take(CHANGE_ID_WIDTH.saturating_sub(prefix.chars().count()))
+            .collect();
+
+        let mut spans = vec![Span::styled(prefix.to_string(), prefix_style)];
+        if !rest.is_empty() {
+            spans.push(Span::styled(rest, rest_style));
+        }
         spans
     }
 }
@@ -717,6 +761,55 @@ mod tests {
         let other_glyph = &lines[1].spans[2];
         assert_eq!(other_glyph.content.as_ref(), NODE_OTHER);
         assert_eq!(other_glyph.style.fg, Some(Color::DarkGray));
+    }
+
+    #[test]
+    fn change_id_is_two_tone_on_path_and_dim_off_path() {
+        let graph = make_graph(vec![
+            BranchStack {
+                segments: vec![make_segment_at(
+                    &["alpha"],
+                    "ch_alpha",
+                    &["alpha work"],
+                    "2026-02-01T00:00:00Z",
+                )],
+            },
+            BranchStack {
+                segments: vec![make_segment_at(
+                    &["beta"],
+                    "ch_beta",
+                    &["beta work"],
+                    "2026-01-01T00:00:00Z",
+                )],
+            },
+        ]);
+
+        let layout = build_layout(&graph);
+        let state = GraphViewState::new();
+        let widget = GraphWidget::new(&layout, &state);
+        let (lines, _) = widget.build_lines();
+
+        // On-path (selected) row: glyph, spacer, then the shortest unique
+        // prefix bright magenta + bold, then the rest of the id (up to 8
+        // characters total) dark gray.
+        let prefix = &lines[0].spans[3];
+        assert_eq!(prefix.content.as_ref(), "ch_a");
+        assert_eq!(prefix.style.fg, Some(Color::Magenta));
+        assert!(prefix.style.add_modifier.contains(Modifier::BOLD));
+        let rest = &lines[0].spans[4];
+        assert_eq!(rest.content.as_ref(), "lpha");
+        assert_eq!(rest.style.fg, Some(Color::DarkGray));
+
+        // Off-path row (one extra gutter span first): both id spans dark
+        // gray, the remainder additionally DIM.
+        let prefix = &lines[1].spans[4];
+        assert_eq!(prefix.content.as_ref(), "ch_b");
+        assert_eq!(prefix.style.fg, Some(Color::DarkGray));
+        assert!(!prefix.style.add_modifier.contains(Modifier::BOLD));
+        let rest = &lines[1].spans[5];
+        assert_eq!(rest.content.as_ref(), "eta");
+        assert_eq!(rest.style.fg, Some(Color::DarkGray));
+        assert!(rest.style.add_modifier.contains(Modifier::DIM));
     }
 
     #[test]
