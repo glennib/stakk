@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.3.0](https://github.com/glennib/stakk/compare/v2.2.1...v2.3.0) - 2026-08-31
+
+### Added
+
+- *(select)* show short change ids in the graph screen
+
+### Other
+
+- *(deps)* lock file maintenance ([#229](https://github.com/glennib/stakk/pull/229))
+- *(deps)* update dependency uv to v0.12.7 ([#228](https://github.com/glennib/stakk/pull/228))
+- *(deps)* update dependency rumdl to v0.2.62 ([#227](https://github.com/glennib/stakk/pull/227))
+- *(deps)* update dependency rumdl to v0.2.61 ([#226](https://github.com/glennib/stakk/pull/226))
+- *(deps)* lock file maintenance ([#223](https://github.com/glennib/stakk/pull/223))
+- *(deps)* update dependency uv to v0.12.6 ([#224](https://github.com/glennib/stakk/pull/224))
+
 ## [2.2.1](https://github.com/glennib/stakk/compare/v2.2.0...v2.2.1) - 2026-08-24
 
 ### Fixed
