@@ -82,7 +82,8 @@ pr_mode = "draft"
 template_path = "/path/to/my-template.md.jinja"
 
 # Where to place stack info: "comment", "body", "none", "ignore",
-# "auto-comment", or "auto-body" (default: "comment")
+# "auto-comment", or "auto-body" (default: "auto-comment", which is
+# identical to "comment" as long as native_stacks is "ignore")
 # "none" writes no stack info and removes existing stack comments/body
 # fences on the next submit. "ignore" writes no stack info and leaves
 # existing artifacts untouched. "auto-comment"/"auto-body" behave like
@@ -221,7 +222,7 @@ an Enterprise Server reachable only over plain HTTP is not supported.
 | `STAKK_GITHUB_HOST` | Extra host to treat as GitHub, for GitHub Enterprise Server (overridden by `--github-host`) |
 | `STAKK_PR_MODE` | PR creation mode: `regular` or `draft` (overridden by `--pr-mode`) |
 | `STAKK_TEMPLATE_PATH` | Path to a custom minijinja template for stack comments (overridden by `--template-path`) |
-| `STAKK_STACK_PLACEMENT` | Where to place the stack info: `comment` (default), `body`, `none`, `ignore`, `auto-comment`, or `auto-body` (overridden by `--stack-placement`) |
+| `STAKK_STACK_PLACEMENT` | Where to place the stack info: `comment`, `body`, `none`, `ignore`, `auto-comment` (default), or `auto-body` (overridden by `--stack-placement`) |
 | `STAKK_NATIVE_STACKS` | Register stacks with GitHub's native stacked PRs: `on`, `auto`, `none`, or `ignore` (default) (overridden by `--native-stacks`) |
 | `STAKK_AUTO_PREFIX` | Prefix for auto-generated bookmark names (overridden by `--auto-prefix`) |
 | `STAKK_SYNC_PR_CONTENT` | Sync PR title/body from commits: `none` (default), `title`, `body`, or `all` (overridden by `--sync-pr-content`) |

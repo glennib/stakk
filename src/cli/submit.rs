@@ -230,6 +230,8 @@ pub struct SubmitArgs {
     /// --native-stacks): when a native server-side stack is in effect
     /// for the run they behave like none, otherwise — including when
     /// native availability could not be determined — like comment/body.
+    /// The default is auto-comment, which is identical to comment as
+    /// long as --native-stacks is ignore (its default).
     ///
     /// Switching between comment and body migrates automatically: moving to
     /// body deletes the old stack comment, moving to comment strips the
@@ -241,7 +243,7 @@ pub struct SubmitArgs {
     #[arg(
         long,
         env = "STAKK_STACK_PLACEMENT",
-        default_value = "comment",
+        default_value = "auto-comment",
         value_enum,
         verbatim_doc_comment
     )]

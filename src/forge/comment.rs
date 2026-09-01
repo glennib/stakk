@@ -17,7 +17,6 @@ use crate::submit::SubmitError;
 #[serde(rename_all = "kebab-case")]
 pub enum StackPlacement {
     /// Place the stack comment as a separate PR comment (issue comment).
-    #[default]
     Comment,
     /// Place the stack content in a fenced section of the PR body.
     Body,
@@ -30,6 +29,9 @@ pub enum StackPlacement {
     /// Behave like `none` when a native server-side stack is in effect
     /// for this run (see --native-stacks), like `comment` otherwise —
     /// including when native availability could not be determined.
+    /// Identical to `comment` as long as --native-stacks is ignore (its
+    /// default) or none, which is what makes it a safe default.
+    #[default]
     AutoComment,
     /// Behave like `none` when a native server-side stack is in effect
     /// for this run (see --native-stacks), like `body` otherwise —

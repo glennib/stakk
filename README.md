@@ -109,9 +109,10 @@ Stack of 3 PRs merging into main
 
 ## Stack info placement
 
-`--stack-placement` decides where the stack overview lives on each PR: a separate PR `comment` (default),
+`--stack-placement` decides where the stack overview lives on each PR: a separate PR `comment`,
 a fenced section in the PR `body`, `none` (write nothing and remove what is already there), `ignore`
 (write nothing and touch nothing), or `auto-comment`/`auto-body` (defer to native stacks, below).
+The default is `auto-comment`, which is identical to `comment` as long as `--native-stacks` is `ignore` (its default).
 Switching between `comment` and `body` migrates automatically,
 and a submission that produces a single PR is not a stack, so no stack info is written.
 

@@ -728,8 +728,13 @@ If you change any of the following, update `scripts/record-demo.py` in the same 
   third-party UIs).
   The `auto-comment`/`auto-body` placements resolve the redundancy per run instead of forbidding it,
   and an explicit `comment`/`body` choice is never overridden.
-  The intended zero-config end state at GA is `native_stacks = auto` + `stack_placement = auto-comment`:
-  native rendering where enabled, stack comments everywhere else, never both.
+  `stack_placement` already defaults to `auto-comment` —
+  extensionally identical to `comment` while `native_stacks` is `ignore`
+  (its default),
+  so the flip is not a behavior change and not a semver break —
+  and the intended GA change is a single default flip of `native_stacks` to `auto`: native rendering where enabled,
+  stack comments everywhere else, never both.
+  The `--native-stacks` docs advertise that its default may change.
 - **`--native-stacks` reuses the placement vocabulary** — its members are `on`/`auto`/`none`/`ignore`,
   where `none` and `ignore` follow the same rule as their `--stack-placement` namesakes:
   `none` registers nothing *and* dissolves the server-side stacks containing submitted PRs

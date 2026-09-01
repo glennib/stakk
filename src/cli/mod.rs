@@ -469,7 +469,10 @@ mod tests {
     #[test]
     fn stack_placement_default_no_config() {
         let cli = parse_with_config(Config::default(), &["stakk", "submit"]);
-        assert_eq!(submit_args(&cli).stack_placement, StackPlacement::Comment);
+        assert_eq!(
+            submit_args(&cli).stack_placement,
+            StackPlacement::AutoComment
+        );
     }
 
     #[test]
