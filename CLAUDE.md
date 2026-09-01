@@ -204,6 +204,9 @@ There is intentionally no `git/` module.
 - Use `jj commit -m "message"` to finalize a change.
 - Use `jj tug` to move the main bookmark forward to `@-` after committing.
 - Push with `jj git push --bookmark main`.
+- Commit types drive release-plz versioning, so `feat` is reserved for changes in what stakk can do.
+  A purely presentational change — help-output layout, display formatting, wording — is `style`
+  (or `docs` when it only touches documentation), not `feat`.
 
 ### Error Handling
 
