@@ -17,6 +17,8 @@ where the stack overview lives on each PR:
 | `body` | A fenced section in the PR body (`STAKK_BODY_START` … `STAKK_BODY_END`) | Yes, when migrating from `comment` |
 | `none` | Nothing | Yes, on every submit |
 | `ignore` | Nothing | No — existing artifacts are left exactly as they are |
+| `auto-comment` | Like `none` when a native stack is in effect, like `comment` otherwise | Follows the mode it resolves to |
+| `auto-body` | Like `none` when a native stack is in effect, like `body` otherwise | Follows the mode it resolves to |
 
 Switching between `comment` and `body` migrates automatically.
 Content you write outside the body fences is preserved; the fenced section itself is overwritten on every run.
@@ -27,6 +29,18 @@ Use `ignore` to leave the existing comments and fences frozen in place — handy
 or when another process owns that part of the PR.
 Neither mode reads or compiles a custom `--template-path`,
 so a broken template cannot fail a submission that will not render it.
+
+`auto-comment` and `auto-body` defer to `--native-stacks`
+(see `stakk submit --help`):
+on a run where the server-side stack was registered, GitHub's own stack rendering replaces stakk's text,
+so they behave like `none` and retire it; on every other run they behave like `comment`/`body`.
+The retirement requires a *definitive* native stack —
+if stack registration failed for a reason that says nothing about availability
+(a transient network error, say),
+the auto modes still write: a redundant overview self-heals on the next successful run,
+while a skipped update would leave a stale one standing.
+While `--native-stacks` is `ignore` (its default) or `none`,
+`auto-comment` and `auto-body` are exactly `comment` and `body`.
 
 A submission that produces a single PR is not a stack: no stack info is written, and stale artifacts from an earlier,
 larger stack are cleaned up (unless the mode is `ignore`).

@@ -458,7 +458,8 @@ fn run_event_loop(
                             };
                             match result {
                                 VaryResult::NeedsRefire => {
-                                    // Bust the cache so the command actually re-runs
+                                    // Bust the cache so the command actually
+                                    // re-runs
                                     // instead of returning the previous result.
                                     let segment = bookmark_gen::dynamic_segment_commits(
                                         &state.rows,

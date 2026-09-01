@@ -1,5 +1,7 @@
 //! GitHub implementation of the Forge trait using octocrab.
 
+mod stacks;
+
 use octocrab::Octocrab;
 use octocrab::models::CommentId;
 
@@ -7,6 +9,7 @@ use super::Comment;
 use super::CreatePrParams;
 use super::Forge;
 use super::ForgeError;
+use super::ForgeStack;
 use super::PullRequest;
 
 /// GitHub implementation of the `Forge` trait.
@@ -171,6 +174,37 @@ impl Forge for GitHubForge {
             .await
             .map_err(map_octocrab_error)?;
         Ok(())
+    }
+
+    // The four stack methods go through `stacks`, a hand-rolled transport
+    // for the preview endpoints — see that module for why octocrab's typed
+    // helpers cannot serve them yet.
+
+    async fn get_stacks_for_pr(&self, pr_number: u64) -> Result<Vec<ForgeStack>, ForgeError> {
+        stacks::get_stacks_for_pr(&self.client, &self.owner, &self.repo, pr_number).await
+    }
+
+    async fn create_stack(&self, pr_numbers: &[u64]) -> Result<ForgeStack, ForgeError> {
+        stacks::create_stack(&self.client, &self.owner, &self.repo, pr_numbers).await
+    }
+
+    async fn add_to_stack(
+        &self,
+        stack_number: u64,
+        pr_numbers: &[u64],
+    ) -> Result<ForgeStack, ForgeError> {
+        stacks::add_to_stack(
+            &self.client,
+            &self.owner,
+            &self.repo,
+            stack_number,
+            pr_numbers,
+        )
+        .await
+    }
+
+    async fn unstack(&self, stack_number: u64) -> Result<(), ForgeError> {
+        stacks::unstack(&self.client, &self.owner, &self.repo, stack_number).await
     }
 }
 

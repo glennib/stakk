@@ -45,7 +45,7 @@ Two do more:
   pull request comment or body, which is outward-facing.
 
 The rest cannot act on their own.
-Revsets reach `jj` as arguments rather than through a shell, `pr_mode`, `stack_placement`,
+Revsets reach `jj` as arguments rather than through a shell, `pr_mode`, `stack_placement`, `native_stacks`,
 `sync_pr_content` and `trailers` are closed sets of values, `remote` has to name a remote that already exists,
 and `github_host` does nothing without a remote on that host.
 
@@ -81,13 +81,28 @@ pr_mode = "draft"
 # Reads any path and renders it into a PR — see the trust note above.
 template_path = "/path/to/my-template.md.jinja"
 
-# Where to place stack info: "comment", "body", "none", or "ignore"
-# (default: "comment")
+# Where to place stack info: "comment", "body", "none", "ignore",
+# "auto-comment", or "auto-body" (default: "comment")
 # "none" writes no stack info and removes existing stack comments/body
-# fences on the next submit (e.g. if you rely on GitHub's native
-# stacked PRs). "ignore" writes no stack info and leaves existing
-# artifacts untouched.
+# fences on the next submit. "ignore" writes no stack info and leaves
+# existing artifacts untouched. "auto-comment"/"auto-body" behave like
+# "none" on runs where a native server-side stack is in effect (see
+# native_stacks below) and like "comment"/"body" otherwise.
 stack_placement = "body"
+
+# Register submitted stacks with GitHub's native stacked pull requests
+# (public preview): "on", "auto", "none", or "ignore" (default:
+# "ignore"; the default may change to "auto" once the feature reaches
+# general availability)
+# "on" fails the submit if the feature is not available on the
+# repository; "auto" registers the stack where it is available and
+# skips silently where it is not. Like the placement modes, "none"
+# also removes — it registers nothing and dissolves the server-side
+# stacks that are standing — while "ignore" never touches the stack
+# API. A submission producing a single PR is not a stack and skips the
+# registration (and the "on" failure) entirely; "none" retires its
+# stacks anyway.
+native_stacks = "auto"
 
 # Prefix for auto-generated bookmark names (default: none)
 auto_prefix = "gb-"
@@ -206,7 +221,8 @@ an Enterprise Server reachable only over plain HTTP is not supported.
 | `STAKK_GITHUB_HOST` | Extra host to treat as GitHub, for GitHub Enterprise Server (overridden by `--github-host`) |
 | `STAKK_PR_MODE` | PR creation mode: `regular` or `draft` (overridden by `--pr-mode`) |
 | `STAKK_TEMPLATE_PATH` | Path to a custom minijinja template for stack comments (overridden by `--template-path`) |
-| `STAKK_STACK_PLACEMENT` | Where to place the stack info: `comment` (default), `body`, `none`, or `ignore` (overridden by `--stack-placement`) |
+| `STAKK_STACK_PLACEMENT` | Where to place the stack info: `comment` (default), `body`, `none`, `ignore`, `auto-comment`, or `auto-body` (overridden by `--stack-placement`) |
+| `STAKK_NATIVE_STACKS` | Register stacks with GitHub's native stacked PRs: `on`, `auto`, `none`, or `ignore` (default) (overridden by `--native-stacks`) |
 | `STAKK_AUTO_PREFIX` | Prefix for auto-generated bookmark names (overridden by `--auto-prefix`) |
 | `STAKK_SYNC_PR_CONTENT` | Sync PR title/body from commits: `none` (default), `title`, `body`, or `all` (overridden by `--sync-pr-content`) |
 | `STAKK_TRAILERS` | Whether to keep or strip git commit trailers in PR bodies: `keep` (default) or `strip` (overridden by `--trailers`) |

@@ -110,10 +110,25 @@ Stack of 3 PRs merging into main
 ## Stack info placement
 
 `--stack-placement` decides where the stack overview lives on each PR: a separate PR `comment` (default),
-a fenced section in the PR `body`, `none` (write nothing and remove what is already there), or `ignore`
-(write nothing and touch nothing).
+a fenced section in the PR `body`, `none` (write nothing and remove what is already there), `ignore`
+(write nothing and touch nothing), or `auto-comment`/`auto-body` (defer to native stacks, below).
 Switching between `comment` and `body` migrates automatically,
 and a submission that produces a single PR is not a stack, so no stack info is written.
+
+`--native-stacks` registers submitted stacks with
+[GitHub's native stacked pull requests](https://docs.github.com/en/pull-requests/how-tos/stacked-pull-requests)
+(public preview):
+`on` (fail the submit where the feature is unavailable), `auto`
+(register where available, skip silently where not — GitHub Enterprise Server, for example),
+`none` (register nothing and dissolve the server-side stacks that are standing), or `ignore`
+(default; never touch the stack API)
+— `none` and `ignore` follow the same also-removes/touches-nothing rule as the placement modes.
+GitHub then renders the stack natively and retargets the remaining PRs as the stack merges bottom-up.
+Since that rendering replaces stakk's stack overview,
+`auto-comment`/`auto-body` behave like `none` on runs where a native stack is in effect
+and like `comment`/`body` otherwise,
+so `--native-stacks auto --stack-placement auto-comment` gives native rendering where available
+and stack comments everywhere else, never both.
 
 Full mode table, migration details, and stack comment templating: [docs/template.md](docs/template.md),
 or run `stakk docs template`.

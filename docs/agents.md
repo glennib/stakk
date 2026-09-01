@@ -82,11 +82,14 @@ It creates no bookmark, pushes nothing, and writes nothing to GitHub — though 
 to find the pull requests that already exist.
 The plan it prints is the one a run without `--dry-run` executes.
 
-Two things it does not cover.
+Three things it does not cover.
 A configured `--bookmark-command` runs under `--dry-run` too, during selection,
 both for `--new-command` marks and for TUI rows cycled to `[*]custom`.
-And `--dry-run` returns before the execute phase,
+`--dry-run` returns before the execute phase,
 so it does not preview the *removal* of stack artifacts that `--stack-placement none` performs.
+For the same reason it does not preview the server-side stack changes of `--native-stacks`:
+the reconciliation under `on`/`auto`, which can dissolve and recreate existing stacks on GitHub,
+and the retirement `none` performs.
 
 ## Diagnostics
 

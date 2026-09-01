@@ -73,6 +73,40 @@ impl std::fmt::Display for TrailerHandling {
     }
 }
 
+/// Whether to register submitted stacks with the forge's native
+/// server-side stack feature (GitHub's stacked pull requests, public
+/// preview).
+///
+/// `none` and `ignore` follow the same rule as their `--stack-placement`
+/// namesakes: `none` also removes what is standing, `ignore` touches
+/// nothing.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Deserialize, clap::ValueEnum)]
+#[serde(rename_all = "kebab-case")]
+pub enum NativeStacks {
+    /// Register/update the server-side stack on every submit; fail the
+    /// submit if the feature is not available on the repository.
+    On,
+    /// Register/update the server-side stack where the feature is
+    /// available, and skip it silently where it is not.
+    Auto,
+    /// Register nothing, and dissolve any server-side stack containing a
+    /// submitted PR — turning the feature off retires what is standing.
+    None,
+    /// Never touch the forge's stack API, leaving any server-side stack
+    /// exactly as it is.
+    #[default]
+    Ignore,
+}
+
+impl std::fmt::Display for NativeStacks {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let pv = self
+            .to_possible_value()
+            .expect("all variants have possible values");
+        f.write_str(pv.get_name())
+    }
+}
+
 /// Arguments for the submit subcommand.
 #[derive(Debug, Args)]
 pub struct SubmitArgs {
@@ -192,6 +226,11 @@ pub struct SubmitArgs {
     /// comments and body fences on submit. ignore leaves them exactly as
     /// they are — use it when something else owns that part of the PR.
     ///
+    /// auto-comment and auto-body defer to native stacks (see
+    /// --native-stacks): when a native server-side stack is in effect
+    /// for the run they behave like none, otherwise — including when
+    /// native availability could not be determined — like comment/body.
+    ///
     /// Switching between comment and body migrates automatically: moving to
     /// body deletes the old stack comment, moving to comment strips the
     /// fenced section from the PR body.
@@ -207,6 +246,47 @@ pub struct SubmitArgs {
         verbatim_doc_comment
     )]
     pub stack_placement: StackPlacement,
+
+    /// Whether to register submitted stacks with GitHub's native
+    /// stacked-pull-requests feature (public preview).
+    ///
+    /// When on, the server-side stack is created or updated after every
+    /// submit, and the submit fails with guidance if the feature is not
+    /// available on the repository (branches and PRs are still submitted
+    /// normally first). GitHub then renders the stack natively and
+    /// retargets the remaining PRs as the stack merges bottom-up.
+    ///
+    /// When auto, the server-side stack is registered where the feature
+    /// is available and skipped silently where it is not (GitHub
+    /// Enterprise Server, for example). There is no upfront probe: the
+    /// registration itself is the availability check.
+    ///
+    /// none and ignore follow the same rule as their --stack-placement
+    /// namesakes: none registers nothing and also dissolves any
+    /// server-side stack containing a submitted PR, retiring the feature
+    /// cleanly; ignore never touches the stack API and leaves any
+    /// server-side stack exactly as it is.
+    ///
+    /// A submission that produces a single pull request is not a stack
+    /// and skips the registration entirely: nothing is registered, and
+    /// the on-mode availability failure cannot fire there. A stale
+    /// server-side stack containing that PR is left alone — except under
+    /// none, whose retirement covers single-PR submissions too.
+    ///
+    /// The native stack is independent of --stack-placement: stack
+    /// comments or body fences are still written unless placement is
+    /// none, ignore, or an auto mode that resolved to native.
+    ///
+    /// The default may change to auto once GitHub's stacked pull
+    /// requests reach general availability.
+    #[arg(
+        long,
+        env = "STAKK_NATIVE_STACKS",
+        default_value = "ignore",
+        value_enum,
+        verbatim_doc_comment
+    )]
+    pub native_stacks: NativeStacks,
 
     /// Whether existing PR titles and/or bodies are updated from jj commit
     /// descriptions on every submit.
