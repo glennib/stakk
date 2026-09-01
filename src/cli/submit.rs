@@ -132,14 +132,24 @@ pub struct SubmitArgs {
     ///
     /// `stakk graph [--format=json]` lists stacks, bookmarks and change
     /// ids.
-    #[arg(long, value_name = "BOOKMARK", verbatim_doc_comment)]
+    #[arg(
+        long,
+        value_name = "BOOKMARK",
+        help_heading = "Selection (non-interactive)",
+        verbatim_doc_comment
+    )]
     pub keep: Vec<String>,
 
     /// Create a new bookmark at REV as a PR boundary (repeatable).
     ///
     /// REV is a change id or commit id prefix (as shown by `stakk graph`).
     /// The bookmark is named stakk-<change_id> unless =NAME is given.
-    #[arg(long, value_name = "REV[=NAME]", verbatim_doc_comment)]
+    #[arg(
+        long,
+        value_name = "REV[=NAME]",
+        help_heading = "Selection (non-interactive)",
+        verbatim_doc_comment
+    )]
     pub new: Vec<String>,
 
     /// Create a new auto-named bookmark at REV (repeatable).
@@ -148,14 +158,24 @@ pub struct SubmitArgs {
     /// the commits folded into the boundary, honoring --auto-prefix. Falls
     /// back to stakk-<change_id> when nothing can be derived or the
     /// derived name is already taken.
-    #[arg(long, value_name = "REV", verbatim_doc_comment)]
+    #[arg(
+        long,
+        value_name = "REV",
+        help_heading = "Selection (non-interactive)",
+        verbatim_doc_comment
+    )]
     pub new_auto: Vec<String>,
 
     /// Create a new bookmark at REV named by --bookmark-command (repeatable).
     ///
     /// Errors if no bookmark command is configured. The command receives
     /// the same JSON segment description as in the TUI.
-    #[arg(long, value_name = "REV", verbatim_doc_comment)]
+    #[arg(
+        long,
+        value_name = "REV",
+        help_heading = "Selection (non-interactive)",
+        verbatim_doc_comment
+    )]
     pub new_command: Vec<String>,
 
     #[command(flatten)]
@@ -169,6 +189,7 @@ pub struct SubmitArgs {
         env = "STAKK_PR_MODE",
         default_value = "regular",
         value_enum,
+        help_heading = "Pull request content",
         verbatim_doc_comment
     )]
     pub pr_mode: PrMode,
@@ -212,7 +233,12 @@ pub struct SubmitArgs {
         clippy::doc_lazy_continuation,
         reason = "endfor must align with the for-loop, not the list item"
     )]
-    #[arg(long, env = "STAKK_TEMPLATE_PATH", verbatim_doc_comment)]
+    #[arg(
+        long,
+        env = "STAKK_TEMPLATE_PATH",
+        help_heading = "Stack info",
+        verbatim_doc_comment
+    )]
     pub template_path: Option<String>,
 
     /// Where to place the stack overview on each pull request.
@@ -245,6 +271,7 @@ pub struct SubmitArgs {
         env = "STAKK_STACK_PLACEMENT",
         default_value = "auto-comment",
         value_enum,
+        help_heading = "Stack info",
         verbatim_doc_comment
     )]
     pub stack_placement: StackPlacement,
@@ -286,6 +313,7 @@ pub struct SubmitArgs {
         env = "STAKK_NATIVE_STACKS",
         default_value = "ignore",
         value_enum,
+        help_heading = "Stack info",
         verbatim_doc_comment
     )]
     pub native_stacks: NativeStacks,
@@ -301,6 +329,7 @@ pub struct SubmitArgs {
         env = "STAKK_SYNC_PR_CONTENT",
         default_value = "none",
         value_enum,
+        help_heading = "Pull request content",
         verbatim_doc_comment
     )]
     pub sync_pr_content: SyncPrContent,
@@ -314,6 +343,7 @@ pub struct SubmitArgs {
         env = "STAKK_TRAILERS",
         default_value = "keep",
         value_enum,
+        help_heading = "Pull request content",
         verbatim_doc_comment
     )]
     pub trailers: TrailerHandling,
@@ -327,7 +357,12 @@ pub struct SubmitArgs {
     ///
     /// The prefix is applied before length/character validation, so it
     /// counts toward the 255-byte limit.
-    #[arg(long, env = "STAKK_AUTO_PREFIX", verbatim_doc_comment)]
+    #[arg(
+        long,
+        env = "STAKK_AUTO_PREFIX",
+        help_heading = "Bookmark naming",
+        verbatim_doc_comment
+    )]
     pub auto_prefix: Option<String>,
 
     /// Shell command for generating custom bookmark names.
@@ -398,6 +433,11 @@ pub struct SubmitArgs {
     ///     | tr '[:upper:]' '[:lower:]' \
     ///     | sed 's/[^a-z0-9]\{1,\}/-/g; s/^-//; s/-$//' \
     ///     | head -c 50
-    #[arg(long, env = "STAKK_BOOKMARK_COMMAND", verbatim_doc_comment)]
+    #[arg(
+        long,
+        env = "STAKK_BOOKMARK_COMMAND",
+        help_heading = "Bookmark naming",
+        verbatim_doc_comment
+    )]
     pub bookmark_command: Option<String>,
 }

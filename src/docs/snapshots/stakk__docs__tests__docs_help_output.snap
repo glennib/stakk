@@ -20,6 +20,10 @@ Arguments:
           - template:  Stack info placement and stack comment templates
 
 Options:
+  -h, --help
+          Print help (see a summary with '-h')
+
+Global options:
       --config <CONFIG>
           Path to a config file (overrides automatic discovery).
           
@@ -37,6 +41,3 @@ Options:
           without further configuration.
           
           [env: STAKK_GITHUB_HOST=]
-
-  -h, --help
-          Print help (see a summary with '-h')

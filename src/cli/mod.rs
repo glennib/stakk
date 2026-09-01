@@ -32,7 +32,13 @@ pub struct Cli {
     // as clap defaults), which means clap's parsed value arrives too late.
     // The actual path is resolved by `config::pre_parse_config_path()` from
     // raw `std::env::args()` / `STAKK_CONFIG`.
-    #[arg(long, global = true, env = "STAKK_CONFIG", verbatim_doc_comment)]
+    #[arg(
+        long,
+        global = true,
+        env = "STAKK_CONFIG",
+        help_heading = "Global options",
+        verbatim_doc_comment
+    )]
     pub config: Option<PathBuf>,
 
     /// Extra host to treat as GitHub, for GitHub Enterprise Server.
@@ -41,7 +47,13 @@ pub struct Cli {
     /// remotes on that host and talks to its API at https://<host>/api/v3.
     /// Falls back to GH_HOST when unset, so an existing GitHub CLI setup works
     /// without further configuration.
-    #[arg(long, global = true, env = "STAKK_GITHUB_HOST", verbatim_doc_comment)]
+    #[arg(
+        long,
+        global = true,
+        env = "STAKK_GITHUB_HOST",
+        help_heading = "Global options",
+        verbatim_doc_comment
+    )]
     pub github_host: Option<String>,
 
     #[command(subcommand)]
