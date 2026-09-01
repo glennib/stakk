@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.4.0](https://github.com/glennib/stakk/compare/v2.3.0...v2.4.0) - 2026-09-01
+
+### Added
+
+- *(cli)* default `--stack-placement` to `auto-comment`
+- *(forge)* integrate GitHub's native stacked pull requests (`--native-stacks`)
+
+### Other
+
+- update gif
+- *(deps)* update dependency uv to v0.12.8 ([#230](https://github.com/glennib/stakk/pull/230))
+
 ## [2.3.0](https://github.com/glennib/stakk/compare/v2.2.1...v2.3.0) - 2026-08-31
 
 ### Added
