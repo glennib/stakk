@@ -569,8 +569,8 @@ mod tests {
         let v1 = tfidf_bookmark_name(&commits, 3, 1, 255, " ~^:?*[\\");
         assert!(v0.is_some());
         assert!(v1.is_some());
-        // With enough terms, different variations should produce different names
-        // (unless the pool is too small).
+        // With enough terms, different variations should produce different
+        // names (unless the pool is too small).
         if v0 != v1 {
             assert_ne!(v0, v1);
         }
@@ -613,9 +613,10 @@ mod tests {
     #[test]
     fn tfidf_orders_terms_by_occurrence() {
         // Force the word set so only the ordering varies: `implement` is a stop
-        // word, leaving exactly {foo, baz, bar} across the two commits. The pool
-        // then yields a single combo, so the rendered name is determined purely
-        // by first-occurrence order (trunk-to-tip), not alphabetically.
+        // word, leaving exactly {foo, baz, bar} across the two commits. The
+        // pool then yields a single combo, so the rendered name is
+        // determined purely by first-occurrence order (trunk-to-tip),
+        // not alphabetically.
         let commits = vec![
             CommitData {
                 description: "implement foo",

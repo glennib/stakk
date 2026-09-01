@@ -47,8 +47,8 @@ pub async fn build_change_graph<R: JjRunner>(
 ) -> Result<ChangeGraph, StakkError> {
     let bookmarks = jj.get_my_bookmarks(bookmarks_revset).await?;
 
-    // Collect user bookmark names so traversal can filter out non-user bookmarks
-    // that appear on commits (e.g. bookmarks from other users).
+    // Collect user bookmark names so traversal can filter out non-user
+    // bookmarks that appear on commits (e.g. bookmarks from other users).
     let user_bookmark_names: HashSet<String> = bookmarks.iter().map(|b| b.name.clone()).collect();
 
     let mut fully_collected: HashSet<String> = HashSet::new();

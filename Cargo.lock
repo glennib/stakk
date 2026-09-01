@@ -2835,6 +2835,7 @@ dependencies = [
  "directories",
  "futures",
  "http",
+ "http-body-util",
  "indicatif",
  "insta",
  "jiff",

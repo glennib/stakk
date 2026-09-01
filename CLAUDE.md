@@ -10,8 +10,8 @@ It complements jj by turning local bookmark state into coherent GitHub PRs with 
 All core features are complete: stack detection, three-phase submission, interactive TUI selection,
 fully explicit non-interactive selection via `--keep`/`--new*`, offline `stakk graph`
 (pretty graph + versioned JSON in sparse and full projections),
-four stack-placement modes, stack comment templating, layered config
-(CLI > env > repo/user TOML), bundled documentation via `stakk docs`, and comprehensive error handling.
+six stack-placement modes, native GitHub stacked-PR registration (`--native-stacks`), stack comment templating,
+layered config (CLI > env > repo/user TOML), bundled documentation via `stakk docs`, and comprehensive error handling.
 
 The CLI surface: `stakk` and `stakk submit` both open the TUI,
 every PR boundary of a non-interactive submission is named with a selection flag, and there is no positional bookmark,
@@ -126,7 +126,11 @@ src/
 │   └── version.rs   # jj version parsing + minimum supported version
 ├── forge/           # Forge trait + GitHub implementation (octocrab)
 │   ├── mod.rs       # Forge trait, forge-agnostic types, ForgeError
-│   ├── github.rs    # GitHubForge implementation
+│   ├── github/
+│   │   ├── mod.rs   # GitHubForge implementation
+│   │   └── stacks.rs # Hand-rolled transport for the native-stacks preview
+│   │                # endpoints — exists to be deleted once octocrab ships
+│   │                # typed support (XAMPPRocky/octocrab#934)
 │   ├── comment.rs   # Stack comment formatting, parsing, and template context
 │   └── default_comment.md.jinja  # Default minijinja template for stack comments
 ├── graph/           # Change graph construction (ChangeGraph, BookmarkSegment, BranchStack)
@@ -209,6 +213,9 @@ There is intentionally no `git/` module.
 - No `anyhow` — every error is a concrete type with `Diagnostic` metadata.
 - Use `#[diagnostic(help(...))]` for actionable advice on all variants.
   Use `#[diagnostic(code(stakk::...))]` for machine-readable error identifiers.
+  Exception: a variant that is *always* wrapped as the `#[source]` of another diagnostic carries no help of its own —
+  miette renders only the outermost help, so the advice lives once, on the wrapper
+  (see the `ForgeError` stack variants gotcha).
 
 ### jj Interface
 
@@ -468,6 +475,57 @@ If you change any of the following, update `scripts/record-demo.py` in the same 
 - Graph traversal uses `"trunk()"` as the revset base, not a branch name.
 - octocrab treats PR comments as issue comments — use `issues().list_comments()`.
 - octocrab `pulls().create()` borrows the handler — bind to a variable first.
+- The four stack methods on `Forge` go through `forge/github/stacks.rs`,
+  which builds `http::Request`s by hand
+  and sends them through the public `Octocrab::execute` instead of octocrab's typed helpers.
+  Two octocrab defects force this (verified against octocrab 0.54.1 source):
+  `build_request` stamps a baked-in `X-GitHub-Api-Version: 2022-11-28` on every request it builds
+  and `add_header` *appends* rather than replaces,
+  so the `2026-03-10` the stack routes require would go on the wire doubled and GitHub 400s it;
+  and octocrab's `map_github_error` chokes on error bodies whose `errors` field is a string
+  (GitHub's version-rejection body is one), degrading real status codes to serde errors.
+  `execute` keeps octocrab's service layers — auth, base URI (GHES), `User-Agent` —
+  because they run below `build_request`; only the header stamping is skipped.
+  The module doc says all of this; the module is deleted wholesale
+  when octocrab ships typed stacks support (XAMPPRocky/octocrab#934).
+- Native-stack availability is *not probed* — there is no `supports_native_stacks`.
+  The reconcile step runs before the text-placement step, and its own outcome is the answer:
+  success → a native stack is in effect, `ForgeError::StacksUnavailable`
+  (a 404 on a stacks route, the reading GitHub's own `gh stack` client applies)
+  → definitively not offered here, anything else → unknown.
+  Under `--native-stacks auto`, unknown resolves the auto placements to *writing* (comment/body), never to ignore:
+  a redundant stack overview self-heals on the next successful run, while a skipped update leaves a stale one standing.
+  Only a definitive native stack triggers the destructive direction (cleanup).
+  On GitHub the unavailable case today means GHES — the preview rolled out to all github.com repositories.
+- Stacks reported closed (`"open": false` on the wire) still appear in list responses;
+  `stacks.rs` filters them out before conversion so the reconcile never tries to unstack history.
+  `StackDto` is deliberately not serde-defaulted (same rule as `LogEntryRaw`).
+- Body sync is one pass, not part of the interleaved per-bookmark loop:
+  it runs after the native reconcile and `resolve_placement`, and is skipped only when the body-splice phase covers it
+  (`EffectivePlacement::Body` with more than one PR folds each sync into its own body write).
+  The interleaving rule (#35) covers pushes and base updates only, so batching bodies is safe.
+  `single_pr_body_placement_still_syncs_the_body` pins the single-PR case,
+  `deferred_body_sync_applies_when_auto_body_resolves_to_cleanup` the cleanup-resolved one.
+- A reconcile failure under `--native-stacks on` fails the submit, but the error is *held* and
+  returned after body syncs and the text placement ran (which resolve as on an unknown native
+  state) — the help text's promise that PRs were created/updated normally must be true by the
+  time it renders.
+  `native_on_reconcile_failure_still_syncs_bodies_and_writes_comments` pins this.
+- `ForgeError::StacksUnavailable` and `ForgeError::StackConflict` carry no `#[diagnostic(help)]` on purpose:
+  every stack call is wrapped by `submit::wrap_stack_err` into a `SubmitError`,
+  and miette renders only the outermost diagnostic's help
+  (`#[source]` chains messages, not diagnostics) — a help there would be dead prose drifting from the copy that renders.
+  This is the one sanctioned exception to the "help on all variants" rule.
+- A 404 from the stacks API is route-dependent (`NotFound` in `stacks.rs`): on the collection
+  routes it means the feature is not offered (`StacksUnavailable`), on `/stacks/{n}/add` it means
+  the stack vanished since the lookup (`StackConflict`, converged by rebuilding), and on
+  `/stacks/{n}/unstack` a vanished stack *is* the goal state, so the 404 counts as success.
+- The reconcile leaves a server stack standing
+  when the submission is its *bottom prefix* (`open_pr_numbers.starts_with(desired)`):
+  the chain above is intact and rebuilding would evict those PRs from merge-time retargeting.
+  Only a bottom prefix is safe — a slice higher up means the bottom submitted PR was retargeted past open members
+  and the stack is genuinely stale.
+  Every catch-all dissolve warns with the PR numbers that lose native stacking (`evicted_pr_numbers`).
 - Commit-derived PR body is only set on creation, not on update — avoids overwriting manually-edited PR bodies.
   Body-mode stack placement updates only the fenced section.
 - `markdown::unwrap::unwrap_markdown` reflows hard-wrapped description prose into soft-wrapped paragraphs
@@ -527,8 +585,11 @@ If you change any of the following, update `scripts/record-demo.py` in the same 
   The bookmark name is not written next to it either — the reference is the whole label.
 - Body-mode fences (`STAKK_BODY_START`/`STAKK_BODY_END`) are HTML comments, invisible on GitHub.
   Migration between placement modes is automatic.
-- `StackPlacement` (4 CLI modes) resolves to `EffectivePlacement`
-  (4 behaviors) in `resolve_placement`: `comment` → `Comment`, `body` → `Body`, `none` → `Cleanup`, `ignore` → `Ignore`.
+- `StackPlacement` (6 CLI modes) resolves to `EffectivePlacement`
+  (4 behaviors)
+  in `resolve_placement(placement, native_state)`: `comment` → `Comment`, `body` → `Body`, `none` → `Cleanup`,
+  `ignore` → `Ignore`, and `auto-comment`/`auto-body` → `Cleanup` on a definitive native stack,
+  `Comment`/`Body` otherwise (including on an unknown native state — see the native-stacks gotcha above).
   Keep the two enums distinct — `Cleanup` is also reached by single-bookmark submissions,
   which have no CLI mode of their own.
 - `--stack-placement none` writes no stack info and instead runs `cleanup_stack_artifacts` on every PR,
@@ -543,6 +604,7 @@ If you change any of the following, update `scripts/record-demo.py` in the same 
   the `EffectivePlacement::Ignore` arm short-circuits before the cleanup branch,
   so it also wins over the single-bookmark cleanup rule.
   Like `none`, it never reads or compiles `--template-path`.
+  The auto placements *always* load the template — they may resolve to rendering.
 - ratatui inline viewport: `enable_raw_mode()` before, `disable_raw_mode()` after.
 - The inline viewport is sized per screen
   (graph vs bookmark rows).
@@ -660,6 +722,42 @@ If you change any of the following, update `scripts/record-demo.py` in the same 
 - **`ignore` exists because `none` deletes** — turning stack info off and leaving other
   tooling's (or your own) comments and body fences alone are two different wishes.
   `none` serves the first, `ignore` the second; neither is a safe default for the other.
+- **`--native-stacks` is orthogonal to `--stack-placement`** —
+  registering the server-side stack and placing stakk's stack-info text are separate decisions
+  (native + comment is valid while GitHub's stack map is not rendered everywhere: mobile, notification emails,
+  third-party UIs).
+  The `auto-comment`/`auto-body` placements resolve the redundancy per run instead of forbidding it,
+  and an explicit `comment`/`body` choice is never overridden.
+  `stack_placement` already defaults to `auto-comment` —
+  extensionally identical to `comment` while `native_stacks` is `ignore`
+  (its default),
+  so the flip is not a behavior change and not a semver break —
+  and the intended GA change is a single default flip of `native_stacks` to `auto`: native rendering where enabled,
+  stack comments everywhere else, never both.
+  The `--native-stacks` docs advertise that its default may change.
+- **`--native-stacks` reuses the placement vocabulary** — its members are `on`/`auto`/`none`/`ignore`,
+  where `none` and `ignore` follow the same rule as their `--stack-placement` namesakes:
+  `none` registers nothing *and* dissolves the server-side stacks containing submitted PRs
+  (`retire_native_stacks` — covers single-PR submissions too, and never fails the submit:
+  `StacksUnavailable` means nothing is standing, anything else is an advisory warning),
+  while `ignore` never touches the stack API.
+  There is deliberately no `off`: next to `none` it would invite "what's the difference?".
+- **Native stacks layer on, not replace** — GitHub's native stack sits on top of chained base branches
+  (`POST /stacks` rejects PR lists that do not chain base→head),
+  so the execute phase (interleaved push → base update → create) runs unchanged and remains the thing
+  that produces what the stack API requires.
+  GitHub takes over *merge-time* sequencing
+  (retarget + cascade rebase);
+  stakk keeps *submit-time* sequencing, since auto-retargeting fires on merge, not on force-push.
+- **Reconcile before placement, no probe** — the native reconcile step precedes the
+  text-placement step so the auto placements resolve on what actually happened on the server
+  rather than on a prediction; the probe endpoint's 404 semantics were never observable on
+  github.com (the preview rolled out everywhere), and the reconcile's first call answers the
+  same question for free.
+- **Single-PR submissions skip the stack registration** — one PR is not a stack, mirroring the stack comment rule;
+  a stale server-side stack containing that PR is left alone.
+  Exception: the `none` retirement runs for single-PR submissions too —
+  that stale stack is exactly what it exists to remove, mirroring how placement `none` cleans up single PRs.
 - **`--dry-run` not in env vars** — one-off decision, surprising as a default.
 - **Selection flags not in env vars/config** — `--keep`, `--new`, `--new-auto`,
   `--new-command` are per-invocation decisions like `--dry-run`;

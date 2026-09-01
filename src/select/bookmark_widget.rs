@@ -1137,8 +1137,8 @@ mod tests {
         // Trunk is not toggleable.
         assert!(state.rows[0].is_trunk);
 
-        // Base has existing bookmark → UseExisting(0); generated_name is always set
-        // now.
+        // Base has existing bookmark → UseExisting(0); generated_name is always
+        // set now.
         assert_eq!(state.rows[1].state, RowState::UseExisting(0));
         assert_eq!(state.rows[1].existing_bookmarks, vec!["base".to_string()]);
         assert_eq!(state.rows[1].generated_name, Some("stakk-ch_a".to_string()));

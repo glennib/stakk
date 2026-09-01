@@ -60,8 +60,8 @@ async fn run() -> Result<(), StakkError> {
         config::warn_removed_env_vars();
     }
 
-    // Warn about an outdated jj for commands that shell out to it. Commands that
-    // never touch jj (completions, docs) skip the check.
+    // Warn about an outdated jj for commands that shell out to it. Commands
+    // that never touch jj (completions, docs) skip the check.
     let runs_jj = match &cli.command {
         Some(Commands::Completions { .. } | Commands::Docs { .. }) => false,
         _ => true, // Submit, Graph, and None (= submit) all use jj.
@@ -243,24 +243,38 @@ async fn submit_bookmark(args: &SubmitArgs, github_host: Option<&str>) -> Result
 
     // Load template. In `none`/`ignore` placement no stack content is ever
     // rendered, so a custom template is neither read nor compiled — a broken
-    // or missing one must not fail a submission that will not use it.
-    let template_source = match (&args.template_path, args.stack_placement) {
-        (Some(path), StackPlacement::Comment | StackPlacement::Body) => Some(
-            std::fs::read_to_string(path).map_err(|e| StakkError::TemplateLoadFailed {
-                path: path.clone(),
-                reason: e.to_string(),
-            })?,
-        ),
-        _ => None,
+    // or missing one must not fail a submission that will not use it. Every
+    // other placement may render (the autos resolve only at execute time),
+    // so the non-rendering placements are the ones enumerated: a placement
+    // added later loads the template by default instead of silently
+    // ignoring --template-path.
+    let template_source = match args.stack_placement {
+        StackPlacement::None | StackPlacement::Ignore => None,
+        _ => args
+            .template_path
+            .as_ref()
+            .map(|path| {
+                std::fs::read_to_string(path).map_err(|e| StakkError::TemplateLoadFailed {
+                    path: path.clone(),
+                    reason: e.to_string(),
+                })
+            })
+            .transpose()?,
     };
     let comment_env = forge::comment::build_comment_env(template_source.as_deref())?;
 
     // Phase 3: Execute. The header separates the plan from the result lines
     // printed during execution.
     println!("\nExecuting:");
-    let result =
-        submit::execute_submission_plan(&plan, &jj, &forge, &comment_env, args.stack_placement)
-            .await?;
+    let result = submit::execute_submission_plan(
+        &plan,
+        &jj,
+        &forge,
+        &comment_env,
+        args.stack_placement,
+        args.native_stacks,
+    )
+    .await?;
 
     println!("\nSubmitted {} bookmark(s).", result.stack_entries.len());
 

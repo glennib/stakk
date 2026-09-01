@@ -66,6 +66,12 @@ These may change in any release.
   They may be added or removed in any release,
   so a program must not depend on one appearing and must not treat stderr output as failure.
   The exit code is the signal.
+- **The server-side behavior behind `--native-stacks`.**
+  The flag and its values are stable surface like any other,
+  but GitHub's stacked pull requests are a public preview the vendor declares subject to change,
+  so the reconciliation's observable effect on GitHub — what a registered stack looks like,
+  when GitHub retargets or rebases — can move without a stakk release at all,
+  and stakk may adjust how it converges the stack (create, append, dissolve-and-recreate) in any release.
 
 ## Not a breaking change
 

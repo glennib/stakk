@@ -17,7 +17,6 @@ use crate::submit::SubmitError;
 #[serde(rename_all = "kebab-case")]
 pub enum StackPlacement {
     /// Place the stack comment as a separate PR comment (issue comment).
-    #[default]
     Comment,
     /// Place the stack content in a fenced section of the PR body.
     Body,
@@ -27,6 +26,17 @@ pub enum StackPlacement {
     /// Write no stack info and leave existing stack comments and body
     /// fences untouched.
     Ignore,
+    /// Behave like `none` when a native server-side stack is in effect
+    /// for this run (see --native-stacks), like `comment` otherwise —
+    /// including when native availability could not be determined.
+    /// Identical to `comment` as long as --native-stacks is ignore (its
+    /// default) or none, which is what makes it a safe default.
+    #[default]
+    AutoComment,
+    /// Behave like `none` when a native server-side stack is in effect
+    /// for this run (see --native-stacks), like `body` otherwise —
+    /// including when native availability could not be determined.
+    AutoBody,
 }
 
 impl std::fmt::Display for StackPlacement {
@@ -285,9 +295,10 @@ mod tests {
         let env = default_env();
         let tmpl = env.get_template("stack_comment").unwrap();
         let body = format_stack_comment(&data, &ctx, &tmpl).unwrap();
-        // The current PR carries the pointing marker; the others carry nothing but
-        // their link. Each row is a list item and the URL is bare, which is what
-        // makes GitHub render it as a reference with the PR's live title and state.
+        // The current PR carries the pointing marker; the others carry nothing
+        // but their link. Each row is a list item and the URL is bare,
+        // which is what makes GitHub render it as a reference with the
+        // PR's live title and state.
         assert!(
             body.contains(
                 "- https://github.com/owner/repo/pull/2 (top of stack) \u{1f448} **this PR**"

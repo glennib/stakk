@@ -12,12 +12,14 @@ use std::fmt;
 use miette::Diagnostic;
 use thiserror::Error;
 
+use crate::cli::submit::NativeStacks;
 use crate::cli::submit::PrMode;
 use crate::cli::submit::SyncPrContent;
 use crate::cli::submit::TrailerHandling;
 use crate::forge::CreatePrParams;
 use crate::forge::Forge;
 use crate::forge::ForgeError;
+use crate::forge::ForgeStack;
 use crate::forge::PullRequest;
 use crate::forge::comment::STAKK_REPO_URL;
 use crate::forge::comment::StackCommentContext;
@@ -218,6 +220,47 @@ pub enum SubmitError {
         #[source]
         source: ForgeError,
     },
+
+    /// Native stacks were requested but the forge does not offer them here.
+    #[error("native stacked pull requests are not available on this repository")]
+    #[diagnostic(
+        code(stakk::submit::stacks_unavailable),
+        help(
+            "your branches were pushed and PRs were created/updated normally — only the \
+             server-side stack linkage was skipped. GitHub's stacked pull requests are not \
+             available everywhere (GitHub Enterprise Server does not have them); set \
+             `--native-stacks auto` to use the feature only where available, or `ignore` (env: \
+             STAKK_NATIVE_STACKS)"
+        )
+    )]
+    StacksUnavailable {
+        #[source]
+        source: ForgeError,
+    },
+
+    /// Failed to reconcile the server-side stack after PRs were submitted.
+    #[error("failed to reconcile the server-side stack")]
+    #[diagnostic(
+        code(stakk::submit::stack_reconcile_failed),
+        help(
+            "your branches were pushed and PRs were created/updated normally — only the \
+             server-side stack linkage failed. Re-running `stakk submit` retries the \
+             reconciliation from scratch"
+        )
+    )]
+    StackReconcileFailed {
+        #[source]
+        source: ForgeError,
+    },
+}
+
+/// Wrap a stack-API error, routing the not-available case to its dedicated
+/// variant so miette renders the switch-mode guidance.
+fn wrap_stack_err(source: ForgeError) -> SubmitError {
+    match source {
+        ForgeError::StacksUnavailable { .. } => SubmitError::StacksUnavailable { source },
+        _ => SubmitError::StackReconcileFailed { source },
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -650,11 +693,10 @@ pub async fn execute_submission_plan<R: JjRunner, F: Forge>(
     forge: &F,
     comment_env: &minijinja::Environment<'_>,
     placement: StackPlacement,
+    native: NativeStacks,
 ) -> Result<SubmissionResult, SubmitError> {
     let pb = indicatif::ProgressBar::new_spinner();
     pb.enable_steady_tick(std::time::Duration::from_millis(120));
-
-    let effective = resolve_placement(placement);
 
     // Check every pending name against the repo before creating any of them.
     // Selection already rejects taken names, but the repo can change in
@@ -745,24 +787,10 @@ pub async fn execute_submission_plan<R: JjRunner, F: Forge>(
                 })?;
         }
 
-        // Body sync: skip when body-mode stacking is active — the
-        // body-mode stack phase will splice the fence onto bp.body,
-        // combining both updates into a single API call.
-        if bp.needs_body_sync
-            && effective != EffectivePlacement::Body
-            && let Some(pr) = &bp.existing_pr
-        {
-            let new_body = bp.body.as_deref().unwrap_or("");
-            pb.set_message(format!("Syncing PR #{} body...", pr.number));
-            forge
-                .update_pr_body(pr.number, new_body)
-                .await
-                .map_err(|source| SubmitError::BodySyncFailed {
-                    pr_number: pr.number,
-                    bookmark: bp.bookmark_name.clone(),
-                    source,
-                })?;
-        }
+        // Body syncs happen in one pass after the placement resolves, not
+        // here: the interleaving rule (#35) covers pushes and base updates
+        // only, and a body-resolved placement folds the sync into its own
+        // body write below.
 
         let pr = if let Some(existing) = &bp.existing_pr {
             pb.println(format!(
@@ -794,6 +822,106 @@ pub async fn execute_submission_plan<R: JjRunner, F: Forge>(
             pr_url: pr.html_url.clone(),
             pr_number: pr.number,
         });
+    }
+
+    // Step 2b: When native stacks are requested, converge the forge's
+    // server-side stack with the submitted PRs — *before* the text
+    // placement, so the auto placements resolve on what actually happened
+    // rather than on a prediction (there is no availability probe; the
+    // reconcile's own outcome is the answer). A single PR is not a stack,
+    // so single-bookmark submissions skip the registration entirely (a
+    // stale server-side stack containing that PR is left alone — except
+    // under `none`, whose retirement covers single-PR submissions too).
+    let (native_state, native_err) = match native {
+        // `ignore` never touches the stack API.
+        NativeStacks::Ignore => (NativeState::Inactive, None),
+        // `none` mirrors `--stack-placement none`: turning the feature off
+        // retires the server-side stacks that are standing rather than
+        // leaving them stale.
+        NativeStacks::None => {
+            pb.set_message("Retiring server-side stacks...");
+            let submitted: Vec<u64> = stack_entries.iter().map(|e| e.pr_number).collect();
+            retire_native_stacks(forge, &submitted, &pb).await;
+            (NativeState::Inactive, None)
+        }
+        NativeStacks::On | NativeStacks::Auto if stack_entries.len() < 2 => {
+            (NativeState::Inactive, None)
+        }
+        NativeStacks::On | NativeStacks::Auto => {
+            pb.set_message("Reconciling server-side stack...");
+            let desired: Vec<u64> = stack_entries.iter().map(|e| e.pr_number).collect();
+            let outcome = reconcile_native_stack(forge, &desired, &pb).await;
+            match (native, outcome) {
+                (_, Ok(())) => (NativeState::Active, None),
+                // Definitive: the feature is not offered on this repository.
+                // `auto` promises to skip silently where that is the case.
+                (NativeStacks::Auto, Err(SubmitError::StacksUnavailable { .. })) => {
+                    (NativeState::Inactive, None)
+                }
+                // Not an answer (network trouble, rate limit): warn and let
+                // the auto placements fall back to writing — a redundant
+                // comment self-heals on the next successful run, while a
+                // skipped update would leave *stale* stack info standing.
+                (NativeStacks::Auto, Err(SubmitError::StackReconcileFailed { source })) => {
+                    pb.println(format!(
+                        "  Warning: could not reconcile the server-side stack: {source}. Stack \
+                         comments and body fences are still updated this run; re-running `stakk \
+                         submit` retries the reconciliation."
+                    ));
+                    (NativeState::Unknown, None)
+                }
+                // With `on`, any reconcile failure fails the submit — but
+                // only after the body syncs and text placement below have
+                // run, so that everything the error's help text promises
+                // ("PRs were created/updated normally") has actually
+                // happened. The placements resolve as on an unknown native
+                // state: writing, never the destructive cleanup direction
+                // (whether the state is definitively unavailable or merely
+                // unknown makes no difference to a run that is going to
+                // fail anyway).
+                (_, Err(e)) => (NativeState::Unknown, Some(e)),
+            }
+        }
+    };
+
+    let effective = resolve_placement(placement, native_state);
+
+    // Body syncs, in one pass for every placement. Skipped only when the
+    // body-splice phase below covers them — a body-resolved placement on a
+    // real stack folds each sync into its own body write, one API call
+    // instead of two. This runs before step 3 so `effective_body` stays
+    // truthful for every later reader.
+    let body_splice_runs = effective == EffectivePlacement::Body && stack_entries.len() > 1;
+    if !body_splice_runs {
+        let sync_futures: Vec<_> = plan
+            .bookmark_plans
+            .iter()
+            .filter_map(|bp| {
+                if !bp.needs_body_sync {
+                    return None;
+                }
+                let pr = bp.existing_pr.as_ref()?;
+                let pr_number = pr.number;
+                let bookmark = bp.bookmark_name.clone();
+                let new_body = bp.body.clone().unwrap_or_default();
+                Some(async move {
+                    forge
+                        .update_pr_body(pr_number, &new_body)
+                        .await
+                        .map_err(|source| SubmitError::BodySyncFailed {
+                            pr_number,
+                            bookmark,
+                            source,
+                        })
+                })
+            })
+            .collect();
+        if !sync_futures.is_empty() {
+            pb.set_message("Syncing PR bodies...");
+            for result in futures::future::join_all(sync_futures).await {
+                result?;
+            }
+        }
     }
 
     // Step 3: Concurrently create/update stack comments on all PRs.
@@ -964,7 +1092,8 @@ pub async fn execute_submission_plan<R: JjRunner, F: Forge>(
                                     |source| SubmitError::BodyUpdateFailed { pr_number, source },
                                 )?;
 
-                                // Migration: if no existing fenced section was found,
+                                // Migration: if no existing fenced section was
+                                // found,
                                 // check for an old stack comment and delete it.
                                 if !had_fence {
                                     let comments =
@@ -1001,7 +1130,30 @@ pub async fn execute_submission_plan<R: JjRunner, F: Forge>(
 
     pb.finish_and_clear();
 
+    // A reconcile failure under `--native-stacks on` fails the submit —
+    // reported last, after body syncs and the text placement ran.
+    if let Some(e) = native_err {
+        return Err(e);
+    }
+
     Ok(SubmissionResult { stack_entries })
+}
+
+/// Whether a native server-side stack is in effect for one run.
+///
+/// Derived from the outcome of the reconcile step, not from a probe — what
+/// actually happened on the server, not a prediction about it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NativeState {
+    /// The server-side stack was reconciled and now matches the submission.
+    Active,
+    /// Native stacks are not requested (`ignore`/`none`), definitively
+    /// unavailable here, or the submission is a single PR (not a stack).
+    Inactive,
+    /// The reconcile failed for a reason that says nothing about
+    /// availability. Only the destructive placement direction (cleanup)
+    /// requires a definitive answer, so auto placements write as usual.
+    Unknown,
 }
 
 /// The artifact behavior a `StackPlacement` resolves to for one run.
@@ -1017,13 +1169,215 @@ enum EffectivePlacement {
     Ignore,
 }
 
-fn resolve_placement(placement: StackPlacement) -> EffectivePlacement {
+/// Resolve the requested placement against the native-stack state.
+///
+/// The auto placements retire stakk's text (cleanup) only on a *definitive*
+/// native stack — `Unknown` falls back to writing, because a redundant
+/// comment is harmless and self-heals while a skipped update leaves stale
+/// stack info standing.
+fn resolve_placement(placement: StackPlacement, native: NativeState) -> EffectivePlacement {
     match placement {
         StackPlacement::Comment => EffectivePlacement::Comment,
         StackPlacement::Body => EffectivePlacement::Body,
         StackPlacement::None => EffectivePlacement::Cleanup,
         StackPlacement::Ignore => EffectivePlacement::Ignore,
+        StackPlacement::AutoComment => match native {
+            NativeState::Active => EffectivePlacement::Cleanup,
+            NativeState::Inactive | NativeState::Unknown => EffectivePlacement::Comment,
+        },
+        StackPlacement::AutoBody => match native {
+            NativeState::Active => EffectivePlacement::Cleanup,
+            NativeState::Inactive | NativeState::Unknown => EffectivePlacement::Body,
+        },
     }
+}
+
+/// Converge the forge's server-side stack with the submitted PRs.
+///
+/// `desired` holds the PR numbers bottom-to-top; the caller guarantees at
+/// least two entries. Idempotent: every failure point leaves the server in
+/// a state from which a re-run converges.
+async fn reconcile_native_stack<F: Forge>(
+    forge: &F,
+    desired: &[u64],
+    pb: &indicatif::ProgressBar,
+) -> Result<(), SubmitError> {
+    // Query every desired PR, not just the bottom one — an upper PR held by
+    // a foreign stack would otherwise make create/add fail opaquely.
+    let lookups = futures::future::join_all(desired.iter().map(|&n| forge.get_stacks_for_pr(n)));
+    let mut stacks: Vec<ForgeStack> = Vec::new();
+    for result in lookups.await {
+        for stack in result.map_err(wrap_stack_err)? {
+            if !stacks.iter().any(|s| s.number == stack.number) {
+                stacks.push(stack);
+            }
+        }
+    }
+
+    match stacks.as_slice() {
+        [] => {
+            let created = forge.create_stack(desired).await.map_err(wrap_stack_err)?;
+            pb.println(format!(
+                "  Created server-side stack #{} ({} PRs).",
+                created.number,
+                desired.len()
+            ));
+        }
+        [stack] if stack.open_pr_numbers == desired => {
+            pb.println(format!(
+                "  Server-side stack #{} is up to date.",
+                stack.number
+            ));
+        }
+        // The server stack extends *above* the submission: the submitted PRs
+        // are already its bottom prefix, correctly ordered, and the execute
+        // phase never touched the bases of the PRs above them — the chain is
+        // intact. Rebuilding here would evict the upper PRs from merge-time
+        // retargeting (the empty-diff auto-close hazard the stack exists to
+        // prevent), so the stack is left standing. Only a *bottom* prefix is
+        // safe to no-op: a slice higher up means the bottom submitted PR was
+        // retargeted past open stack members and the chain is broken.
+        [stack] if stack.open_pr_numbers.starts_with(desired) => {
+            pb.println(format!(
+                "  Server-side stack #{} already contains the submission; {} PR(s) above it keep \
+                 their stack membership.",
+                stack.number,
+                stack.open_pr_numbers.len() - desired.len()
+            ));
+        }
+        [stack]
+            if !stack.open_pr_numbers.is_empty() && desired.starts_with(&stack.open_pr_numbers) =>
+        {
+            let suffix = &desired[stack.open_pr_numbers.len()..];
+            match forge.add_to_stack(stack.number, suffix).await {
+                Ok(_) => {
+                    pb.println(format!(
+                        "  Added {} PR(s) to server-side stack #{}.",
+                        suffix.len(),
+                        stack.number
+                    ));
+                }
+                // If the server rejects the append (the add semantics leave
+                // room for that — e.g. a PR already held elsewhere),
+                // converge via the universal dissolve-and-recreate path.
+                Err(ForgeError::StackConflict { .. }) => {
+                    forge.unstack(stack.number).await.map_err(wrap_stack_err)?;
+                    let created = forge.create_stack(desired).await.map_err(wrap_stack_err)?;
+                    pb.println(format!(
+                        "  Recreated server-side stack #{} ({} PRs).",
+                        created.number,
+                        desired.len()
+                    ));
+                }
+                Err(e) => return Err(wrap_stack_err(e)),
+            }
+        }
+        _ => {
+            // Reorder, foreign members, multiple stacks, or a stack whose
+            // open PRs all merged away: dissolve everything and rebuild.
+            // `unstack` removes unmerged PRs wholesale (the API has no
+            // per-PR removal); merged leftovers cannot conflict with the
+            // new stack. Open PRs that are dissolved along and not part of
+            // the new stack lose native stacking silently on GitHub's side,
+            // so they are named in a warning.
+            let evicted = evicted_pr_numbers(&stacks, desired);
+            for stack in &stacks {
+                forge.unstack(stack.number).await.map_err(wrap_stack_err)?;
+            }
+            let created = forge.create_stack(desired).await.map_err(wrap_stack_err)?;
+            pb.println(format!(
+                "  Recreated server-side stack #{} ({} PRs).",
+                created.number,
+                desired.len()
+            ));
+            warn_evicted(&evicted, pb);
+        }
+    }
+
+    Ok(())
+}
+
+/// Dissolve every server-side stack containing a submitted PR.
+///
+/// `--native-stacks none` mirrors `--stack-placement none`: turning the
+/// feature off retires what is standing rather than leaving it stale.
+/// Unlike the reconcile this covers single-PR submissions too, and it never
+/// fails the submit: `StacksUnavailable` means there is nothing to retire,
+/// and any other failure is an advisory warning — a re-run retries.
+async fn retire_native_stacks<F: Forge>(forge: &F, submitted: &[u64], pb: &indicatif::ProgressBar) {
+    let lookups = futures::future::join_all(submitted.iter().map(|&n| forge.get_stacks_for_pr(n)));
+    let mut stacks: Vec<ForgeStack> = Vec::new();
+    for result in lookups.await {
+        match result {
+            Ok(found) => {
+                for stack in found {
+                    if !stacks.iter().any(|s| s.number == stack.number) {
+                        stacks.push(stack);
+                    }
+                }
+            }
+            // The feature is not offered here, so nothing can be standing.
+            Err(ForgeError::StacksUnavailable { .. }) => return,
+            Err(e) => {
+                pb.println(format!(
+                    "  Warning: could not check for server-side stacks to retire: {e}. Re-running \
+                     `stakk submit` retries."
+                ));
+                return;
+            }
+        }
+    }
+    if stacks.is_empty() {
+        return;
+    }
+    // Dissolving a stack unstacks *all* its unmerged members, so open PRs
+    // beyond the submitted ones lose native stacking too — name them, like
+    // the reconcile's rebuild path does.
+    let evicted = evicted_pr_numbers(&stacks, submitted);
+    for stack in &stacks {
+        match forge.unstack(stack.number).await {
+            Ok(()) => {
+                pb.println(format!("  Retired server-side stack #{}.", stack.number));
+            }
+            Err(e) => {
+                pb.println(format!(
+                    "  Warning: failed to retire server-side stack #{}: {e}. Re-running `stakk \
+                     submit` retries.",
+                    stack.number
+                ));
+            }
+        }
+    }
+    warn_evicted(&evicted, pb);
+}
+
+/// Open PR numbers that lose their server-side stack membership when
+/// `stacks` are dissolved and only `desired` is restacked (or nothing is,
+/// for the retirement path).
+fn evicted_pr_numbers(stacks: &[ForgeStack], desired: &[u64]) -> Vec<u64> {
+    let mut evicted: Vec<u64> = stacks
+        .iter()
+        .flat_map(|s| s.open_pr_numbers.iter().copied())
+        .filter(|n| !desired.contains(n))
+        .collect();
+    evicted.sort_unstable();
+    evicted.dedup();
+    evicted
+}
+
+/// Warn with the PR numbers that lost native stacking in a dissolve.
+fn warn_evicted(evicted: &[u64], pb: &indicatif::ProgressBar) {
+    if evicted.is_empty() {
+        return;
+    }
+    let list = evicted
+        .iter()
+        .map(|n| format!("#{n}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    pb.println(format!(
+        "  Warning: {list} left the dissolved stack(s) and are no longer natively stacked."
+    ));
 }
 
 /// Remove any stack artifacts (stack comment and body fence) from a single PR.
@@ -1167,6 +1521,21 @@ mod tests {
         listed_comments: Mutex<Vec<u64>>,
         next_pr_number: Mutex<u64>,
         ops: Option<OpLog>,
+        existing_stacks: Vec<ForgeStack>,
+        /// When set, every stack call fails with `StacksUnavailable` — the
+        /// repository does not offer the feature.
+        stacks_unavailable: bool,
+        /// When set, every stack call fails with a generic `Api` error —
+        /// the "not an answer" failure mode.
+        stacks_api_error: bool,
+        /// When set, `add_to_stack` fails with `StackConflict`.
+        add_conflicts: bool,
+        /// PR numbers `get_stacks_for_pr` was called for.
+        stack_lookups: Mutex<Vec<u64>>,
+        created_stacks: Mutex<Vec<Vec<u64>>>,
+        added_to_stacks: Mutex<Vec<(u64, Vec<u64>)>>,
+        unstacked: Mutex<Vec<u64>>,
+        next_stack_number: Mutex<u64>,
     }
 
     impl MockForge {
@@ -1184,6 +1553,15 @@ mod tests {
                 listed_comments: Mutex::new(Vec::new()),
                 next_pr_number: Mutex::new(100),
                 ops: None,
+                existing_stacks: Vec::new(),
+                stacks_unavailable: false,
+                stacks_api_error: false,
+                add_conflicts: false,
+                stack_lookups: Mutex::new(Vec::new()),
+                created_stacks: Mutex::new(Vec::new()),
+                added_to_stacks: Mutex::new(Vec::new()),
+                unstacked: Mutex::new(Vec::new()),
+                next_stack_number: Mutex::new(500),
             }
         }
 
@@ -1200,6 +1578,46 @@ mod tests {
         fn with_existing_comments(mut self, pr_number: u64, comments: Vec<Comment>) -> Self {
             self.existing_comments.insert(pr_number, comments);
             self
+        }
+
+        fn with_existing_stack(mut self, number: u64, open_prs: &[u64]) -> Self {
+            self.existing_stacks.push(ForgeStack {
+                number,
+                open_pr_numbers: open_prs.to_vec(),
+            });
+            self
+        }
+
+        fn with_stacks_unavailable(mut self) -> Self {
+            self.stacks_unavailable = true;
+            self
+        }
+
+        fn with_stacks_api_error(mut self) -> Self {
+            self.stacks_api_error = true;
+            self
+        }
+
+        fn with_add_conflict(mut self) -> Self {
+            self.add_conflicts = true;
+            self
+        }
+
+        /// The configured failure for stack calls, if any.
+        fn stack_failure(&self) -> Option<ForgeError> {
+            if self.stacks_unavailable {
+                return Some(ForgeError::StacksUnavailable {
+                    message: "Not Found".to_string(),
+                    source: "404".into(),
+                });
+            }
+            if self.stacks_api_error {
+                return Some(ForgeError::Api {
+                    message: "boom".to_string(),
+                    source: "boom".into(),
+                });
+            }
+            None
         }
     }
 
@@ -1320,6 +1738,91 @@ mod tests {
         ) -> impl std::future::Future<Output = Result<(), ForgeError>> + Send {
             self.deleted_comments.lock().unwrap().push(comment_id);
             async { Ok(()) }
+        }
+
+        fn get_stacks_for_pr(
+            &self,
+            pr_number: u64,
+        ) -> impl std::future::Future<Output = Result<Vec<ForgeStack>, ForgeError>> + Send {
+            self.stack_lookups.lock().unwrap().push(pr_number);
+            let result = if let Some(e) = self.stack_failure() {
+                Err(e)
+            } else {
+                Ok(self
+                    .existing_stacks
+                    .iter()
+                    .filter(|s| s.open_pr_numbers.contains(&pr_number))
+                    .cloned()
+                    .collect())
+            };
+            async move { result }
+        }
+
+        fn create_stack(
+            &self,
+            pr_numbers: &[u64],
+        ) -> impl std::future::Future<Output = Result<ForgeStack, ForgeError>> + Send {
+            let result = if let Some(e) = self.stack_failure() {
+                Err(e)
+            } else {
+                let mut counter = self.next_stack_number.lock().unwrap();
+                let number = *counter;
+                *counter += 1;
+                self.created_stacks
+                    .lock()
+                    .unwrap()
+                    .push(pr_numbers.to_vec());
+                Ok(ForgeStack {
+                    number,
+                    open_pr_numbers: pr_numbers.to_vec(),
+                })
+            };
+            async move { result }
+        }
+
+        fn add_to_stack(
+            &self,
+            stack_number: u64,
+            pr_numbers: &[u64],
+        ) -> impl std::future::Future<Output = Result<ForgeStack, ForgeError>> + Send {
+            let result = match self.stack_failure() {
+                Some(e) => Err(e),
+                None if self.add_conflicts => Err(ForgeError::StackConflict {
+                    message: "already stacked".to_string(),
+                    source: "409".into(),
+                }),
+                None => {
+                    self.added_to_stacks
+                        .lock()
+                        .unwrap()
+                        .push((stack_number, pr_numbers.to_vec()));
+                    let mut open_pr_numbers = self
+                        .existing_stacks
+                        .iter()
+                        .find(|s| s.number == stack_number)
+                        .map(|s| s.open_pr_numbers.clone())
+                        .unwrap_or_default();
+                    open_pr_numbers.extend_from_slice(pr_numbers);
+                    Ok(ForgeStack {
+                        number: stack_number,
+                        open_pr_numbers,
+                    })
+                }
+            };
+            async move { result }
+        }
+
+        fn unstack(
+            &self,
+            stack_number: u64,
+        ) -> impl std::future::Future<Output = Result<(), ForgeError>> + Send {
+            let result = if let Some(e) = self.stack_failure() {
+                Err(e)
+            } else {
+                self.unstacked.lock().unwrap().push(stack_number);
+                Ok(())
+            };
+            async move { result }
         }
     }
 
@@ -2170,9 +2673,16 @@ mod tests {
         let forge = MockForge::new().with_ops(Arc::clone(&ops));
         let env = test_comment_env();
 
-        execute_submission_plan(&plan, &jj, &forge, &env, StackPlacement::Comment)
-            .await
-            .unwrap();
+        execute_submission_plan(
+            &plan,
+            &jj,
+            &forge,
+            &env,
+            StackPlacement::Comment,
+            NativeStacks::Ignore,
+        )
+        .await
+        .unwrap();
 
         let ops = ops.lock().unwrap();
         assert_eq!(
@@ -2226,9 +2736,16 @@ mod tests {
         let forge = MockForge::new().with_ops(Arc::clone(&ops));
         let env = test_comment_env();
 
-        let err = execute_submission_plan(&plan, &jj, &forge, &env, StackPlacement::Comment)
-            .await
-            .unwrap_err();
+        let err = execute_submission_plan(
+            &plan,
+            &jj,
+            &forge,
+            &env,
+            StackPlacement::Comment,
+            NativeStacks::Ignore,
+        )
+        .await
+        .unwrap_err();
         assert!(
             matches!(&err, SubmitError::BookmarkNamesTaken { bookmarks } if bookmarks == &["feat-taken"]),
             "unexpected error: {err:?}",
@@ -2269,9 +2786,16 @@ mod tests {
         let forge = MockForge::new().with_ops(Arc::clone(&ops));
         let env = test_comment_env();
 
-        execute_submission_plan(&plan, &jj, &forge, &env, StackPlacement::Comment)
-            .await
-            .unwrap();
+        execute_submission_plan(
+            &plan,
+            &jj,
+            &forge,
+            &env,
+            StackPlacement::Comment,
+            NativeStacks::Ignore,
+        )
+        .await
+        .unwrap();
 
         assert_eq!(
             *ops.lock().unwrap(),
@@ -2323,9 +2847,16 @@ mod tests {
         let forge = MockForge::new();
         let env = test_comment_env();
 
-        let result = execute_submission_plan(&plan, &jj, &forge, &env, StackPlacement::Comment)
-            .await
-            .unwrap();
+        let result = execute_submission_plan(
+            &plan,
+            &jj,
+            &forge,
+            &env,
+            StackPlacement::Comment,
+            NativeStacks::Ignore,
+        )
+        .await
+        .unwrap();
 
         assert_eq!(result.stack_entries.len(), 2);
 
@@ -2363,9 +2894,16 @@ mod tests {
         let forge = MockForge::new();
         let env = test_comment_env();
 
-        execute_submission_plan(&plan, &jj, &forge, &env, StackPlacement::Comment)
-            .await
-            .unwrap();
+        execute_submission_plan(
+            &plan,
+            &jj,
+            &forge,
+            &env,
+            StackPlacement::Comment,
+            NativeStacks::Ignore,
+        )
+        .await
+        .unwrap();
 
         let updated = forge.updated_bases.lock().unwrap();
         assert_eq!(updated.len(), 1);
@@ -2412,9 +2950,16 @@ mod tests {
         let forge = MockForge::new();
         let env = test_comment_env();
 
-        execute_submission_plan(&plan, &jj, &forge, &env, StackPlacement::Comment)
-            .await
-            .unwrap();
+        execute_submission_plan(
+            &plan,
+            &jj,
+            &forge,
+            &env,
+            StackPlacement::Comment,
+            NativeStacks::Ignore,
+        )
+        .await
+        .unwrap();
 
         let comments = forge.created_comments.lock().unwrap();
         // One stack comment per PR.
@@ -2501,9 +3046,16 @@ mod tests {
             }],
         );
 
-        execute_submission_plan(&plan, &jj, &forge, &env, StackPlacement::Comment)
-            .await
-            .unwrap();
+        execute_submission_plan(
+            &plan,
+            &jj,
+            &forge,
+            &env,
+            StackPlacement::Comment,
+            NativeStacks::Ignore,
+        )
+        .await
+        .unwrap();
 
         // Should have updated the existing comment on PR #50, not created a
         // new one. A new comment is created for the second PR.
@@ -2555,9 +3107,16 @@ mod tests {
         let forge = MockForge::new();
         let env = test_comment_env();
 
-        execute_submission_plan(&plan, &jj, &forge, &env, StackPlacement::Comment)
-            .await
-            .unwrap();
+        execute_submission_plan(
+            &plan,
+            &jj,
+            &forge,
+            &env,
+            StackPlacement::Comment,
+            NativeStacks::Ignore,
+        )
+        .await
+        .unwrap();
 
         let calls = push_calls.lock().unwrap();
         assert_eq!(calls.len(), 2);
@@ -2619,9 +3178,16 @@ mod tests {
         let forge = MockForge::new();
         let env = test_comment_env();
 
-        execute_submission_plan(&plan, &jj, &forge, &env, StackPlacement::Comment)
-            .await
-            .unwrap();
+        execute_submission_plan(
+            &plan,
+            &jj,
+            &forge,
+            &env,
+            StackPlacement::Comment,
+            NativeStacks::Ignore,
+        )
+        .await
+        .unwrap();
 
         let created = forge.created_prs.lock().unwrap();
         assert_eq!(created.len(), 1);
@@ -2654,9 +3220,16 @@ mod tests {
         let forge = MockForge::new();
         let env = test_comment_env();
 
-        execute_submission_plan(&plan, &jj, &forge, &env, StackPlacement::Comment)
-            .await
-            .unwrap();
+        execute_submission_plan(
+            &plan,
+            &jj,
+            &forge,
+            &env,
+            StackPlacement::Comment,
+            NativeStacks::Ignore,
+        )
+        .await
+        .unwrap();
 
         let updated_titles = forge.updated_titles.lock().unwrap();
         assert_eq!(updated_titles.len(), 1);
@@ -2693,9 +3266,16 @@ mod tests {
         let forge = MockForge::new();
         let env = test_comment_env();
 
-        execute_submission_plan(&plan, &jj, &forge, &env, StackPlacement::Comment)
-            .await
-            .unwrap();
+        execute_submission_plan(
+            &plan,
+            &jj,
+            &forge,
+            &env,
+            StackPlacement::Comment,
+            NativeStacks::Ignore,
+        )
+        .await
+        .unwrap();
 
         let updated_titles = forge.updated_titles.lock().unwrap();
         assert_eq!(updated_titles[0], (42, "title only".to_string()));
@@ -2731,9 +3311,16 @@ mod tests {
         let forge = MockForge::new();
         let env = test_comment_env();
 
-        execute_submission_plan(&plan, &jj, &forge, &env, StackPlacement::Comment)
-            .await
-            .unwrap();
+        execute_submission_plan(
+            &plan,
+            &jj,
+            &forge,
+            &env,
+            StackPlacement::Comment,
+            NativeStacks::Ignore,
+        )
+        .await
+        .unwrap();
 
         let updated_titles = forge.updated_titles.lock().unwrap();
         assert!(updated_titles.is_empty());
@@ -2779,16 +3366,24 @@ mod tests {
         let forge = MockForge::new();
         let env = test_comment_env();
 
-        execute_submission_plan(&plan, &jj, &forge, &env, StackPlacement::Body)
-            .await
-            .unwrap();
+        execute_submission_plan(
+            &plan,
+            &jj,
+            &forge,
+            &env,
+            StackPlacement::Body,
+            NativeStacks::Ignore,
+        )
+        .await
+        .unwrap();
 
         // Body sync is skipped in the per-bookmark loop when body-mode is
         // active — the fence-splicing phase handles it in a single API call.
         // So there should be exactly 2 body updates (one per PR), not 4.
         let updated_bodies = forge.updated_bodies.lock().unwrap();
         assert_eq!(updated_bodies.len(), 2);
-        // Both bodies should contain the commit text and the STAKK_BODY_START fence.
+        // Both bodies should contain the commit text and the STAKK_BODY_START
+        // fence.
         assert!(updated_bodies[0].1.contains("new commit body"));
         assert!(updated_bodies[0].1.contains("STAKK_BODY_START"));
         assert!(updated_bodies[1].1.contains("commit body b"));
@@ -3180,9 +3775,16 @@ mod tests {
         let forge = MockForge::new();
         let env = test_comment_env();
 
-        execute_submission_plan(&plan, &jj, &forge, &env, StackPlacement::Body)
-            .await
-            .unwrap();
+        execute_submission_plan(
+            &plan,
+            &jj,
+            &forge,
+            &env,
+            StackPlacement::Body,
+            NativeStacks::Ignore,
+        )
+        .await
+        .unwrap();
 
         let updated_bodies = forge.updated_bodies.lock().unwrap();
         assert_eq!(updated_bodies.len(), 2);
@@ -3245,9 +3847,16 @@ mod tests {
         let forge = MockForge::new();
         let env = test_comment_env();
 
-        execute_submission_plan(&plan, &jj, &forge, &env, StackPlacement::Body)
-            .await
-            .unwrap();
+        execute_submission_plan(
+            &plan,
+            &jj,
+            &forge,
+            &env,
+            StackPlacement::Body,
+            NativeStacks::Ignore,
+        )
+        .await
+        .unwrap();
 
         let updated_bodies = forge.updated_bodies.lock().unwrap();
         assert_eq!(updated_bodies.len(), 2);
@@ -3344,9 +3953,16 @@ mod tests {
             }],
         );
 
-        execute_submission_plan(&plan, &jj, &forge, &env, StackPlacement::Body)
-            .await
-            .unwrap();
+        execute_submission_plan(
+            &plan,
+            &jj,
+            &forge,
+            &env,
+            StackPlacement::Body,
+            NativeStacks::Ignore,
+        )
+        .await
+        .unwrap();
 
         // Should have written body for both PRs.
         let updated_bodies = forge.updated_bodies.lock().unwrap();
@@ -3405,9 +4021,16 @@ mod tests {
         let forge = MockForge::new();
         let env = test_comment_env();
 
-        execute_submission_plan(&plan, &jj, &forge, &env, StackPlacement::Comment)
-            .await
-            .unwrap();
+        execute_submission_plan(
+            &plan,
+            &jj,
+            &forge,
+            &env,
+            StackPlacement::Comment,
+            NativeStacks::Ignore,
+        )
+        .await
+        .unwrap();
 
         // Should have created comments for both PRs.
         let created_comments = forge.created_comments.lock().unwrap();
@@ -3455,9 +4078,16 @@ mod tests {
         let forge = MockForge::new();
         let env = test_comment_env();
 
-        let result = execute_submission_plan(&plan, &jj, &forge, &env, StackPlacement::Comment)
-            .await
-            .unwrap();
+        let result = execute_submission_plan(
+            &plan,
+            &jj,
+            &forge,
+            &env,
+            StackPlacement::Comment,
+            NativeStacks::Ignore,
+        )
+        .await
+        .unwrap();
 
         assert_eq!(result.stack_entries.len(), 1);
 
@@ -3537,9 +4167,16 @@ mod tests {
             }],
         );
 
-        execute_submission_plan(&plan, &jj, &forge, &env, StackPlacement::Comment)
-            .await
-            .unwrap();
+        execute_submission_plan(
+            &plan,
+            &jj,
+            &forge,
+            &env,
+            StackPlacement::Comment,
+            NativeStacks::Ignore,
+        )
+        .await
+        .unwrap();
 
         // Old stack comment should be deleted.
         let deleted = forge.deleted_comments.lock().unwrap();
@@ -3580,9 +4217,16 @@ mod tests {
         let forge = MockForge::new();
         let env = test_comment_env();
 
-        execute_submission_plan(&plan, &jj, &forge, &env, StackPlacement::Body)
-            .await
-            .unwrap();
+        execute_submission_plan(
+            &plan,
+            &jj,
+            &forge,
+            &env,
+            StackPlacement::Body,
+            NativeStacks::Ignore,
+        )
+        .await
+        .unwrap();
 
         // Body fence should be stripped.
         let updated_bodies = forge.updated_bodies.lock().unwrap();
@@ -3643,9 +4287,16 @@ mod tests {
         let forge = MockForge::new();
         let env = test_comment_env();
 
-        let result = execute_submission_plan(&plan, &jj, &forge, &env, StackPlacement::None)
-            .await
-            .unwrap();
+        let result = execute_submission_plan(
+            &plan,
+            &jj,
+            &forge,
+            &env,
+            StackPlacement::None,
+            NativeStacks::Ignore,
+        )
+        .await
+        .unwrap();
 
         assert_eq!(result.stack_entries.len(), 2);
 
@@ -3748,9 +4399,16 @@ mod tests {
             }],
         );
 
-        execute_submission_plan(&plan, &jj, &forge, &env, StackPlacement::None)
-            .await
-            .unwrap();
+        execute_submission_plan(
+            &plan,
+            &jj,
+            &forge,
+            &env,
+            StackPlacement::None,
+            NativeStacks::Ignore,
+        )
+        .await
+        .unwrap();
 
         // Old stack comment on PR #50 should be deleted.
         let deleted = forge.deleted_comments.lock().unwrap();
@@ -3830,9 +4488,16 @@ mod tests {
         );
         let env = test_comment_env();
 
-        let result = execute_submission_plan(&plan, &jj, &forge, &env, StackPlacement::Ignore)
-            .await
-            .unwrap();
+        let result = execute_submission_plan(
+            &plan,
+            &jj,
+            &forge,
+            &env,
+            StackPlacement::Ignore,
+            NativeStacks::Ignore,
+        )
+        .await
+        .unwrap();
 
         // The submission itself runs normally...
         assert_eq!(result.stack_entries.len(), 2);
@@ -3880,9 +4545,16 @@ mod tests {
         );
         let env = test_comment_env();
 
-        execute_submission_plan(&plan, &jj, &forge, &env, StackPlacement::Ignore)
-            .await
-            .unwrap();
+        execute_submission_plan(
+            &plan,
+            &jj,
+            &forge,
+            &env,
+            StackPlacement::Ignore,
+            NativeStacks::Ignore,
+        )
+        .await
+        .unwrap();
 
         assert!(forge.deleted_comments.lock().unwrap().is_empty());
         assert!(forge.listed_comments.lock().unwrap().is_empty());
@@ -3934,9 +4606,16 @@ mod tests {
             .with_ops(Arc::clone(&ops));
         let env = test_comment_env();
 
-        execute_submission_plan(&plan, &jj, &forge, &env, StackPlacement::Comment)
-            .await
-            .unwrap();
+        execute_submission_plan(
+            &plan,
+            &jj,
+            &forge,
+            &env,
+            StackPlacement::Comment,
+            NativeStacks::Ignore,
+        )
+        .await
+        .unwrap();
 
         let ops = ops.lock().unwrap();
         assert_eq!(
@@ -4011,9 +4690,16 @@ mod tests {
             .with_ops(Arc::clone(&ops));
         let env = test_comment_env();
 
-        execute_submission_plan(&plan, &jj, &forge, &env, StackPlacement::Comment)
-            .await
-            .unwrap();
+        execute_submission_plan(
+            &plan,
+            &jj,
+            &forge,
+            &env,
+            StackPlacement::Comment,
+            NativeStacks::Ignore,
+        )
+        .await
+        .unwrap();
 
         let ops = ops.lock().unwrap();
         assert_eq!(
@@ -4075,9 +4761,16 @@ mod tests {
             .with_ops(Arc::clone(&ops));
         let env = test_comment_env();
 
-        execute_submission_plan(&plan, &jj, &forge, &env, StackPlacement::Comment)
-            .await
-            .unwrap();
+        execute_submission_plan(
+            &plan,
+            &jj,
+            &forge,
+            &env,
+            StackPlacement::Comment,
+            NativeStacks::Ignore,
+        )
+        .await
+        .unwrap();
 
         let ops = ops.lock().unwrap();
         assert_eq!(
@@ -4089,6 +4782,450 @@ mod tests {
                 Op::CreatePr("feat-b".to_string()),
             ],
             "base update for feat-a must complete before feat-b is pushed"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Native stack reconciliation tests
+    // -----------------------------------------------------------------------
+
+    /// A two-PR plan whose PRs already exist (#41 bottom, #42 top), so PR
+    /// numbers are stable for stack assertions.
+    fn two_existing_pr_plan() -> SubmissionPlan {
+        SubmissionPlan {
+            bookmark_plans: vec![
+                BookmarkPlan {
+                    bookmark_name: "feat-a".to_string(),
+                    base: "main".to_string(),
+                    title: "feature a".to_string(),
+                    body: None,
+                    existing_pr: Some(make_pr(41, "feat-a", "main")),
+                    needs_push: false,
+                    needs_create: false,
+                    needs_base_update: false,
+                    needs_title_sync: false,
+                    needs_body_sync: false,
+                },
+                BookmarkPlan {
+                    bookmark_name: "feat-b".to_string(),
+                    base: "feat-a".to_string(),
+                    title: "feature b".to_string(),
+                    body: None,
+                    existing_pr: Some(make_pr(42, "feat-b", "feat-a")),
+                    needs_push: false,
+                    needs_create: false,
+                    needs_base_update: false,
+                    needs_title_sync: false,
+                    needs_body_sync: false,
+                },
+            ],
+            bookmark_creations: vec![],
+            remote: "origin".to_string(),
+            pr_mode: PrMode::Regular,
+            default_branch: "main".to_string(),
+        }
+    }
+
+    async fn run_plan(
+        plan: &SubmissionPlan,
+        forge: &MockForge,
+        placement: StackPlacement,
+        native: NativeStacks,
+    ) -> Result<SubmissionResult, SubmitError> {
+        let (runner, _push_calls) = MockJjRunner::new();
+        let jj = Jj::new(runner);
+        let env = test_comment_env();
+        execute_submission_plan(plan, &jj, forge, &env, placement, native).await
+    }
+
+    #[test]
+    fn resolve_placement_matrix() {
+        use EffectivePlacement as E;
+        use NativeState as N;
+        use StackPlacement as P;
+
+        // Literal placements ignore the native state entirely.
+        for native in [N::Active, N::Inactive, N::Unknown] {
+            assert_eq!(resolve_placement(P::Comment, native), E::Comment);
+            assert_eq!(resolve_placement(P::Body, native), E::Body);
+            assert_eq!(resolve_placement(P::None, native), E::Cleanup);
+            assert_eq!(resolve_placement(P::Ignore, native), E::Ignore);
+        }
+
+        // Auto placements retire the text only on a *definitive* native
+        // stack; an unknown state falls back to writing, never to silence —
+        // a redundant comment self-heals, a stale one misleads.
+        assert_eq!(resolve_placement(P::AutoComment, N::Active), E::Cleanup);
+        assert_eq!(resolve_placement(P::AutoComment, N::Inactive), E::Comment);
+        assert_eq!(resolve_placement(P::AutoComment, N::Unknown), E::Comment);
+        assert_eq!(resolve_placement(P::AutoBody, N::Active), E::Cleanup);
+        assert_eq!(resolve_placement(P::AutoBody, N::Inactive), E::Body);
+        assert_eq!(resolve_placement(P::AutoBody, N::Unknown), E::Body);
+    }
+
+    #[tokio::test]
+    async fn native_ignore_never_touches_the_stack_api() {
+        let plan = two_existing_pr_plan();
+        let forge = MockForge::new().with_existing_stack(7, &[41, 42]);
+        run_plan(&plan, &forge, StackPlacement::Comment, NativeStacks::Ignore)
+            .await
+            .unwrap();
+
+        assert!(forge.stack_lookups.lock().unwrap().is_empty());
+        assert!(forge.created_stacks.lock().unwrap().is_empty());
+        assert!(forge.unstacked.lock().unwrap().is_empty());
+    }
+
+    /// `none` mirrors `--stack-placement none`: it registers nothing and
+    /// retires the server-side stacks that are standing.
+    #[tokio::test]
+    async fn native_none_retires_existing_stacks() {
+        let plan = two_existing_pr_plan();
+        let forge = MockForge::new().with_existing_stack(7, &[41, 42]);
+        run_plan(&plan, &forge, StackPlacement::Comment, NativeStacks::None)
+            .await
+            .unwrap();
+
+        assert_eq!(*forge.unstacked.lock().unwrap(), vec![7]);
+        assert!(forge.created_stacks.lock().unwrap().is_empty());
+        assert!(forge.added_to_stacks.lock().unwrap().is_empty());
+        // Inactive native state: the requested placement still writes.
+        assert_eq!(forge.created_comments.lock().unwrap().len(), 2);
+    }
+
+    /// Unlike the reconcile, the retirement covers single-PR submissions:
+    /// a stale stack containing the one PR is exactly what `none` retires.
+    #[tokio::test]
+    async fn native_none_retires_stacks_for_single_pr_submissions() {
+        let mut plan = two_existing_pr_plan();
+        plan.bookmark_plans.truncate(1);
+        let forge = MockForge::new().with_existing_stack(7, &[41, 43]);
+        run_plan(&plan, &forge, StackPlacement::Comment, NativeStacks::None)
+            .await
+            .unwrap();
+
+        assert_eq!(*forge.unstacked.lock().unwrap(), vec![7]);
+    }
+
+    /// Where the feature is not offered nothing can be standing — `none`
+    /// skips silently instead of failing.
+    #[tokio::test]
+    async fn native_none_skips_silently_when_unavailable() {
+        let plan = two_existing_pr_plan();
+        let forge = MockForge::new().with_stacks_unavailable();
+        run_plan(&plan, &forge, StackPlacement::Comment, NativeStacks::None)
+            .await
+            .unwrap();
+
+        assert!(forge.unstacked.lock().unwrap().is_empty());
+    }
+
+    /// A transient failure while retiring is an advisory warning, never a
+    /// failed submit — a re-run retries.
+    #[tokio::test]
+    async fn native_none_transient_error_does_not_fail_the_submit() {
+        let plan = two_existing_pr_plan();
+        let forge = MockForge::new().with_stacks_api_error();
+        run_plan(&plan, &forge, StackPlacement::Comment, NativeStacks::None)
+            .await
+            .unwrap();
+
+        assert!(forge.unstacked.lock().unwrap().is_empty());
+        assert_eq!(forge.created_comments.lock().unwrap().len(), 2);
+    }
+
+    /// One PR is not a stack: even `on` skips the stack API entirely.
+    #[tokio::test]
+    async fn native_on_single_pr_skips_the_stack_api() {
+        let mut plan = two_existing_pr_plan();
+        plan.bookmark_plans.truncate(1);
+        let forge = MockForge::new();
+        run_plan(&plan, &forge, StackPlacement::Comment, NativeStacks::On)
+            .await
+            .unwrap();
+
+        assert!(forge.stack_lookups.lock().unwrap().is_empty());
+        assert!(forge.created_stacks.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn native_on_creates_a_stack_when_none_exists() {
+        let plan = two_existing_pr_plan();
+        let forge = MockForge::new();
+        run_plan(&plan, &forge, StackPlacement::Comment, NativeStacks::On)
+            .await
+            .unwrap();
+
+        // Every desired PR is queried, not only the bottom one.
+        assert_eq!(*forge.stack_lookups.lock().unwrap(), vec![41, 42]);
+        assert_eq!(*forge.created_stacks.lock().unwrap(), vec![vec![41, 42]]);
+        assert!(forge.unstacked.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn native_on_is_a_noop_when_the_stack_matches() {
+        let plan = two_existing_pr_plan();
+        let forge = MockForge::new().with_existing_stack(7, &[41, 42]);
+        run_plan(&plan, &forge, StackPlacement::Comment, NativeStacks::On)
+            .await
+            .unwrap();
+
+        assert!(forge.created_stacks.lock().unwrap().is_empty());
+        assert!(forge.added_to_stacks.lock().unwrap().is_empty());
+        assert!(forge.unstacked.lock().unwrap().is_empty());
+    }
+
+    /// A server stack extending *above* the submission is left standing:
+    /// the submitted PRs are already its bottom prefix, and rebuilding
+    /// would evict the upper PRs from merge-time retargeting.
+    #[tokio::test]
+    async fn native_on_leaves_a_superset_stack_standing() {
+        let plan = two_existing_pr_plan();
+        let forge = MockForge::new().with_existing_stack(7, &[41, 42, 43]);
+        run_plan(&plan, &forge, StackPlacement::Comment, NativeStacks::On)
+            .await
+            .unwrap();
+
+        assert!(forge.created_stacks.lock().unwrap().is_empty());
+        assert!(forge.added_to_stacks.lock().unwrap().is_empty());
+        assert!(forge.unstacked.lock().unwrap().is_empty());
+    }
+
+    /// The eviction warning names each open PR that is dissolved along
+    /// with a foreign stack but not restacked — once, however many stacks
+    /// carried it.
+    #[test]
+    fn evicted_pr_numbers_reports_lost_members_once() {
+        let stacks = vec![
+            ForgeStack {
+                number: 7,
+                open_pr_numbers: vec![41, 99],
+            },
+            ForgeStack {
+                number: 8,
+                open_pr_numbers: vec![42, 99],
+            },
+        ];
+        assert_eq!(evicted_pr_numbers(&stacks, &[41, 42]), vec![99]);
+        assert!(evicted_pr_numbers(&stacks, &[41, 42, 99]).is_empty());
+    }
+
+    #[tokio::test]
+    async fn native_on_appends_when_server_stack_is_a_bottom_prefix() {
+        let plan = two_existing_pr_plan();
+        let forge = MockForge::new().with_existing_stack(7, &[41]);
+        run_plan(&plan, &forge, StackPlacement::Comment, NativeStacks::On)
+            .await
+            .unwrap();
+
+        assert_eq!(*forge.added_to_stacks.lock().unwrap(), vec![(7, vec![42])]);
+        assert!(forge.created_stacks.lock().unwrap().is_empty());
+        assert!(forge.unstacked.lock().unwrap().is_empty());
+    }
+
+    /// A rejected append converges via dissolve-and-recreate instead of
+    /// failing the submit.
+    #[tokio::test]
+    async fn add_conflict_falls_back_to_dissolve_and_recreate() {
+        let plan = two_existing_pr_plan();
+        let forge = MockForge::new()
+            .with_existing_stack(7, &[41])
+            .with_add_conflict();
+        run_plan(&plan, &forge, StackPlacement::Comment, NativeStacks::On)
+            .await
+            .unwrap();
+
+        assert_eq!(*forge.unstacked.lock().unwrap(), vec![7]);
+        assert_eq!(*forge.created_stacks.lock().unwrap(), vec![vec![41, 42]]);
+    }
+
+    /// A reordered stack cannot be converged by appending — dissolve and
+    /// rebuild.
+    #[tokio::test]
+    async fn mismatched_stack_is_dissolved_and_recreated() {
+        let plan = two_existing_pr_plan();
+        let forge = MockForge::new().with_existing_stack(7, &[42, 41]);
+        run_plan(&plan, &forge, StackPlacement::Comment, NativeStacks::On)
+            .await
+            .unwrap();
+
+        assert_eq!(*forge.unstacked.lock().unwrap(), vec![7]);
+        assert_eq!(*forge.created_stacks.lock().unwrap(), vec![vec![41, 42]]);
+    }
+
+    /// Desired PRs spread over several foreign stacks: all of them are
+    /// dissolved before the new stack is created.
+    #[tokio::test]
+    async fn foreign_stacks_holding_desired_prs_are_dissolved() {
+        let plan = two_existing_pr_plan();
+        let forge = MockForge::new()
+            .with_existing_stack(7, &[41, 99])
+            .with_existing_stack(8, &[42]);
+        run_plan(&plan, &forge, StackPlacement::Comment, NativeStacks::On)
+            .await
+            .unwrap();
+
+        let mut unstacked = forge.unstacked.lock().unwrap().clone();
+        unstacked.sort_unstable();
+        assert_eq!(unstacked, vec![7, 8]);
+        assert_eq!(*forge.created_stacks.lock().unwrap(), vec![vec![41, 42]]);
+    }
+
+    /// With `on`, an unavailable stacks API fails the submit — after the
+    /// PRs themselves went through normally.
+    #[tokio::test]
+    async fn native_on_fails_the_submit_when_unavailable() {
+        let mut plan = two_existing_pr_plan();
+        // Make the PRs newly created so "submitted normally first" is
+        // observable on the mock.
+        for bp in &mut plan.bookmark_plans {
+            bp.existing_pr = None;
+            bp.needs_create = true;
+            bp.needs_push = true;
+        }
+        let forge = MockForge::new().with_stacks_unavailable();
+        let err = run_plan(&plan, &forge, StackPlacement::Comment, NativeStacks::On)
+            .await
+            .unwrap_err();
+
+        assert!(matches!(err, SubmitError::StacksUnavailable { .. }));
+        assert_eq!(forge.created_prs.lock().unwrap().len(), 2);
+        // The text placement still ran before the failure was reported.
+        assert_eq!(forge.created_comments.lock().unwrap().len(), 2);
+    }
+
+    /// With `auto`, an unavailable stacks API is skipped silently and the
+    /// requested placement carries on as if native stacks were never
+    /// requested.
+    #[tokio::test]
+    async fn native_auto_skips_silently_when_unavailable() {
+        let plan = two_existing_pr_plan();
+        let forge = MockForge::new().with_stacks_unavailable();
+        run_plan(
+            &plan,
+            &forge,
+            StackPlacement::AutoComment,
+            NativeStacks::Auto,
+        )
+        .await
+        .unwrap();
+
+        // Inactive: auto-comment behaves like comment.
+        assert_eq!(forge.created_comments.lock().unwrap().len(), 2);
+        assert!(forge.created_stacks.lock().unwrap().is_empty());
+    }
+
+    /// A failure that says nothing about availability must not stop the
+    /// stack info from being written: a redundant comment self-heals on the
+    /// next successful run, a skipped update leaves *stale* info standing.
+    #[tokio::test]
+    async fn native_auto_transient_error_still_writes_auto_comments() {
+        let plan = two_existing_pr_plan();
+        let forge = MockForge::new().with_stacks_api_error();
+        run_plan(
+            &plan,
+            &forge,
+            StackPlacement::AutoComment,
+            NativeStacks::Auto,
+        )
+        .await
+        .unwrap();
+
+        // Unknown: auto-comment falls back to comment, not to ignore.
+        assert_eq!(forge.created_comments.lock().unwrap().len(), 2);
+    }
+
+    /// The same transient error under `on` is a hard failure.
+    #[tokio::test]
+    async fn native_on_transient_error_fails_the_submit() {
+        let plan = two_existing_pr_plan();
+        let forge = MockForge::new().with_stacks_api_error();
+        let err = run_plan(&plan, &forge, StackPlacement::Comment, NativeStacks::On)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, SubmitError::StackReconcileFailed { .. }));
+    }
+
+    /// With `on`, a reconcile failure fails the submit only *after* body
+    /// syncs and the text placement ran, so everything the error's help
+    /// text promises ("PRs were created/updated normally") has happened.
+    /// In particular a requested `--sync-pr-content` body update must not
+    /// be dropped by the failure.
+    #[tokio::test]
+    async fn native_on_reconcile_failure_still_syncs_bodies_and_writes_comments() {
+        let mut plan = two_existing_pr_plan();
+        plan.bookmark_plans[0].needs_body_sync = true;
+        plan.bookmark_plans[0].body = Some("synced body".to_string());
+        let forge = MockForge::new().with_stacks_api_error();
+        let err = run_plan(&plan, &forge, StackPlacement::Comment, NativeStacks::On)
+            .await
+            .unwrap_err();
+
+        assert!(matches!(err, SubmitError::StackReconcileFailed { .. }));
+        assert_eq!(
+            *forge.updated_bodies.lock().unwrap(),
+            vec![(41, "synced body".to_string())]
+        );
+        assert_eq!(forge.created_comments.lock().unwrap().len(), 2);
+    }
+
+    /// When the reconcile establishes a native stack, auto-comment retires
+    /// stakk's own stack comment instead of updating it.
+    #[tokio::test]
+    async fn auto_comment_cleans_up_when_native_is_active() {
+        let plan = two_existing_pr_plan();
+        let stack_comment = Comment {
+            id: 900,
+            body: "<!--- STAKK_STACK: e30= --->\nold stack".to_string(),
+        };
+        let forge = MockForge::new().with_existing_comments(41, vec![stack_comment]);
+        run_plan(&plan, &forge, StackPlacement::AutoComment, NativeStacks::On)
+            .await
+            .unwrap();
+
+        // The native stack was registered, and the old comment retired.
+        assert_eq!(*forge.created_stacks.lock().unwrap(), vec![vec![41, 42]]);
+        assert_eq!(*forge.deleted_comments.lock().unwrap(), vec![900]);
+        assert!(forge.created_comments.lock().unwrap().is_empty());
+        assert!(forge.updated_comments.lock().unwrap().is_empty());
+    }
+
+    /// A deferred body sync must still land when the placement resolves
+    /// away from body mode (auto-body with a native stack in effect).
+    #[tokio::test]
+    async fn deferred_body_sync_applies_when_auto_body_resolves_to_cleanup() {
+        let mut plan = two_existing_pr_plan();
+        plan.bookmark_plans[0].needs_body_sync = true;
+        plan.bookmark_plans[0].body = Some("synced body".to_string());
+        let forge = MockForge::new();
+        run_plan(&plan, &forge, StackPlacement::AutoBody, NativeStacks::On)
+            .await
+            .unwrap();
+
+        let updated_bodies = forge.updated_bodies.lock().unwrap();
+        assert_eq!(*updated_bodies, vec![(41, "synced body".to_string())]);
+        // The synced body carries no fence — a native stack renders the
+        // overview, stakk's text is retired.
+        assert!(!updated_bodies[0].1.contains("STAKK_BODY_START"));
+    }
+
+    /// A single-PR submission takes the cleanup path even in body
+    /// placement, so the body-splice phase never runs — the deferred body
+    /// sync must be applied explicitly rather than dropped.
+    #[tokio::test]
+    async fn single_pr_body_placement_still_syncs_the_body() {
+        let mut plan = two_existing_pr_plan();
+        plan.bookmark_plans.truncate(1);
+        plan.bookmark_plans[0].needs_body_sync = true;
+        plan.bookmark_plans[0].body = Some("synced body".to_string());
+        let forge = MockForge::new();
+        run_plan(&plan, &forge, StackPlacement::Body, NativeStacks::Ignore)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            *forge.updated_bodies.lock().unwrap(),
+            vec![(41, "synced body".to_string())]
         );
     }
 }
