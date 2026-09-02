@@ -29,9 +29,6 @@ Changing any of these needs a major release.
   Field by field: `stakk docs graph`.
 - **The JSON handed to `--bookmark-command` on stdin**, under its own `schema_version` (currently `1`).
   The schema, with a worked example, is in `stakk submit --help`.
-- **Diagnostic codes (`stakk::…`).**
-  The prose of an error may be rewritten in any release; the code identifying it may not.
-  A program should match on the code.
 - **Exit codes:** `0` success, `1` failure, `130` interrupted.
   `2` is clap's usage-error convention and follows clap, not this contract.
   The table, and the rules a program should follow around it: `stakk docs scripting`.
@@ -61,7 +58,11 @@ These may change in any release.
   It is drawn for a human; `--format=json` is the one for a program.
 - **The TUI layout and keybindings.**
 - **Spinner and progress text.**
-- **Error message wording** — the diagnostic codes are the contract, not the prose.
+- **Diagnostic codes (`stakk::…`) and error wording.**
+  A code is still what a program should match on.
+  Prose may be rewritten silently; a code that is added, split, merged or renamed is listed in the changelog.
+  The set of codes itself may change in any release as the error model settles.
+  Treat an unknown code as a plain failure; the exit code is the signal.
 - **Advisory warnings printed to stderr.**
   They may be added or removed in any release,
   so a program must not depend on one appearing and must not treat stderr output as failure.

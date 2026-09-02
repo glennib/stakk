@@ -318,9 +318,10 @@ That is why `--dry-run` can stop after the plan and be guaranteed to have writte
 stakk follows semantic versioning.
 Stable surface: subcommands, their aliases and their flags, `STAKK_` environment variables,
 config keys and their defaults, the two `schema_version`-ed JSON documents
-(`stakk graph` and `--bookmark-command`'s stdin), diagnostic codes, and exit codes.
+(`stakk graph` and `--bookmark-command`'s stdin), and exit codes.
 Free to change in any release: rendered `--help` and `stakk docs` text, error and progress *wording*,
-the `pretty` output of `stakk graph`, the order of `stacks[]` in its JSON, and the TUI layout and keybindings.
+the set of diagnostic codes (a change is listed in the changelog), the `pretty` output of `stakk graph`,
+the order of `stacks[]` in its JSON, and the TUI layout and keybindings.
 Raising the minimum supported jj version is not a breaking change.
 
 The contract itself — every entry, with the reasoning: [docs/stability.md](docs/stability.md),
