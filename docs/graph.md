@@ -109,7 +109,7 @@ Sparse carries:
   `short_change_id` is jj's shortest prefix that is unique *right now*, often only one or two characters,
   so it can stop being unique as the repository grows.
   Pass `change_id` when the value is stored rather than used immediately,
-  or the later run may fail with `stakk::selection::rev_ambiguous`
+  or the later run may fail with `stakk::selection::rev_unresolvable`
 - `title` — the first line of the commit message.
   Empty when the commit has no description, which is a normal jj state;
   the `(no description set)` wording belongs to the pretty renderer, never to the document

@@ -29,8 +29,10 @@ while being twelve minutes earlier as an instant, so the two comparisons disagre
 **`short_change_id` is unique only right now.**
 It is jj's shortest unique prefix at the moment of the query, often one or two characters.
 A value stored, passed between processes,
-or computed well before use can resolve to `stakk::selection::rev_ambiguous` later,
+or computed well before use can fail as `stakk::selection::rev_unresolvable` later,
 where the full `change_id` still resolves.
+The selection flags take any jj revset, so `@`, `@-` and bookmark names resolve too;
+the ids from this document are the form that survives being stored.
 
 **stakk's exit code carries the outcome.**
 A wrapper that discards it turns a stopped submission into a silent one.

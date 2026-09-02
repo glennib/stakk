@@ -69,6 +69,9 @@ const BOOKMARK_TEMPLATE: &str = r#""{\"name\":" ++ json(self.name()) ++ ",\"sync
 // drops conflicted bookmarks (no normal target) — those names are still taken.
 const BOOKMARK_NAME_TEMPLATE: &str = r#"json(self.name()) ++ "\n""#;
 
+// Template for `jj log` when only commit ids matter: one JSON string per line.
+pub(crate) const COMMIT_ID_TEMPLATE: &str = r#"json(commit_id) ++ "\n""#;
+
 // Template for `jj log`: produces one JSON object per line with commit +
 // bookmarks + shortest unique change ID prefix.
 const LOG_TEMPLATE: &str = r#""{\"commit\":" ++ json(self) ++ ",\"local_bookmarks\":" ++ json(local_bookmarks) ++ ",\"remote_bookmarks\":" ++ json(remote_bookmarks) ++ ",\"immutable\":" ++ immutable ++ ",\"short_change_id\":\"" ++ change_id.shortest() ++ "\"}\n""#;
@@ -238,6 +241,21 @@ impl<R: JjRunner> Jj<R> {
         parse_log_entries(&output)
     }
 
+    /// Commit ids of every commit in `revset`, in `jj log` order.
+    ///
+    /// The revset goes to jj verbatim, so anything `jj log -r` accepts
+    /// resolves here. A revset jj rejects — an unknown symbol, an ambiguous
+    /// id prefix, a syntax error — surfaces as [`JjError::CommandFailed`]
+    /// carrying jj's message; a valid revset that selects nothing is
+    /// `Ok(vec![])`.
+    pub async fn resolve_revset(&self, revset: &str) -> Result<Vec<String>, JjError> {
+        let output = self
+            .runner
+            .run_jj(&["log", "-r", revset, "--no-graph", "-T", COMMIT_ID_TEMPLATE])
+            .await?;
+        parse_commit_ids(&output)
+    }
+
     /// Get the list of files changed by a specific commit.
     pub async fn get_diff_files(&self, commit_id: &str) -> Result<Vec<String>, JjError> {
         let output = self
@@ -304,6 +322,23 @@ fn parse_bookmark_names(output: &str) -> Result<HashSet<String>, JjError> {
         names.insert(name);
     }
     Ok(names)
+}
+
+/// Parse the output of [`COMMIT_ID_TEMPLATE`]: one JSON string per line.
+fn parse_commit_ids(output: &str) -> Result<Vec<String>, JjError> {
+    let mut ids = Vec::new();
+    for line in output.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let id: String = serde_json::from_str(line).map_err(|e| JjError::ParseError {
+            context: "commit id list".to_string(),
+            source: e,
+        })?;
+        ids.push(id);
+    }
+    Ok(ids)
 }
 
 fn parse_log_entries(output: &str) -> Result<Vec<LogEntry>, JjError> {
@@ -585,6 +620,38 @@ mod tests {
         let bookmarks = jj.get_my_bookmarks("custom-revset").await.unwrap();
         assert_eq!(bookmarks.len(), 1);
         assert_eq!(bookmarks[0].name, "my-feature");
+    }
+
+    #[tokio::test]
+    async fn resolve_revset_passes_the_revset_verbatim_and_keeps_order() {
+        let runner = MockJjRunner {
+            handler: |args: &[&str]| {
+                assert_eq!(
+                    args,
+                    [
+                        "log",
+                        "-r",
+                        "trunk()..@",
+                        "--no-graph",
+                        "-T",
+                        COMMIT_ID_TEMPLATE
+                    ]
+                );
+                Ok("\"bbb222\"\n\"aaa111\"\n".to_string())
+            },
+        };
+        let jj = Jj::new(runner);
+        let ids = jj.resolve_revset("trunk()..@").await.unwrap();
+        assert_eq!(ids, vec!["bbb222", "aaa111"]);
+    }
+
+    #[tokio::test]
+    async fn resolve_revset_empty_selection_is_ok_and_empty() {
+        let runner = MockJjRunner {
+            handler: |_: &[&str]| Ok(String::new()),
+        };
+        let jj = Jj::new(runner);
+        assert!(jj.resolve_revset("none()").await.unwrap().is_empty());
     }
 
     #[tokio::test]

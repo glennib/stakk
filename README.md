@@ -187,7 +187,8 @@ The selection flags below replace the TUI with an explicit, scriptable selection
 every PR boundary is named on the command line, all marks must lie on one trunk-to-tip path,
 the topmost mark is the tip, unmarked commits below it fold into the PR above them, and anything above it —
 an unbookmarked work-in-progress head, typically — is not submitted at all.
-`rev` is a change id or commit id prefix as printed by `stakk graph`, which makes submission a two-command loop:
+`rev` is any jj revset that names one commit — `@-`, a bookmark name, or a change id as printed by `stakk graph`,
+which makes submission a two-command loop:
 
 ```console
 stakk graph --format=json
@@ -262,7 +263,7 @@ Bookmarks whose history contains a merge commit cannot be stacked and are left o
 `pretty` names them in a footer, and the JSON reports them in `excluded_bookmarks`.
 
 `--format=json` emits a schema-versioned document for machine consumption
-(scripts, agents); its change id prefixes and bookmark names can be passed directly to `stakk submit`.
+(scripts, agents); its change ids and bookmark names can be passed directly to `stakk submit`.
 It is a sparse projection — identifiers, commit titles, bookmarks and stack position —
 and `--format=json-full` is a strict superset that adds each commit's `commit_id`, full `description`,
 `author` and `files[]`.

@@ -183,6 +183,7 @@ async fn submit_bookmark(args: &SubmitArgs, github_host: Option<&str>) -> Result
     } else {
         Some(
             select::explicit::resolve_bookmarks_explicitly(
+                &jj,
                 &change_graph,
                 &spec,
                 args.auto_prefix.as_deref(),

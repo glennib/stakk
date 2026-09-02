@@ -50,10 +50,14 @@ because a persisted default would silently change what gets submitted.
 | `--new-auto <rev>` | New TF-IDF-named bookmark at `rev`, honoring `--auto-prefix` (repeatable) |
 | `--new-command <rev>` | New bookmark at `rev` named by `--bookmark-command` (repeatable) |
 
-`rev` is a change id or commit id prefix, exactly as printed by `stakk graph`.
-Either `change_id` or `short_change_id` resolves,
-but a short prefix is only unique against the repository as it stands right now,
-so one stored and used later can fail with `stakk::selection::rev_ambiguous`.
+`rev` is a jj revset that resolves to exactly one commit:
+a `change_id` or `short_change_id` as printed by `stakk graph`, `@-`, a bookmark name,
+or any expression `jj log -r` accepts — it is handed to jj verbatim.
+A short id is only unique against the repository as it stands right now,
+so one stored and used later can fail with `stakk::selection::rev_unresolvable`,
+where the full `change_id` still resolves.
+In `--new <rev>=<name>`, the name starts at the first `=` outside parentheses and quotes,
+so a revset may carry keyword arguments (`remote_bookmarks(main, remote=origin)=<name>`).
 
 Submit flags belong after the subcommand.
 `stakk submit --dry-run` works; `stakk --dry-run submit` is rejected as an unexpected argument.
@@ -98,8 +102,10 @@ None of them leaves the repository in a modified state — selection happens bef
 
 | Code | Meaning |
 |------|---------|
-| `stakk::selection::rev_not_found` | No commit on the graph matches the prefix; it may have been rewritten since `stakk graph` ran |
-| `stakk::selection::rev_ambiguous` | The prefix matches more than one commit; a longer prefix or the full `change_id` resolves it |
+| `stakk::selection::rev_unresolvable` | jj rejected the revset — unknown symbol, ambiguous id prefix, syntax error; the message carries jj's diagnosis |
+| `stakk::selection::rev_not_found` | The revset is valid but selects no commit |
+| `stakk::selection::rev_not_unique` | The revset selects more than one commit; a PR boundary is one commit |
+| `stakk::selection::rev_not_on_stack` | The commit exists but is on no submittable stack: trunk, immutable, revset-excluded, or an empty `@` (try `@-`) |
 | `stakk::selection::rev_immutable` | The commit is jj-immutable and cannot take a bookmark — see below |
 | `stakk::selection::empty_rev` | A selection flag was given an empty `REV`, e.g. from a shell expansion that produced nothing |
 | `stakk::selection::invalid_new_spec` | A `--new` value is neither `REV` nor `REV=NAME` |

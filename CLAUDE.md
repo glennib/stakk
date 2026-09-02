@@ -636,9 +636,16 @@ If you change any of the following, update `scripts/record-demo.py` in the same 
 - Explicit selection (`select/explicit.rs`):
   `--keep`/`--new REV[=NAME]`/`--new-auto REV`/`--new-command REV` marks fully determine the PR set —
   every PR boundary is named on the command line, nothing is implicit and there is no bulk flag.
-  Revs prefix-match change/commit ids on the graph
-  (deduped by commit_id: shared segments cloned into several stacks are one commit, not ambiguous);
-  colinearity is validated by intersecting per-mark containing-stack sets; the topmost mark is the tip.
+  A REV is a jj revset: every one goes to `jj log -r` verbatim (`Jj::resolve_revset`)
+  and must select exactly one commit, which is then found on the graph by exact `commit_id`
+  (shared segments cloned into several stacks are one commit in several stacks)
+  — there is deliberately no id-prefix matcher in stakk, so ambiguity,
+  unknown symbols and syntax errors are jj's verdict, surfaced as `stakk::selection::rev_unresolvable` with jj's stderr.
+  An off-graph commit is `rev_not_on_stack`,
+  whose help points at `@-` because the default heads revset excludes the empty `@` the usual jj workflow leaves on top.
+  `--new REV=NAME` splits at the first `=` outside parentheses and quotes (`split_rev_name`),
+  so keyword arguments like `remote_bookmarks(main, remote=origin)` stay in the REV.
+  Colinearity is validated by intersecting per-mark containing-stack sets; the topmost mark is the tip.
   `resolve_bookmarks_explicitly` requires at least one mark —
   an empty `SelectionSpec` means the TUI and `main.rs` routes it there,
   so the intersection `reduce` `expect`s a non-empty mark list.

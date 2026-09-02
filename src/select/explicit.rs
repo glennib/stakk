@@ -12,9 +12,13 @@
 //! `analysis_from_selection`, which never flushes `pending` past the last
 //! boundary.
 //!
-//! The resolver is pure with respect to the repository: it reads the
-//! already-built [`ChangeGraph`] and produces a [`SelectionResult`]; all
-//! bookmark creation happens later, in the execute phase.
+//! A `REV` is a jj revset. Each one goes to `jj log -r` verbatim
+//! ([`Jj::resolve_revset`]) and must select exactly one commit, which is then
+//! looked up on the already-built [`ChangeGraph`]; stakk keeps no id-prefix
+//! matcher of its own, so `@-`, bookmark names and revset functions resolve
+//! exactly as they do for jj. That lookup is the resolver's only repository
+//! access: it produces a [`SelectionResult`], and all bookmark creation
+//! happens later, in the execute phase.
 
 use std::collections::BTreeSet;
 use std::collections::HashSet;
@@ -29,6 +33,9 @@ use super::tfidf;
 use crate::cli::submit::SubmitArgs;
 use crate::graph::types::ChangeGraph;
 use crate::graph::types::SegmentCommit;
+use crate::jj::Jj;
+use crate::jj::JjError;
+use crate::jj::runner::JjRunner;
 use crate::submit::BookmarkAssignment;
 
 /// Errors from resolving the explicit selection flags.
@@ -39,8 +46,8 @@ pub enum ExplicitSelectionError {
     #[diagnostic(
         code(stakk::selection::invalid_new_spec),
         help(
-            "pass a change or commit id prefix, optionally followed by =NAME; run `stakk graph` \
-             to list ids"
+            "pass a jj revset (a change id from `stakk graph`, `@-`, a bookmark name, …), \
+             optionally followed by =NAME"
         )
     )]
     InvalidNewSpec { arg: String },
@@ -49,7 +56,7 @@ pub enum ExplicitSelectionError {
     #[error("{flag} requires a non-empty REV")]
     #[diagnostic(
         code(stakk::selection::empty_rev),
-        help("pass a change or commit id prefix; run `stakk graph` to list ids")
+        help("pass a jj revset: a change id from `stakk graph`, `@-`, a bookmark name, …")
     )]
     EmptyRev { flag: String },
 
@@ -64,28 +71,48 @@ pub enum ExplicitSelectionError {
     )]
     NoStacks,
 
-    /// A rev matched no commit on any stack.
-    #[error("revision {rev:?} does not match any commit on a submittable stack")]
+    /// jj rejected the rev: an unknown symbol, an ambiguous id prefix, or a
+    /// revset syntax error. The message carries jj's own diagnosis.
+    #[error("could not resolve revision {rev:?}:\n{}", stderr.trim_end())]
+    #[diagnostic(
+        code(stakk::selection::rev_unresolvable),
+        help(
+            "REV is a jj revset: a change or commit id from `stakk graph`, `@-`, a bookmark name, \
+             or any expression `jj log -r` accepts — check it with `jj log -r <REV>`"
+        )
+    )]
+    RevUnresolvable { rev: String, stderr: String },
+
+    /// A valid rev that selects no commit at all.
+    #[error("revision {rev:?} matches no commit")]
     #[diagnostic(
         code(stakk::selection::rev_not_found),
-        help(
-            "the rev must prefix-match a change or commit id on a stack; trunk, immutable, and \
-             revset-excluded commits are not submittable — run `stakk graph` (or `stakk graph \
-             --format=json`) to list candidates"
-        )
+        help("the revset is valid but selects nothing — `jj log -r <REV>` shows what it covers")
     )]
     RevNotFound { rev: String },
 
-    /// A rev matched more than one distinct commit.
-    #[error("revision {rev:?} is ambiguous: matches {}", candidates.join(", "))]
+    /// A rev that selects more than one commit.
+    #[error("revision {rev:?} resolves to {count} commits")]
     #[diagnostic(
-        code(stakk::selection::rev_ambiguous),
-        help("use a longer prefix; run `stakk graph` to see short change ids")
+        code(stakk::selection::rev_not_unique),
+        help(
+            "a PR boundary is one commit; narrow the revset until `jj log -r <REV>` shows exactly \
+             one"
+        )
     )]
-    RevAmbiguous {
-        rev: String,
-        candidates: Vec<String>,
-    },
+    RevNotUnique { rev: String, count: usize },
+
+    /// A rev that resolves to a commit on no submittable stack.
+    #[error("revision {rev:?} resolves to commit {commit_id}, which is not on a submittable stack")]
+    #[diagnostic(
+        code(stakk::selection::rev_not_on_stack),
+        help(
+            "trunk, immutable and revset-excluded commits are not submittable, and the default \
+             --heads-revset excludes empty commits — `@` is often an empty working-copy commit, \
+             so try `@-`; run `stakk graph` (or `stakk graph --format=json`) to list candidates"
+        )
+    )]
+    RevNotOnStack { rev: String, commit_id: String },
 
     /// A rev resolved to an immutable commit.
     #[error("revision {rev:?} resolves to an immutable commit")]
@@ -162,12 +189,18 @@ pub enum ExplicitSelectionError {
     #[error(transparent)]
     #[diagnostic(transparent)]
     Gen(#[from] BookmarkGenError),
+
+    /// jj could not be run at all, or its output did not parse. A revset jj
+    /// *rejected* is [`Self::RevUnresolvable`], not this.
+    #[error(transparent)]
+    #[diagnostic(transparent)]
+    Jj(#[from] JjError),
 }
 
 /// A `--new REV[=NAME]` value, split.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NewBookmarkSpec {
-    /// Change or commit id prefix.
+    /// A jj revset.
     pub rev: String,
     /// Explicit name (`REV=NAME` form), or `None` for the
     /// `stakk-<change_id>` default.
@@ -192,7 +225,7 @@ impl SelectionSpec {
     pub fn from_args(args: &SubmitArgs) -> Result<Self, ExplicitSelectionError> {
         let mut new = Vec::with_capacity(args.new.len());
         for raw in &args.new {
-            let spec = if let Some((rev, name)) = raw.split_once('=') {
+            let spec = if let Some((rev, name)) = split_rev_name(raw) {
                 if rev.is_empty() || name.is_empty() {
                     return Err(ExplicitSelectionError::InvalidNewSpec { arg: raw.clone() });
                 }
@@ -212,8 +245,8 @@ impl SelectionSpec {
             };
             new.push(spec);
         }
-        // An empty rev would prefix-match every commit; reject it here
-        // (clap accepts "" as a value).
+        // An empty rev would reach jj as `-r ""` and fail with an opaque
+        // parse error; reject it here (clap accepts "" as a value).
         for (revs, flag) in [
             (&args.new_auto, "--new-auto"),
             (&args.new_command, "--new-command"),
@@ -239,6 +272,36 @@ impl SelectionSpec {
             && self.new_auto.is_empty()
             && self.new_command.is_empty()
     }
+}
+
+/// Split a `--new REV=NAME` value at the first `=` that sits outside
+/// parentheses and string literals, so a revset with keyword arguments
+/// (`remote_bookmarks(main, remote=origin)`) or a quoted `=` keeps its own
+/// `=`. `None` when there is no such `=`.
+fn split_rev_name(raw: &str) -> Option<(&str, &str)> {
+    let mut depth = 0usize;
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    for (i, c) in raw.char_indices() {
+        if let Some(q) = quote {
+            if escaped {
+                escaped = false;
+            } else if c == '\\' {
+                escaped = true;
+            } else if c == q {
+                quote = None;
+            }
+            continue;
+        }
+        match c {
+            '"' | '\'' => quote = Some(c),
+            '(' => depth += 1,
+            ')' => depth = depth.saturating_sub(1),
+            '=' if depth == 0 => return Some((&raw[..i], &raw[i + 1..])),
+            _ => {}
+        }
+    }
+    None
 }
 
 /// How a mark produces its bookmark name.
@@ -267,9 +330,10 @@ struct Mark {
 
 /// Resolve the explicit selection flags against the change graph.
 ///
-/// Pure with respect to the repository: reads the graph, returns the
-/// assignments and the selected trunk-to-tip path. `async` only because
-/// `--new-command` awaits the external command.
+/// Reads the graph and returns the assignments and the selected trunk-to-tip
+/// path. The repository is touched only to resolve each `REV` through
+/// `jj log -r` ([`Jj::resolve_revset`]); `--new-command` awaits the external
+/// command.
 ///
 /// `reserved` is every local bookmark name in the repo
 /// ([`crate::jj::Jj::get_local_bookmark_names`]). New names are checked
@@ -278,7 +342,8 @@ struct Mark {
 ///
 /// `spec` must carry at least one mark: an empty spec means the interactive
 /// TUI, and `main.rs` routes it there ([`SelectionSpec::is_empty`]).
-pub async fn resolve_bookmarks_explicitly(
+pub async fn resolve_bookmarks_explicitly<R: JjRunner>(
+    jj: &Jj<R>,
     graph: &ChangeGraph,
     spec: &SelectionSpec,
     auto_prefix: Option<&str>,
@@ -331,7 +396,7 @@ pub async fn resolve_bookmarks_explicitly(
             )
         }));
     for (rev, kind, display) in rev_marks {
-        let (commit, stacks) = resolve_rev(&linearized, &rev)?;
+        let (commit, stacks) = resolve_rev(jj, &linearized, &rev).await?;
         marks.push(Mark {
             kind,
             display,
@@ -507,63 +572,59 @@ fn auto_name(
     }
 }
 
-/// Resolve a rev (change or commit id prefix) to a unique mutable commit
-/// and the set of stacks containing it.
-fn resolve_rev<'a>(
+/// Resolve a rev (a jj revset) to one mutable commit on the stacks and the
+/// set of stacks containing it.
+async fn resolve_rev<'a, R: JjRunner>(
+    jj: &Jj<R>,
     linearized: &[Vec<&'a SegmentCommit>],
     rev: &str,
 ) -> Result<(&'a SegmentCommit, BTreeSet<usize>), ExplicitSelectionError> {
-    // commit_id → (commit, stack set); shared segments are cloned into
-    // every containing stack, so one commit in N stacks is NOT ambiguous.
-    let mut matches: Vec<(&SegmentCommit, BTreeSet<usize>)> = Vec::new();
+    let commit_ids = match jj.resolve_revset(rev).await {
+        Ok(ids) => ids,
+        Err(JjError::CommandFailed { stderr, .. }) => {
+            return Err(ExplicitSelectionError::RevUnresolvable {
+                rev: rev.to_string(),
+                stderr,
+            });
+        }
+        Err(e) => return Err(e.into()),
+    };
+    let commit_id = match commit_ids.as_slice() {
+        [] => {
+            return Err(ExplicitSelectionError::RevNotFound {
+                rev: rev.to_string(),
+            });
+        }
+        [id] => id.as_str(),
+        many => {
+            return Err(ExplicitSelectionError::RevNotUnique {
+                rev: rev.to_string(),
+                count: many.len(),
+            });
+        }
+    };
+    // Shared segments are cloned into every containing stack, so one commit
+    // can sit in several stacks; collect all of them.
+    let mut found: Option<&'a SegmentCommit> = None;
+    let mut stacks = BTreeSet::new();
     for (stack_idx, commits) in linearized.iter().enumerate() {
-        for commit in commits {
-            if commit.change_id.starts_with(rev) || commit.commit_id.starts_with(rev) {
-                match matches
-                    .iter_mut()
-                    .find(|(c, _)| c.commit_id == commit.commit_id)
-                {
-                    Some((_, stacks)) => {
-                        stacks.insert(stack_idx);
-                    }
-                    None => {
-                        matches.push((commit, BTreeSet::from([stack_idx])));
-                    }
-                }
-            }
+        if let Some(commit) = commits.iter().find(|c| c.commit_id == commit_id) {
+            found = Some(commit);
+            stacks.insert(stack_idx);
         }
     }
-    // Immutable commits cannot become boundaries, so only mutable matches
-    // count toward uniqueness; immutable ones merely shape the error when
-    // nothing mutable matched.
-    let any_immutable = matches.iter().any(|(c, _)| c.is_immutable);
-    let mut mutable: Vec<(&SegmentCommit, BTreeSet<usize>)> = matches
-        .into_iter()
-        .filter(|(c, _)| !c.is_immutable)
-        .collect();
-    match mutable.len() {
-        0 if any_immutable => Err(ExplicitSelectionError::RevImmutable {
+    let Some(commit) = found else {
+        return Err(ExplicitSelectionError::RevNotOnStack {
             rev: rev.to_string(),
-        }),
-        0 => Err(ExplicitSelectionError::RevNotFound {
+            commit_id: commit_id.chars().take(12).collect(),
+        });
+    };
+    if commit.is_immutable {
+        return Err(ExplicitSelectionError::RevImmutable {
             rev: rev.to_string(),
-        }),
-        1 => Ok(mutable.remove(0)),
-        _ => Err(ExplicitSelectionError::RevAmbiguous {
-            rev: rev.to_string(),
-            candidates: mutable
-                .iter()
-                .map(|(c, _)| {
-                    let summary = c.description.lines().next().unwrap_or("").trim();
-                    if summary.is_empty() {
-                        c.short_change_id.clone()
-                    } else {
-                        format!("{} {summary:?}", c.short_change_id)
-                    }
-                })
-                .collect(),
-        }),
+        });
     }
+    Ok((commit, stacks))
 }
 
 /// Resolve a `--keep` name to its segment's boundary commit and the set of
@@ -716,6 +777,87 @@ mod tests {
             .collect()
     }
 
+    struct MockJjRunner<F: Fn(&[&str]) -> Result<String, JjError> + Send + Sync> {
+        handler: F,
+    }
+
+    impl<F> JjRunner for MockJjRunner<F>
+    where
+        F: Fn(&[&str]) -> Result<String, JjError> + Send + Sync,
+    {
+        fn run_jj(
+            &self,
+            args: &[&str],
+        ) -> impl std::future::Future<Output = Result<String, JjError>> + Send {
+            std::future::ready((self.handler)(args))
+        }
+    }
+
+    fn json_lines(ids: &[String]) -> String {
+        let mut out = String::new();
+        for id in ids {
+            out.push_str(&serde_json::to_string(id).unwrap());
+            out.push('\n');
+        }
+        out
+    }
+
+    /// A stand-in for jj's revset resolution over the fixture graph. An id
+    /// prefix resolves the way jj resolves one (unique across the graph's
+    /// commits, ambiguity and misses are jj-side errors); `extra` maps other
+    /// revsets — `@-`, `none()`, an off-graph commit — to the commit ids jj
+    /// would print. Only `jj log -r …` with the commit-id template is
+    /// answered; any other call is a test failure.
+    fn fake_jj(graph: &ChangeGraph, extra: &[(&str, &[&str])]) -> Jj<impl JjRunner> {
+        let ids: Vec<(String, String)> = graph
+            .stacks
+            .iter()
+            .flat_map(BranchStack::commits_trunk_to_tip)
+            .map(|c| (c.change_id.clone(), c.commit_id.clone()))
+            .collect();
+        let extra: Vec<(String, Vec<String>)> = extra
+            .iter()
+            .map(|(rev, ids)| {
+                (
+                    rev.to_string(),
+                    ids.iter().map(ToString::to_string).collect(),
+                )
+            })
+            .collect();
+        Jj::new(MockJjRunner {
+            handler: move |args: &[&str]| {
+                assert_eq!(&args[..2], ["log", "-r"], "unexpected jj call: {args:?}");
+                assert_eq!(
+                    &args[3..],
+                    ["--no-graph", "-T", crate::jj::COMMIT_ID_TEMPLATE],
+                    "unexpected jj call: {args:?}"
+                );
+                let rev = args[2];
+                if let Some((_, ids)) = extra.iter().find(|(r, _)| r == rev) {
+                    return Ok(json_lines(ids));
+                }
+                let mut matched: Vec<String> = ids
+                    .iter()
+                    .filter(|(change, commit)| change.starts_with(rev) || commit.starts_with(rev))
+                    .map(|(_, commit)| commit.clone())
+                    .collect();
+                matched.sort();
+                matched.dedup();
+                let failed = |stderr: String| JjError::CommandFailed {
+                    command: format!("jj log -r {rev}"),
+                    stderr,
+                };
+                match matched.len() {
+                    0 => Err(failed(format!("Error: Revision `{rev}` doesn't exist\n"))),
+                    1 => Ok(json_lines(&matched)),
+                    _ => Err(failed(format!(
+                        "Error: Commit or change id prefix \"{rev}\" is ambiguous\n"
+                    ))),
+                }
+            },
+        })
+    }
+
     async fn resolve(
         graph: &ChangeGraph,
         s: &SelectionSpec,
@@ -729,7 +871,17 @@ mod tests {
         s: &SelectionSpec,
         reserved: &HashSet<String>,
     ) -> Result<SelectionResult, ExplicitSelectionError> {
-        resolve_bookmarks_explicitly(graph, s, None, None, reserved).await
+        resolve_bookmarks_explicitly(&fake_jj(graph, &[]), graph, s, None, None, reserved).await
+    }
+
+    /// Like [`resolve`], with extra revsets the fake jj answers.
+    async fn resolve_with_jj(
+        graph: &ChangeGraph,
+        s: &SelectionSpec,
+        extra: &[(&str, &[&str])],
+    ) -> Result<SelectionResult, ExplicitSelectionError> {
+        let reserved = reserved_from_graph(graph);
+        resolve_bookmarks_explicitly(&fake_jj(graph, extra), graph, s, None, None, &reserved).await
     }
 
     fn names(result: &SelectionResult) -> Vec<(&str, bool)> {
@@ -794,8 +946,28 @@ mod tests {
         assert_eq!(result.assignments[0].change_id, "bbbb2222");
     }
 
+    /// Any revset jj accepts resolves: the symbol goes to jj verbatim and the
+    /// commit it names is looked up on the graph.
     #[tokio::test]
-    async fn rev_not_found() {
+    async fn revset_symbol_resolves_through_jj() {
+        let graph = single_stack_graph();
+        let s = spec(|s| {
+            s.new = vec![NewBookmarkSpec {
+                rev: "@-".into(),
+                name: Some("via-symbol".into()),
+            }];
+        });
+        let result = resolve_with_jj(&graph, &s, &[("@-", &["c_bbbb2222"])])
+            .await
+            .unwrap();
+        assert_eq!(names(&result), vec![("via-symbol", true)]);
+        assert_eq!(result.assignments[0].change_id, "bbbb2222");
+    }
+
+    /// A rev jj rejects — unknown symbol, ambiguous prefix, syntax error —
+    /// surfaces with jj's own message.
+    #[tokio::test]
+    async fn jj_rejection_is_unresolvable() {
         let graph = single_stack_graph();
         let s = spec(|s| {
             s.new = vec![NewBookmarkSpec {
@@ -804,11 +976,16 @@ mod tests {
             }];
         });
         let err = resolve(&graph, &s).await.unwrap_err();
-        assert!(matches!(err, ExplicitSelectionError::RevNotFound { rev } if rev == "zzzz"));
+        assert!(matches!(
+            &err,
+            ExplicitSelectionError::RevUnresolvable { rev, stderr }
+                if rev == "zzzz" && stderr.contains("doesn't exist")
+        ));
     }
 
+    /// Prefix ambiguity is jj's call, not stakk's.
     #[tokio::test]
-    async fn rev_ambiguous_across_distinct_commits() {
+    async fn ambiguous_prefix_is_unresolvable() {
         let graph = make_graph(vec![BranchStack {
             segments: vec![
                 make_segment(&["a"], "dddd1111", "one"),
@@ -820,15 +997,54 @@ mod tests {
         });
         let err = resolve(&graph, &s).await.unwrap_err();
         assert!(matches!(
-            err,
-            ExplicitSelectionError::RevAmbiguous { candidates, .. } if candidates.len() == 2
+            &err,
+            ExplicitSelectionError::RevUnresolvable { stderr, .. } if stderr.contains("ambiguous")
         ));
     }
 
-    /// The shared base segment is cloned into both stacks; matching its
-    /// commit must NOT count as ambiguous (dedupe by commit id).
     #[tokio::test]
-    async fn rev_shared_clone_is_not_ambiguous() {
+    async fn revset_selecting_nothing_is_not_found() {
+        let graph = single_stack_graph();
+        let s = spec(|s| s.new_auto = vec!["none()".into()]);
+        let err = resolve_with_jj(&graph, &s, &[("none()", &[])])
+            .await
+            .unwrap_err();
+        assert!(matches!(err, ExplicitSelectionError::RevNotFound { rev } if rev == "none()"));
+    }
+
+    #[tokio::test]
+    async fn revset_selecting_many_commits_is_not_unique() {
+        let graph = single_stack_graph();
+        let s = spec(|s| s.new_auto = vec!["trunk()..@".into()]);
+        let err = resolve_with_jj(&graph, &s, &[("trunk()..@", &["c_aaaa1111", "c_bbbb2222"])])
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            ExplicitSelectionError::RevNotUnique { rev, count } if rev == "trunk()..@" && count == 2
+        ));
+    }
+
+    /// A commit jj knows but the graph does not — trunk, an empty `@`, a
+    /// revset-excluded head — is reported with the resolved commit id.
+    #[tokio::test]
+    async fn revset_to_off_graph_commit_is_not_on_stack() {
+        let graph = single_stack_graph();
+        let s = spec(|s| s.new_auto = vec!["main".into()]);
+        let err = resolve_with_jj(&graph, &s, &[("main", &["c_trunk00000000"])])
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            &err,
+            ExplicitSelectionError::RevNotOnStack { rev, commit_id }
+                if rev == "main" && commit_id == "c_trunk00000"
+        ));
+    }
+
+    /// The shared base segment is cloned into both stacks; jj answers with
+    /// one commit id, which is found in both.
+    #[tokio::test]
+    async fn rev_on_shared_segment_resolves_once() {
         let graph = forked_graph();
         let s = spec(|s| {
             s.new = vec![NewBookmarkSpec {
@@ -960,9 +1176,16 @@ mod tests {
         // Mark only mid: its dynamic segment is base+mid (both folded in).
         let s = spec(|s| s.new_auto = vec!["bbbb".into()]);
         let reserved = reserved_from_graph(&graph);
-        let result = resolve_bookmarks_explicitly(&graph, &s, Some("gb-"), None, &reserved)
-            .await
-            .unwrap();
+        let result = resolve_bookmarks_explicitly(
+            &fake_jj(&graph, &[]),
+            &graph,
+            &s,
+            Some("gb-"),
+            None,
+            &reserved,
+        )
+        .await
+        .unwrap();
         let name = &result.assignments[0].bookmark_name;
         assert!(name.starts_with("gb-"), "prefix applied: {name}");
         // Terms come from the folded commits, not just the boundary.
@@ -1008,8 +1231,8 @@ mod tests {
         );
     }
 
-    /// An empty rev must be rejected at parse time — `starts_with("")`
-    /// would otherwise match every commit.
+    /// An empty rev must be rejected at parse time, before it reaches jj as
+    /// `-r ""`.
     #[test]
     fn empty_rev_for_auto_and_command_flags_errors() {
         for flag in ["--new-auto", "--new-command"] {
@@ -1020,34 +1243,6 @@ mod tests {
                 "expected EmptyRev for {flag}",
             );
         }
-    }
-
-    /// A prefix matching one mutable and one immutable commit resolves to
-    /// the mutable one — immutable commits are not submittable candidates.
-    #[tokio::test]
-    async fn rev_prefix_shared_with_immutable_commit_is_not_ambiguous() {
-        let mut graph = single_stack_graph();
-        // Both commits share the "b" prefix; make the base one immutable.
-        graph.stacks[0].segments[0].commits[0].change_id = "baaa1111".into();
-        graph.stacks[0].segments[0].commits[0].is_immutable = true;
-        let s = spec(|s| {
-            s.new = vec![NewBookmarkSpec {
-                rev: "b".into(),
-                name: Some("picked".into()),
-            }];
-        });
-        let result = resolve(&graph, &s).await.unwrap();
-        assert_eq!(result.assignments[0].change_id, "bbbb2222");
-
-        // A prefix matching ONLY the immutable commit reports immutability.
-        let s = spec(|s| {
-            s.new = vec![NewBookmarkSpec {
-                rev: "ba".into(),
-                name: Some("picked".into()),
-            }];
-        });
-        let err = resolve(&graph, &s).await.unwrap_err();
-        assert!(matches!(err, ExplicitSelectionError::RevImmutable { .. }));
     }
 
     /// A default-named `--new REV` whose `stakk-<change_id>` name already
@@ -1198,10 +1393,16 @@ mod tests {
         let graph = single_stack_graph();
         let s = spec(|s| s.new_command = vec!["bbbb".into()]);
         let reserved = reserved_from_graph(&graph);
-        let result =
-            resolve_bookmarks_explicitly(&graph, &s, None, Some("echo from-command"), &reserved)
-                .await
-                .unwrap();
+        let result = resolve_bookmarks_explicitly(
+            &fake_jj(&graph, &[]),
+            &graph,
+            &s,
+            None,
+            Some("echo from-command"),
+            &reserved,
+        )
+        .await
+        .unwrap();
         assert_eq!(names(&result), vec![("from-command", true)]);
     }
 
@@ -1214,9 +1415,16 @@ mod tests {
         let mut reserved = reserved_from_graph(&graph);
         reserved.insert("main".to_string());
         let s = spec(|s| s.new_command = vec!["bbbb".into()]);
-        let err = resolve_bookmarks_explicitly(&graph, &s, None, Some("echo main"), &reserved)
-            .await
-            .unwrap_err();
+        let err = resolve_bookmarks_explicitly(
+            &fake_jj(&graph, &[]),
+            &graph,
+            &s,
+            None,
+            Some("echo main"),
+            &reserved,
+        )
+        .await
+        .unwrap_err();
         assert!(matches!(
             err,
             ExplicitSelectionError::NewNameExists { name } if name == "main"
@@ -1229,9 +1437,16 @@ mod tests {
         let graph = single_stack_graph();
         let s = spec(|s| s.new_command = vec!["bbbb".into()]);
         let reserved = reserved_from_graph(&graph);
-        let err = resolve_bookmarks_explicitly(&graph, &s, None, Some("false"), &reserved)
-            .await
-            .unwrap_err();
+        let err = resolve_bookmarks_explicitly(
+            &fake_jj(&graph, &[]),
+            &graph,
+            &s,
+            None,
+            Some("false"),
+            &reserved,
+        )
+        .await
+        .unwrap_err();
         assert!(matches!(
             err,
             ExplicitSelectionError::Gen(BookmarkGenError::CommandFailed { .. })
@@ -1258,6 +1473,7 @@ mod tests {
         let s = spec(|s| s.new_command = vec!["bbbb".into()]);
         let reserved = reserved_from_graph(&graph);
         let result = resolve_bookmarks_explicitly(
+            &fake_jj(&graph, &[]),
             &graph,
             &s,
             None,
@@ -1340,6 +1556,40 @@ mod tests {
                     rev: "def".into(),
                     name: None,
                 },
+            ],
+        );
+    }
+
+    /// `=` inside a revset — a keyword argument, a quoted string — is part
+    /// of the REV; only a top-level `=` separates the NAME, and the NAME
+    /// keeps any further `=` as today.
+    #[test]
+    fn from_args_splits_at_the_first_top_level_equals_only() {
+        let args = parse_submit(&[
+            "stakk",
+            "submit",
+            "--new",
+            "remote_bookmarks(main, remote=origin)=x",
+            "--new",
+            r#"description("a=b")"#,
+            "--new",
+            "abc=a=b",
+            "--new",
+            "description('x=\\'y=z')=q",
+        ]);
+        let spec = SelectionSpec::from_args(&args).unwrap();
+        let split: Vec<(&str, Option<&str>)> = spec
+            .new
+            .iter()
+            .map(|n| (n.rev.as_str(), n.name.as_deref()))
+            .collect();
+        assert_eq!(
+            split,
+            vec![
+                ("remote_bookmarks(main, remote=origin)", Some("x")),
+                (r#"description("a=b")"#, None),
+                ("abc", Some("a=b")),
+                ("description('x=\\'y=z')", Some("q")),
             ],
         );
     }

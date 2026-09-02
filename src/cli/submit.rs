@@ -142,8 +142,12 @@ pub struct SubmitArgs {
 
     /// Create a new bookmark at REV as a PR boundary (repeatable).
     ///
-    /// REV is a change id or commit id prefix (as shown by `stakk graph`).
-    /// The bookmark is named stakk-<change_id> unless =NAME is given.
+    /// REV is a jj revset that resolves to exactly one commit: a change or
+    /// commit id as shown by `stakk graph`, `@-`, a bookmark name, or any
+    /// expression `jj log -r` accepts. The bookmark is named
+    /// stakk-<change_id> unless =NAME is given; the NAME starts at the
+    /// first `=` outside parentheses and quotes, so a revset may carry
+    /// keyword arguments (`remote_bookmarks(main, remote=origin)=NAME`).
     #[arg(
         long,
         value_name = "REV[=NAME]",
@@ -154,10 +158,10 @@ pub struct SubmitArgs {
 
     /// Create a new auto-named bookmark at REV (repeatable).
     ///
-    /// The name is derived with TF-IDF from the descriptions and files of
-    /// the commits folded into the boundary, honoring --auto-prefix. Falls
-    /// back to stakk-<change_id> when nothing can be derived or the
-    /// derived name is already taken.
+    /// REV as for --new. The name is derived with TF-IDF from the descriptions
+    /// and files of the commits folded into the boundary, honoring
+    /// --auto-prefix. Falls back to stakk-<change_id> when nothing can be
+    /// derived or the derived name is already taken.
     #[arg(
         long,
         value_name = "REV",
@@ -168,8 +172,8 @@ pub struct SubmitArgs {
 
     /// Create a new bookmark at REV named by --bookmark-command (repeatable).
     ///
-    /// Errors if no bookmark command is configured. The command receives
-    /// the same JSON segment description as in the TUI.
+    /// REV as for --new. Errors if no bookmark command is configured. The
+    /// command receives the same JSON segment description as in the TUI.
     #[arg(
         long,
         value_name = "REV",
