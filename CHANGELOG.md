@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.5.0](https://github.com/glennib/stakk/compare/v2.4.1...v2.5.0) - 2026-09-02
+
+### Added
+
+- *(select)* resolve REV as a jj revset
+
+### Other
+
+- *(deps)* update dependency rumdl to v0.2.63 ([#236](https://github.com/glennib/stakk/pull/236))
+- *(stability)* let diagnostic codes change in minor releases
+- *(deps)* update dependency uv to v0.12.9 ([#234](https://github.com/glennib/stakk/pull/234))
+
 ## [2.4.1](https://github.com/glennib/stakk/compare/v2.4.0...v2.4.1) - 2026-09-01
 
 ### Other
