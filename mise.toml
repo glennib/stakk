@@ -10,7 +10,7 @@ cargo-binstall = "1.23.0"
 cargo-insta = "latest"
 # Pinned: `md:check` gates CI, so a new rumdl release must not fail the build
 # out of nowhere.
-rumdl = "0.2.63"
+rumdl = "0.2.66"
 
 [tasks.fmt]
 description = "Format code"
