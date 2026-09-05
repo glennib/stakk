@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.5.1](https://github.com/glennib/stakk/compare/v2.5.0...v2.5.1) - 2026-09-05
+
+### Other
+
+- *(deps)* update dependency cargo-binstall to v1.23.0 ([#242](https://github.com/glennib/stakk/pull/242))
+- *(deps)* update dependency uv to v0.12.10 ([#241](https://github.com/glennib/stakk/pull/241))
+- *(deps)* update dependency cargo:release-plz to v0.3.161 ([#239](https://github.com/glennib/stakk/pull/239))
+
 ## [2.5.0](https://github.com/glennib/stakk/compare/v2.4.1...v2.5.0) - 2026-09-02
 
 ### Added
