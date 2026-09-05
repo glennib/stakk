@@ -2,7 +2,7 @@
 uv = "0.12.10"
 "github:asciinema/asciinema" = "3.2.1"
 "github:asciinema/agg" = "1.9.0"
-cargo-binstall = "1.22.0"
+cargo-binstall = "1.23.0"
 "cargo:cargo-dist" = "0.32.0"
 "cargo:cargo-edit" = "0.13.13"
 "cargo:cargo-nextest" = "0.9.143"
