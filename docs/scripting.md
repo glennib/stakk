@@ -23,8 +23,9 @@ Matching a bookmark name or comparing `committer_timestamp` does not.
 A branch whose tip was never bookmarked still appears, with an empty `bookmarks[]` on its last segment,
 so a name is not available as an identifier for every stack.
 
-**`committer_timestamp` is offset-aware.** `2026-02-19T19:47:54+01:00` sorts after `2026-02-19T19:00:00Z` as a string
-while being twelve minutes earlier as an instant, so the two comparisons disagree across offsets.
+**`committer_timestamp` is offset-aware.**
+`2026-02-19T19:47:54+01:00` sorts after `2026-02-19T19:00:00Z` as a string while being twelve minutes earlier
+as an instant, so the two comparisons disagree across offsets.
 
 **`short_change_id` is unique only right now.**
 It is jj's shortest unique prefix at the moment of the query, often one or two characters.

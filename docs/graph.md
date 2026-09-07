@@ -89,8 +89,8 @@ so a never-pushed bookmark reports `synced = true` exactly like an up-to-date on
 What separates them is whether a remote bookmark of the same name sits on the boundary commit. jj's internal `name@git`
 remote does not count — it tracks the colocated git repository, not a push target.
 
-**`remote_state` does not know which remote you push to.** `stakk graph` takes no `--remote`,
-so any remote but `name@git` satisfies the match.
+**`remote_state` does not know which remote you push to.**
+`stakk graph` takes no `--remote`, so any remote but `name@git` satisfies the match.
 In a repository with more than one remote,
 a bookmark that exists on `mirror` but was never pushed to `origin` reports `synced`,
 and `stakk submit --remote origin` then pushes it for the first time.
