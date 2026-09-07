@@ -4,105 +4,85 @@ summary: Stack info placement and stack comment templates.
 
 # Stack info and templates
 
-Where stakk writes the stack overview on each PR, and how to customize what it says.
+Where stakk writes the stack overview on each PR, and how to change what it says.
 
 ## Placement
 
-`--stack-placement` (or `stack_placement` in a config file, or `STAKK_STACK_PLACEMENT`) decides
-where the stack overview lives on each PR:
+`--stack-placement` (`stack_placement`, `STAKK_STACK_PLACEMENT`):
 
 | Mode | Writes | Removes existing stack comments/body fences |
 |------|--------|---------------------------------------------|
-| `comment` | A separate PR comment, updated in place | Yes, when migrating from `body` |
-| `body` | A fenced section in the PR body (`STAKK_BODY_START` … `STAKK_BODY_END`) | Yes, when migrating from `comment` |
-| `none` | Nothing | Yes, on every submit |
-| `ignore` | Nothing | No — existing artifacts are left exactly as they are |
-| `auto-comment` (default) | Like `none` when a native stack is in effect, like `comment` otherwise | Follows the mode it resolves to |
-| `auto-body` | Like `none` when a native stack is in effect, like `body` otherwise | Follows the mode it resolves to |
+| `comment` | A PR comment, updated in place | When migrating from `body` |
+| `body` | A fenced section in the PR body (`STAKK_BODY_START` … `STAKK_BODY_END`) | When migrating from `comment` |
+| `none` | Nothing | On every submit |
+| `ignore` | Nothing | Never |
+| `auto-comment` (default) | Like `none` when a native stack is in effect, like `comment` otherwise | Follows the resolved mode |
+| `auto-body` | Like `none` when a native stack is in effect, like `body` otherwise | Follows the resolved mode |
 
-Switching between `comment` and `body` migrates automatically.
-Content you write outside the body fences is preserved; the fenced section itself is overwritten on every run.
+Content outside the body fences is preserved; the fenced section is overwritten on every run.
 
-`none` and `ignore` both write no stack info — the difference is what happens to whatever is already on the PR.
-Use `none` to retire stakk's stack comments cleanly (for example when moving to GitHub's own stacked-PR UI).
-Use `ignore` to leave the existing comments and fences frozen in place — handy while trying another tool,
-or when another process owns that part of the PR.
-Neither mode reads or compiles a custom `--template-path`,
-so a broken template cannot fail a submission that will not render it.
+`none` retires stakk's stack info cleanly; `ignore` leaves whatever is on the PR frozen,
+for when another tool or process owns it.
+Neither reads or compiles a custom `--template-path`.
 
-`auto-comment` and `auto-body` defer to `--native-stacks`
-(see `stakk submit --help`):
-on a run where the server-side stack was registered, GitHub's own stack rendering replaces stakk's text,
-so they behave like `none` and retire it; on every other run they behave like `comment`/`body`.
-The retirement requires a *definitive* native stack —
-if stack registration failed for a reason that says nothing about availability
-(a transient network error, say),
-the auto modes still write: a redundant overview self-heals on the next successful run,
-while a skipped update would leave a stale one standing.
-While `--native-stacks` is `ignore` (its default) or `none`,
-`auto-comment` and `auto-body` are exactly `comment` and `body` —
-which is why `auto-comment` can be the default placement without changing any behavior:
-the intended zero-config end state once GitHub's feature reaches general availability is a single default flip of
-`native_stacks` to `auto`, giving native rendering where enabled and stack comments everywhere else, never both.
+The auto modes defer to `--native-stacks`: when the server-side stack was registered on this run,
+GitHub's own rendering replaces stakk's text, so they behave like `none`; otherwise like `comment`/`body`.
+Retirement needs a *definitive* native stack.
+If registration failed for a reason that says nothing about availability
+(a network error, say),
+the auto modes still write — a redundant overview self-heals on the next successful run, a skipped one goes stale.
+While `--native-stacks` is `ignore` (its default) or `none`, the auto modes are exactly `comment` and `body`,
+which is why `auto-comment` is the default:
+the intended end state is a single default flip of `native_stacks` to `auto`,
+giving native rendering where enabled and stack comments everywhere else, never both.
 
-A submission that produces a single PR is not a stack: no stack info is written, and stale artifacts from an earlier,
+A submission producing a single PR is not a stack: no stack info is written, and stale artifacts from an earlier,
 larger stack are cleaned up (unless the mode is `ignore`).
 
 ## Templates
 
-Stack comments are rendered with [minijinja](https://github.com/mitsuhiko/minijinja).
-`--template-path <path>` (or `template_path` in a config file, or `STAKK_TEMPLATE_PATH`) replaces the built-in template.
+Stack comments are rendered with [minijinja](https://github.com/mitsuhiko/minijinja); `--template-path <path>`
+(`template_path`, `STAKK_TEMPLATE_PATH`) replaces the built-in template.
 
 The context holds `stack`, `stack_size`, `default_branch`, `current_bookmark` and `stakk_url`.
-The `stack` array is ordered **trunk-first** — `position` is 1 for the entry nearest the trunk.
-The default template reverses it (`stack | reverse`) so the rendered graph reads leaf-at-top,
-matching `stakk graph` and the TUI.
-
+`stack` is ordered **trunk-first** (`position` 1 nearest the trunk); the default template reverses it
+(`stack | reverse`) so the result reads leaf-at-top like `stakk graph` and the TUI.
 Each entry carries `bookmark_name`, `pr_url`, `pr_number`, `title`, `base`, `is_draft`, `position`,
-`is_current` and `is_leaf` — the last is true for the tip of the stack, the entry furthest from the trunk.
-`stakk submit --help` prints the same list with a worked example template.
-Note that `title` is the *commit-derived* title,
-which can differ from the PR's live title on GitHub when `--sync-pr-content` does not include titles.
-The default template deliberately shows the bare `pr_url` and no link text of its own,
-so the comment cannot contradict the PR page:
-GitHub renders the link as a reference carrying the PR's live title and merge state.
-The bookmark name is not written next to it — the reference is the whole label.
+`is_current` and `is_leaf`.
+`stakk submit --help` prints the same list with a worked example.
 
-Two things are added outside the template and cannot be overridden:
+`title` is the *commit-derived* title,
+which can differ from the PR's live title when `--sync-pr-content` excludes titles.
+That is why the default template shows the bare `pr_url` and no text of its own:
+GitHub renders the link as a reference carrying the PR's live title and merge state,
+so the comment cannot contradict the PR page.
 
-- the metadata line (`<!--- STAKK_STACK: ... --->`), which is how stakk finds and updates its own comment
-- the placement preamble — a warning line, and the repo URL
+Added outside the template, not overridable: the metadata line
+(`<!--- STAKK_STACK: ... --->`),
+by which stakk finds its own comment, and the placement preamble (a warning line and the repo URL).
 
 ### Rendering constraints
 
-GitHub renders comments in a proportional font, so a template must not depend on horizontal alignment: no `│` gutter,
-no indentation for structure, and no code fence (links inside a fence are dead).
-Each row of the default template is a **Markdown list item**, and that is functional rather than decorative.
-GitHub expands a bare PR link into a reference showing the PR's live title and merge state only
-when the link sits inside a list item.
-A link in a plain paragraph, a table cell or a blockquote stays a bare `#N`,
-and so does a link alone in its own paragraph.
-A custom template that lays entries out with line breaks instead of a list still works,
-but every entry loses its title and state.
+GitHub renders comments in a proportional font: no `│` gutter, no indentation for structure, and no code fence
+(links inside a fence are dead).
 
-The bullet GitHub draws for each item *is* the node marker,
-which is why the comment carries no `●`/`○`/`◆` glyphs of its own even though `stakk graph` and the TUI do:
-a glyph next to a bullet reads as two markers, and the bullet cannot be turned off
-(GitHub's sanitizer strips inline `style`).
-A glyph *is* allowed before the link inside an item if a custom template wants one.
+**Each row must be a Markdown list item.**
+GitHub expands a bare PR link into a reference with the PR's live title and merge state only inside a list item.
+A link in a paragraph, table cell or blockquote stays a bare `#N` — even alone in its own paragraph.
+A template that uses line breaks instead of a list still works, but every entry loses its title and state.
 
-A template that fails to render fails the submission, and `--dry-run` does not exercise it:
-dry-run returns before the template is read at all.
-What the ordering does guarantee is that a template is read and compiled before the execute phase,
-so a syntax error stops the run before anything is pushed.
-A failure that only appears while rendering surfaces later —
-the branches are pushed and the PRs created or updated first, and the stack comments written after that.
+GitHub's bullet *is* the node marker, which is why the default template has no `●`/`○`/`◆` glyphs:
+the bullet cannot be hidden (inline `style` is stripped), and a glyph next to it reads as two markers.
+A glyph before the link inside the item is fine if you want one.
+
+A template that fails to render fails the submission.
+It is read and compiled before the execute phase, so a syntax error stops the run before anything is pushed;
+a failure that only appears while rendering surfaces after the branches are pushed and the PRs created or updated.
+`--dry-run` does not exercise the template at all.
 
 ## Custom bookmark names
 
-`--bookmark-command` names bookmarks with an external program.
-The command runs through `sh -c` (Unix) or `cmd /C` (Windows),
-receives a JSON description of one segment of commits on stdin, and must print a single bookmark name on stdout.
-
+`--bookmark-command` names bookmarks with an external program: `sh -c` (Unix) or `cmd /C` (Windows),
+a JSON description of one segment on stdin, a single bookmark name on stdout.
 It powers the `[*]` state in the TUI and the `--new-command` selection flag.
-The full JSON schema, with a worked example, is in `stakk submit --help`.
+The JSON schema, with a worked example, is in `stakk submit --help`.

@@ -4,60 +4,37 @@ summary: Driving stakk from a program: exit codes and a worked example.
 
 # Scripting stakk
 
-Driving `stakk` from a program: exit codes, the properties that matter to automation, and a worked example.
+Exit codes and a worked example.
+The submission model and diagnostic codes are in `stakk docs agents`, the JSON schema in `stakk docs graph`,
+and what a program may rely on across releases in `stakk docs stability`.
 
-Three other topics carry the rest.
-`stakk docs agents` has the submission model — the selection flags,
-the rules that decide which commits become pull requests, and the diagnostic codes.
-`stakk docs graph` has the JSON schema field by field.
-`stakk docs stability` has what a program may rely on across releases, and what it may not.
+## Properties that matter to a program
 
-## Properties worth knowing
-
-**`stacks[]` has no stable order.**
-It tracks commit recency and shifts as soon as anyone commits,
-so an index into it means something different on the next run.
-Matching a bookmark name or comparing `committer_timestamp` does not.
-
-**A stack need not carry a bookmark.**
-A branch whose tip was never bookmarked still appears, with an empty `bookmarks[]` on its last segment,
-so a name is not available as an identifier for every stack.
-
-**`committer_timestamp` is offset-aware.**
-`2026-02-19T19:47:54+01:00` sorts after `2026-02-19T19:00:00Z` as a string while being twelve minutes earlier
-as an instant, so the two comparisons disagree across offsets.
-
-**`short_change_id` is unique only right now.**
-It is jj's shortest unique prefix at the moment of the query, often one or two characters.
-A value stored, passed between processes,
-or computed well before use can fail as `stakk::selection::rev_unresolvable` later,
-where the full `change_id` still resolves.
-The selection flags take any jj revset, so `@`, `@-` and bookmark names resolve too;
-the ids from this document are the form that survives being stored.
-
-**stakk's exit code carries the outcome.**
-A wrapper that discards it turns a stopped submission into a silent one.
+- **`stacks[]` has no stable order** and a stack need not carry a bookmark.
+  Select by bookmark name or by `committer_timestamp`, never by index.
+- **`committer_timestamp` is offset-aware.**
+  `2026-02-19T19:47:54+01:00` sorts after `2026-02-19T19:00:00Z` as a string while being earlier as an instant.
+- **`short_change_id` is unique only right now.**
+  Store and pass `change_id`; the short form can later fail as `stakk::selection::rev_unresolvable`.
+- **The exit code carries the outcome.**
+  A wrapper that discards it turns a stopped submission into a silent one.
 
 ## Exit codes
 
 | Code | Meaning |
 |------|---------|
-| `0` | Success. `--help` and `--version` also exit `0` |
-| `1` | stakk failed; the diagnostic, with its `stakk::…` code, is on stderr |
-| `2` | Usage error — unknown flag, unknown subcommand, invalid enum value |
+| `0` | Success (`--help` and `--version` too) |
+| `1` | stakk failed; the diagnostic with its `stakk::…` code is on stderr |
+| `2` | Usage error — unknown flag, subcommand or enum value (clap's convention, not stakk's contract) |
 | `130` | Interrupted (`Ctrl-C` in the TUI) |
 
-`2` comes from clap, stakk's argument parser, rather than from stakk itself,
-so it follows clap's usage-error convention rather than stakk's stability contract.
-
-Note that `stakk submit` with no selection flags means the TUI.
-Without a terminal that is `stakk::not_interactive` and exit `1`,
-which is what an empty selection looks like when a shell substitution expands to nothing.
+`stakk submit` with no selection flags means the TUI; without a terminal that is `stakk::not_interactive`, exit `1`.
+That is what an empty selection looks like when a shell substitution expands to nothing.
 
 ## A worked example
 
-Submits the most recently modified stack, keeping the bookmarks it already has and auto-naming an unbookmarked tip.
-Requires Python 3.11 or newer for `datetime.fromisoformat` to accept jj's offsets and `Z` suffix.
+Submits the most recently modified stack, keeping its bookmarks and auto-naming an unbookmarked tip.
+Python 3.11 or newer, for `datetime.fromisoformat` to accept jj's offsets.
 
 ```python
 #!/usr/bin/env python3
@@ -73,7 +50,7 @@ from datetime import datetime
 
 
 def graph_json() -> dict:
-    """stakk graph is offline: it queries jj only, never GitHub."""
+    """stakk graph is offline: jj only, never GitHub."""
     proc = subprocess.run(
         ["stakk", "graph", "--format=json"],
         capture_output=True,
@@ -86,13 +63,7 @@ def graph_json() -> dict:
 
 
 def last_touched(stack: dict) -> datetime:
-    """When this stack was last modified.
-
-    Parsed rather than string-compared: jj emits offset-aware
-    timestamps, so "2026-02-19T19:47:54+01:00" sorts after
-    "2026-02-19T19:00:00Z" as text while being twelve minutes
-    earlier as an instant.
-    """
+    """Parsed, not string-compared: the timestamps are offset-aware."""
     return max(
         datetime.fromisoformat(commit["committer_timestamp"])
         for segment in stack["segments"]
@@ -101,12 +72,7 @@ def last_touched(stack: dict) -> datetime:
 
 
 def latest_stack(stacks: list) -> dict:
-    """The most recently modified stack.
-
-    Chosen explicitly rather than by taking stacks[0]: the document's
-    order is not part of the contract, and a stack need not carry a
-    bookmark to be identified by name.
-    """
+    """Chosen by content: the order of stacks[] is not a contract."""
     if not stacks:
         sys.exit("no bookmark stacks in this repository")
     return max(stacks, key=last_touched)
@@ -117,12 +83,12 @@ def selection_flags(stack: dict) -> list:
     flags = []
     for segment in stack["segments"]:
         if segment["bookmarks"]:
-            # One mark per segment, not per name. Two marks on one
+            # One mark per segment, not per name: two marks on one
             # commit is stakk::selection::duplicate_mark.
             flags.append(f"--keep={segment['bookmarks'][0]['name']}")
             continue
         # The unbookmarked head, always last when present. Unmarked,
-        # it sits above the topmost boundary and is not submitted.
+        # it is above the topmost boundary and not submitted.
         tip = segment["commits"][-1]
         if tip["is_immutable"]:
             print(
@@ -130,14 +96,14 @@ def selection_flags(stack: dict) -> list:
                 file=sys.stderr,
             )
             continue
-        # change_id, not short_change_id: short prefixes are unique
+        # change_id, not short_change_id: the short form is unique
         # only against the repository as it stands right now.
         flags.append(f"--new-auto={tip['change_id']}")
     return flags
 
 
 def describe(stack: dict) -> None:
-    """Report what a submission would touch, before touching it."""
+    """What a submission would push, known before touching GitHub."""
     for segment in stack["segments"]:
         for bookmark in segment["bookmarks"]:
             print(f"  {bookmark['name']}: {bookmark['remote_state']}")
@@ -148,8 +114,7 @@ def submit(flags: list, dry_run: bool) -> None:
     argv = ["stakk", "submit", *flags]
     if dry_run:
         argv.append("--dry-run")
-    # The child inherits this stdout. Python block-buffers when stdout is
-    # a pipe, so without the flush our own lines land after stakk's.
+    # The child inherits stdout; flush so our lines land before its.
     sys.stdout.flush()
     proc = subprocess.run(argv)
     if proc.returncode != 0:
@@ -176,12 +141,9 @@ if __name__ == "__main__":
     main()
 ```
 
-`describe` is there to show what `remote_state` makes possible: it comes out of `stakk graph` without touching GitHub,
-so a script can report what a submission would do — "two already pushed, one new" — before running it.
-
 ## The same thing in shell
 
-For the common case where every segment is already bookmarked:
+When every segment is already bookmarked and the repository has one stack:
 
 ```console
 stakk submit $(stakk graph --format=json \
@@ -190,6 +152,5 @@ stakk submit $(stakk graph --format=json \
            | "--keep=\(.bookmarks[0].name)"')
 ```
 
-This indexes `.stacks[0]`, so it picks whichever stack is currently newest rather than a chosen one,
-and a segment with no bookmark is filtered out rather than reported — an unbookmarked tip is silently left unsubmitted.
-Both are fine for a one-off in a single-stack repository, and both are why the Python version is longer.
+This takes whichever stack is currently newest and silently leaves an unbookmarked tip unsubmitted —
+the two shortcuts the Python version avoids.

@@ -93,8 +93,8 @@ When adding, renaming, or changing the default of one, update all of them in the
    `README.md` deliberately carries *no* flag or env-var reference tables — `stakk --help`,
    `stakk <subcommand> --help` and `docs/config.md` are the reference.
    Only touch the README when the option changes something it describes in prose: the four-key `stakk.toml` sample,
-   the **Stack info placement** summary, **GitHub Enterprise Server**, **Non-interactive selection**,
-   **PR titles and bodies**, **Custom bookmark names**, or **Immutable commits**.
+   the **GitHub native stacks** and **Stack info placement** summaries, **GitHub Enterprise Server**,
+   **Non-interactive selection**, **PR titles and bodies**, **Custom bookmark names**, or **Immutable commits**.
    Deeper reference material for those lives in `docs/template.md`, `docs/agents.md` and `docs/graph.md`,
    which each README section links to alongside its `stakk docs <topic>` command.
 
