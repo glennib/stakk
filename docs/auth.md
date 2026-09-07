@@ -115,6 +115,6 @@ an Enterprise Server reachable only over plain HTTP is not supported.
 - **`stakk::auth::gh_cli_error`** — `gh` was found but could not be started.
   A *missing* `gh` is not an error and falls through to the token variables,
   but a `gh` that fails to launch aborts resolution before they are read — repair the installation.
-- **A 401 or 403 from the API** means a token *was* resolved and GitHub rejected it:
-  expired, revoked, or missing the scope above.
+- **A 401 or 403 from the API** means a token *was* resolved and GitHub rejected it: expired, revoked,
+  or missing the scope above.
   `gh auth status --hostname <host>` names the source, which tells you which token to replace.

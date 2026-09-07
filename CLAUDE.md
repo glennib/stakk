@@ -509,10 +509,10 @@ If you change any of the following, update `scripts/record-demo.py` in the same 
   The interleaving rule (#35) covers pushes and base updates only, so batching bodies is safe.
   `single_pr_body_placement_still_syncs_the_body` pins the single-PR case,
   `deferred_body_sync_applies_when_auto_body_resolves_to_cleanup` the cleanup-resolved one.
-- A reconcile failure under `--native-stacks on` fails the submit, but the error is *held* and
-  returned after body syncs and the text placement ran (which resolve as on an unknown native
-  state) — the help text's promise that PRs were created/updated normally must be true by the
-  time it renders.
+- A reconcile failure under `--native-stacks on` fails the submit,
+  but the error is *held* and returned after body syncs and the text placement ran
+  (which resolve as on an unknown native state)
+  — the help text's promise that PRs were created/updated normally must be true by the time it renders.
   `native_on_reconcile_failure_still_syncs_bodies_and_writes_comments` pins this.
 - `ForgeError::StacksUnavailable` and `ForgeError::StackConflict` carry no `#[diagnostic(help)]` on purpose:
   every stack call is wrapped by `submit::wrap_stack_err` into a `SubmitError`,
@@ -729,8 +729,8 @@ If you change any of the following, update `scripts/record-demo.py` in the same 
   disabling stack info retires the existing artifacts rather than leaving them stale,
   so the feature can be turned off cleanly.
   Deletion is not previewed by `--dry-run`, which returns before the execute phase.
-- **`ignore` exists because `none` deletes** — turning stack info off and leaving other
-  tooling's (or your own) comments and body fences alone are two different wishes.
+- **`ignore` exists because `none` deletes** — turning stack info off and leaving other tooling's
+  (or your own) comments and body fences alone are two different wishes.
   `none` serves the first, `ignore` the second; neither is a safe default for the other.
 - **`--native-stacks` is orthogonal to `--stack-placement`** —
   registering the server-side stack and placing stakk's stack-info text are separate decisions

@@ -117,13 +117,11 @@ Switching between `comment` and `body` migrates automatically,
 and a submission that produces a single PR is not a stack, so no stack info is written.
 
 `--native-stacks` registers submitted stacks with
-[GitHub's native stacked pull requests](https://docs.github.com/en/pull-requests/how-tos/stacked-pull-requests)
-(public preview):
-`on` (fail the submit where the feature is unavailable), `auto`
-(register where available, skip silently where not — GitHub Enterprise Server, for example),
-`none` (register nothing and dissolve the server-side stacks that are standing), or `ignore`
-(default; never touch the stack API)
-— `none` and `ignore` follow the same also-removes/touches-nothing rule as the placement modes.
+[GitHub's native stacked pull requests](https://docs.github.com/en/pull-requests/how-tos/stacked-pull-requests) (public
+preview): `on` (fail the submit where the feature is unavailable), `auto` (register where available, skip silently where
+not — GitHub Enterprise Server, for example), `none` (register nothing and dissolve the server-side stacks that are
+standing), or `ignore` (default; never touch the stack API) — `none` and `ignore` follow the same
+also-removes/touches-nothing rule as the placement modes.
 GitHub then renders the stack natively and retargets the remaining PRs as the stack merges bottom-up.
 Since that rendering replaces stakk's stack overview,
 `auto-comment`/`auto-body` behave like `none` on runs where a native stack is in effect
