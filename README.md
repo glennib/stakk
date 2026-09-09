@@ -121,9 +121,11 @@ Setup and troubleshooting: [docs/auth.md](docs/auth.md) or `stakk docs auth`.
 
 ## Non-interactive selection
 
-`--keep`, `--new`, `--new-auto` and `--new-command` replace the TUI with an explicit selection:
-every PR boundary is named on the command line, all marks lie on one trunk-to-tip path,
-unmarked commits fold into the PR above them, and anything above the topmost mark is not submitted.
+`--keep`, `--new`, `--new-auto` and `--new-command`
+(`-k`, `-n`, `-a`, `-c`)
+replace the TUI with an explicit selection: every PR boundary is named on the command line,
+all marks lie on one trunk-to-tip path, unmarked commits fold into the PR above them,
+and anything above the topmost mark is not submitted.
 `rev` is any jj revset naming one commit: `@-`, a bookmark, or a change id from `stakk graph --format=json`.
 
 Rules and diagnostic codes, written for coding agents: [docs/agents.md](docs/agents.md) or `stakk docs agents`

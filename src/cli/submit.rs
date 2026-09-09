@@ -133,6 +133,7 @@ pub struct SubmitArgs {
     /// `stakk graph [--format=json]` lists stacks, bookmarks and change
     /// ids.
     #[arg(
+        short = 'k',
         long,
         value_name = "BOOKMARK",
         help_heading = "Selection (non-interactive)",
@@ -149,6 +150,7 @@ pub struct SubmitArgs {
     /// first `=` outside parentheses and quotes, so a revset may carry
     /// keyword arguments (`remote_bookmarks(main, remote=origin)=NAME`).
     #[arg(
+        short = 'n',
         long,
         value_name = "REV[=NAME]",
         help_heading = "Selection (non-interactive)",
@@ -163,6 +165,7 @@ pub struct SubmitArgs {
     /// --auto-prefix. Falls back to stakk-<change_id> when nothing can be
     /// derived or the derived name is already taken.
     #[arg(
+        short = 'a',
         long,
         value_name = "REV",
         help_heading = "Selection (non-interactive)",
@@ -175,6 +178,7 @@ pub struct SubmitArgs {
     /// REV as for --new. Errors if no bookmark command is configured. The
     /// command receives the same JSON segment description as in the TUI.
     #[arg(
+        short = 'c',
         long,
         value_name = "REV",
         help_heading = "Selection (non-interactive)",

@@ -15,7 +15,7 @@ What it describes is; the contract changes in a release that says so.
 
 Changing any of these needs a major release.
 
-- **Subcommand names, their aliases, and their flags.**
+- **Subcommand names, their aliases, and their flags, long and short forms alike.**
   Removing an alias is as breaking as removing a flag.
 - **`STAKK_`-prefixed environment variables.**
 - **Config file keys and their defaults.** The list: `stakk docs config`.
