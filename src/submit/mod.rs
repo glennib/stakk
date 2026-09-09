@@ -88,6 +88,35 @@ pub enum SubmitError {
     )]
     DivergentChange { change_id: String },
 
+    /// A commit in the submission has no description.
+    ///
+    /// Caught in the analyze phase so the failure lands before any bookmark
+    /// is created or pushed: jj refuses to push an undescribed commit, and a
+    /// PR whose title is derived from one would have no title.
+    #[error(
+        "{} commit(s) in the submission have no description: {}",
+        commits.len(),
+        commits
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join(", ")
+    )]
+    #[diagnostic(
+        code(stakk::submit::undescribed_commits),
+        help(
+            "jj refuses to push a commit without a description, and the PR title is the first \
+             line of the bookmarked commit's description — describe them first:\n{}\nthen \
+             re-run stakk",
+            commits
+                .iter()
+                .map(|c| format!("  jj describe -r {}", c.short_change_id))
+                .collect::<Vec<_>>()
+                .join("\n")
+        )
+    )]
+    UndescribedCommits { commits: Vec<UndescribedCommit> },
+
     /// Failed to list local bookmarks before creating new ones.
     #[error("failed to list local bookmarks")]
     #[diagnostic(
@@ -129,7 +158,10 @@ pub enum SubmitError {
     #[error("failed to push bookmark '{bookmark}'")]
     #[diagnostic(
         code(stakk::submit::push_failed),
-        help("ensure the bookmark exists and the remote is reachable")
+        help(
+            "jj's error above says why. jj refuses to push commits that have conflicts or no \
+             author configured; otherwise check that the remote is reachable"
+        )
     )]
     PushFailed {
         bookmark: String,
@@ -277,6 +309,22 @@ pub struct SubmissionAnalysis {
     pub default_branch: String,
 }
 
+/// A commit without a description, as reported by
+/// [`SubmitError::UndescribedCommits`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UndescribedCommit {
+    /// Shortest unique change ID prefix — what `jj describe -r` takes.
+    pub short_change_id: String,
+    /// The bookmark whose PR the commit belongs to.
+    pub bookmark: String,
+}
+
+impl std::fmt::Display for UndescribedCommit {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} ({})", self.short_change_id, self.bookmark)
+    }
+}
+
 /// One bookmark's planned actions.
 #[derive(Debug, Clone)]
 #[expect(
@@ -387,7 +435,9 @@ pub struct SubmissionResult {
 /// `AssignmentOffPath`; a change ID matching more than one path commit (a
 /// divergent change) errors with `DivergentChange` — silently dropping or
 /// duplicating a boundary would otherwise desync the analysis from the
-/// bookmark creations scheduled for execution.
+/// bookmark creations scheduled for execution. A commit without a description
+/// in any resulting segment errors with `UndescribedCommits`: jj would refuse
+/// the push, so failing here keeps the repo untouched.
 ///
 /// Where a segment carries several bookmark names, the resulting segment
 /// keeps only the assigned name — the name the user actually chose. With
@@ -433,6 +483,29 @@ pub fn analysis_from_selection(
         return Err(SubmitError::AssignmentOffPath {
             bookmark: missed.bookmark_name.clone(),
             change_id: missed.change_id.clone(),
+        });
+    }
+
+    // Every commit in a segment is pushed with its bookmark and jj refuses to
+    // push one without a description, so the check covers folded commits too,
+    // not only the bookmarked ones whose first line becomes the PR title.
+    // Commits above the topmost mark are not in any segment and are exempt.
+    let undescribed: Vec<UndescribedCommit> = segments
+        .iter()
+        .flat_map(|segment| {
+            segment
+                .commits
+                .iter()
+                .filter(|c| c.description.trim().is_empty())
+                .map(|c| UndescribedCommit {
+                    short_change_id: c.short_change_id.clone(),
+                    bookmark: segment.bookmark_names[0].clone(),
+                })
+        })
+        .collect();
+    if !undescribed.is_empty() {
+        return Err(SubmitError::UndescribedCommits {
+            commits: undescribed,
         });
     }
 
@@ -2165,6 +2238,100 @@ mod tests {
             err,
             SubmitError::DivergentChange { ref change_id } if change_id == "ch_dup"
         ));
+    }
+
+    /// A commit without a description anywhere in a submitted segment fails
+    /// the analysis — before any bookmark is created or pushed — naming each
+    /// offending commit and the bookmark it belongs to. Folded commits count
+    /// too: jj pushes them along with the bookmark and refuses undescribed
+    /// ones just the same.
+    #[test]
+    fn from_selection_errors_on_undescribed_commits() {
+        let stack = BranchStack {
+            segments: vec![
+                make_segment(&["feat-a"], "ch_a", ""),
+                make_segment_multi(&["feat-b"], "ch_b", &["feature b", "   "]),
+            ],
+        };
+        let path = path_of(&stack);
+
+        let err = analysis_from_selection(
+            &path,
+            &[
+                make_assignment("ch_a", "feat-a", true),
+                make_assignment("ch_b", "feat-b", false),
+            ],
+            "main",
+        )
+        .unwrap_err();
+
+        let SubmitError::UndescribedCommits { commits } = err else {
+            panic!("expected UndescribedCommits, got {err:?}");
+        };
+        assert_eq!(
+            commits,
+            vec![
+                UndescribedCommit {
+                    short_change_id: "ch_a".to_string(),
+                    bookmark: "feat-a".to_string(),
+                },
+                UndescribedCommit {
+                    short_change_id: "ch_b1".to_string(),
+                    bookmark: "feat-b".to_string(),
+                },
+            ]
+        );
+    }
+
+    /// The help names a `jj describe -r` command per offending commit, so the
+    /// fix is copy-pasteable.
+    #[test]
+    fn undescribed_commits_help_lists_describe_commands() {
+        use miette::Diagnostic;
+
+        let err = SubmitError::UndescribedCommits {
+            commits: vec![
+                UndescribedCommit {
+                    short_change_id: "wu".to_string(),
+                    bookmark: "gb-cargo".to_string(),
+                },
+                UndescribedCommit {
+                    short_change_id: "xy".to_string(),
+                    bookmark: "feat-b".to_string(),
+                },
+            ],
+        };
+
+        assert_eq!(
+            err.to_string(),
+            "2 commit(s) in the submission have no description: wu (gb-cargo), xy (feat-b)"
+        );
+        let help = err.help().expect("help is set").to_string();
+        assert!(
+            help.contains("\n  jj describe -r wu\n  jj describe -r xy\n"),
+            "{help}"
+        );
+    }
+
+    /// Commits above the topmost mark are not submitted, so an undescribed
+    /// one there (the empty `@` the usual jj workflow leaves on top) does not
+    /// block the submission.
+    #[test]
+    fn from_selection_ignores_undescribed_commits_above_topmost_mark() {
+        let stack = BranchStack {
+            segments: vec![
+                make_segment(&["feat-a"], "ch_a", "feature a"),
+                make_segment(&[], "ch_wc", ""),
+            ],
+        };
+        let path = path_of(&stack);
+
+        let direct =
+            analysis_from_selection(&path, &[make_assignment("ch_a", "feat-a", false)], "main")
+                .unwrap();
+
+        assert_eq!(direct.segments.len(), 1);
+        assert_eq!(commit_ids(&direct.segments[0]), vec!["ch_a"]);
     }
 
     /// Empty assignments produce an empty analysis (the callers guard
