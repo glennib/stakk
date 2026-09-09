@@ -220,6 +220,16 @@ impl<R: JjRunner> Jj<R> {
         Ok(())
     }
 
+    /// Delete a local bookmark.
+    ///
+    /// For a bookmark that was never pushed this is purely local. A bookmark
+    /// with a tracked remote counterpart would have its deletion propagated
+    /// on the next push, so callers pass only never-pushed names.
+    pub async fn delete_bookmark(&self, name: &str) -> Result<(), JjError> {
+        self.runner.run_jj(&["bookmark", "delete", name]).await?;
+        Ok(())
+    }
+
     /// Get head changes matching the given revset.
     ///
     /// These are the tips of branches that may not have bookmarks yet.

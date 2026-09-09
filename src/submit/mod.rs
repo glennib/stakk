@@ -758,8 +758,37 @@ impl fmt::Display for SubmissionPlan {
 // Phase 3: Execution
 // ---------------------------------------------------------------------------
 
-/// Execute the submission plan: push, create PRs, update bases, manage
-/// comments.
+/// Delete bookmarks this run created but never pushed, after the run failed.
+///
+/// Best effort: a bookmark that cannot be deleted is reported and left in
+/// place. The caller returns the run's original error either way — the
+/// rollback must never replace the failure the user has to act on.
+async fn roll_back_unpushed_bookmarks<R: JjRunner>(
+    jj: &Jj<R>,
+    pb: &indicatif::ProgressBar,
+    names: &[&str],
+) {
+    for name in names {
+        pb.set_message(format!("Deleting bookmark: {name}"));
+        match jj.delete_bookmark(name).await {
+            Ok(()) => pb.println(format!(
+                "  Deleted bookmark {name} — created in this run, never pushed."
+            )),
+            Err(e) => pb.println(format!(
+                "  Warning: could not delete bookmark {name}, created in this run and never \
+                 pushed: {e}"
+            )),
+        }
+    }
+}
+
+/// Execute the submission plan: create bookmarks, push, create PRs, update
+/// bases, manage comments.
+///
+/// A failure while bookmarks are being created or pushed rolls back the
+/// bookmarks this run created but never pushed, so a failed run leaves no
+/// stray local bookmark behind. Pushed bookmarks stay: their remote branch
+/// exists, so they are real state rather than leftovers.
 pub async fn execute_submission_plan<R: JjRunner, F: Forge>(
     plan: &SubmissionPlan,
     jj: &Jj<R>,
@@ -793,19 +822,13 @@ pub async fn execute_submission_plan<R: JjRunner, F: Forge>(
         }
     }
 
-    // Create pending local bookmarks first — pushes below require them to
-    // exist. Creation is local-only, so the one-at-a-time interleaving rule
-    // (which concerns pushes and base updates, #35) does not apply here.
-    for creation in &plan.bookmark_creations {
-        pb.set_message(format!("Creating bookmark: {}", creation.bookmark_name));
-        jj.create_bookmark(&creation.bookmark_name, &creation.change_id)
-            .await
-            .map_err(|source| SubmitError::BookmarkCreateFailed {
-                bookmark: creation.bookmark_name.clone(),
-                source,
-            })?;
-    }
-
+    // Bookmark creation and the push loop share one fallible scope so that
+    // a failure anywhere in it rolls back the bookmarks this run created but
+    // never pushed. Without that, a stray local bookmark is the only trace
+    // of a failed run, and the next run presents it as pre-existing. Pushed
+    // bookmarks stay: their remote branch (and possibly a PR) exists.
+    let mut created: Vec<String> = Vec::new();
+    let mut pushed: HashSet<String> = HashSet::new();
     let mut stack_entries = Vec::new();
 
     // Returns the body that is currently live on GitHub for this bookmark:
@@ -819,82 +842,112 @@ pub async fn execute_submission_plan<R: JjRunner, F: Forge>(
         }
     };
 
-    // Process each bookmark trunk-to-leaf: push, update base, create PR.
-    // Each bookmark must be fully processed before the next is pushed to
-    // prevent transient empty diffs that trigger GitHub auto-close (#35).
-    for bp in &plan.bookmark_plans {
-        if bp.needs_push {
-            pb.set_message(format!("Pushing bookmark: {}", bp.bookmark_name));
-            jj.push_bookmark(&bp.bookmark_name, &plan.remote)
+    let outcome: Result<(), SubmitError> = async {
+        // Create pending local bookmarks first — pushes below require them to
+        // exist. Creation is local-only, so the one-at-a-time interleaving
+        // rule (which concerns pushes and base updates, #35) does not apply
+        // here.
+        for creation in &plan.bookmark_creations {
+            pb.set_message(format!("Creating bookmark: {}", creation.bookmark_name));
+            jj.create_bookmark(&creation.bookmark_name, &creation.change_id)
                 .await
-                .map_err(|source| SubmitError::PushFailed {
-                    bookmark: bp.bookmark_name.clone(),
+                .map_err(|source| SubmitError::BookmarkCreateFailed {
+                    bookmark: creation.bookmark_name.clone(),
                     source,
                 })?;
+            created.push(creation.bookmark_name.clone());
         }
 
-        if bp.needs_base_update
-            && let Some(pr) = &bp.existing_pr
-        {
-            pb.set_message(format!("Updating PR #{} base...", pr.number));
-            forge
-                .update_pr_base(pr.number, &bp.base)
-                .await
-                .map_err(|source| SubmitError::BaseUpdateFailed {
-                    bookmark: bp.bookmark_name.clone(),
-                    source,
-                })?;
+        // Process each bookmark trunk-to-leaf: push, update base, create PR.
+        // Each bookmark must be fully processed before the next is pushed to
+        // prevent transient empty diffs that trigger GitHub auto-close (#35).
+        for bp in &plan.bookmark_plans {
+            if bp.needs_push {
+                pb.set_message(format!("Pushing bookmark: {}", bp.bookmark_name));
+                jj.push_bookmark(&bp.bookmark_name, &plan.remote)
+                    .await
+                    .map_err(|source| SubmitError::PushFailed {
+                        bookmark: bp.bookmark_name.clone(),
+                        source,
+                    })?;
+                pushed.insert(bp.bookmark_name.clone());
+            }
+
+            if bp.needs_base_update
+                && let Some(pr) = &bp.existing_pr
+            {
+                pb.set_message(format!("Updating PR #{} base...", pr.number));
+                forge
+                    .update_pr_base(pr.number, &bp.base)
+                    .await
+                    .map_err(|source| SubmitError::BaseUpdateFailed {
+                        bookmark: bp.bookmark_name.clone(),
+                        source,
+                    })?;
+            }
+
+            if bp.needs_title_sync
+                && let Some(pr) = &bp.existing_pr
+            {
+                pb.set_message(format!("Syncing PR #{} title...", pr.number));
+                forge
+                    .update_pr_title(pr.number, &bp.title)
+                    .await
+                    .map_err(|source| SubmitError::TitleSyncFailed {
+                        pr_number: pr.number,
+                        bookmark: bp.bookmark_name.clone(),
+                        source,
+                    })?;
+            }
+
+            // Body syncs happen in one pass after the placement resolves, not
+            // here: the interleaving rule (#35) covers pushes and base updates
+            // only, and a body-resolved placement folds the sync into its own
+            // body write below.
+
+            let pr = if let Some(existing) = &bp.existing_pr {
+                pb.println(format!(
+                    "  Existing PR #{}: {}",
+                    existing.number, existing.html_url,
+                ));
+                existing.clone()
+            } else {
+                pb.set_message(format!("Creating PR: {}", bp.title));
+                let pr = forge
+                    .create_pr(CreatePrParams {
+                        title: bp.title.clone(),
+                        head: bp.bookmark_name.clone(),
+                        base: bp.base.clone(),
+                        body: bp.body.clone(),
+                        draft: plan.pr_mode == PrMode::Draft,
+                    })
+                    .await
+                    .map_err(|source| SubmitError::PrCreateFailed {
+                        bookmark: bp.bookmark_name.clone(),
+                        source,
+                    })?;
+                pb.println(format!("  Created PR #{}: {}", pr.number, pr.html_url));
+                pr
+            };
+
+            stack_entries.push(StackEntry {
+                bookmark_name: bp.bookmark_name.clone(),
+                pr_url: pr.html_url.clone(),
+                pr_number: pr.number,
+            });
         }
+        Ok(())
+    }
+    .await;
 
-        if bp.needs_title_sync
-            && let Some(pr) = &bp.existing_pr
-        {
-            pb.set_message(format!("Syncing PR #{} title...", pr.number));
-            forge
-                .update_pr_title(pr.number, &bp.title)
-                .await
-                .map_err(|source| SubmitError::TitleSyncFailed {
-                    pr_number: pr.number,
-                    bookmark: bp.bookmark_name.clone(),
-                    source,
-                })?;
-        }
-
-        // Body syncs happen in one pass after the placement resolves, not
-        // here: the interleaving rule (#35) covers pushes and base updates
-        // only, and a body-resolved placement folds the sync into its own
-        // body write below.
-
-        let pr = if let Some(existing) = &bp.existing_pr {
-            pb.println(format!(
-                "  Existing PR #{}: {}",
-                existing.number, existing.html_url,
-            ));
-            existing.clone()
-        } else {
-            pb.set_message(format!("Creating PR: {}", bp.title));
-            let pr = forge
-                .create_pr(CreatePrParams {
-                    title: bp.title.clone(),
-                    head: bp.bookmark_name.clone(),
-                    base: bp.base.clone(),
-                    body: bp.body.clone(),
-                    draft: plan.pr_mode == PrMode::Draft,
-                })
-                .await
-                .map_err(|source| SubmitError::PrCreateFailed {
-                    bookmark: bp.bookmark_name.clone(),
-                    source,
-                })?;
-            pb.println(format!("  Created PR #{}: {}", pr.number, pr.html_url));
-            pr
-        };
-
-        stack_entries.push(StackEntry {
-            bookmark_name: bp.bookmark_name.clone(),
-            pr_url: pr.html_url.clone(),
-            pr_number: pr.number,
-        });
+    if let Err(err) = outcome {
+        let unpushed: Vec<&str> = created
+            .iter()
+            .filter(|name| !pushed.contains(*name))
+            .map(String::as_str)
+            .collect();
+        roll_back_unpushed_bookmarks(jj, &pb, &unpushed).await;
+        return Err(err);
     }
 
     // Step 2b: When native stacks are requested, converge the forge's
@@ -1519,6 +1572,7 @@ mod tests {
     #[derive(Debug, Clone, PartialEq, Eq)]
     enum Op {
         CreateBookmark(String),
+        DeleteBookmark(String),
         Push(String),
         BaseUpdate(u64),
         CreatePr(String),
@@ -1603,6 +1657,9 @@ mod tests {
         stacks_api_error: bool,
         /// When set, `add_to_stack` fails with `StackConflict`.
         add_conflicts: bool,
+        /// When set, every `create_pr` fails with a generic `Api` error
+        /// carrying this message.
+        create_pr_error: Option<String>,
         /// PR numbers `get_stacks_for_pr` was called for.
         stack_lookups: Mutex<Vec<u64>>,
         created_stacks: Mutex<Vec<Vec<u64>>>,
@@ -1630,6 +1687,7 @@ mod tests {
                 stacks_unavailable: false,
                 stacks_api_error: false,
                 add_conflicts: false,
+                create_pr_error: None,
                 stack_lookups: Mutex::new(Vec::new()),
                 created_stacks: Mutex::new(Vec::new()),
                 added_to_stacks: Mutex::new(Vec::new()),
@@ -1721,8 +1779,16 @@ mod tests {
             if let Some(ops) = &self.ops {
                 ops.lock().unwrap().push(Op::CreatePr(params.head.clone()));
             }
-            self.created_prs.lock().unwrap().push(params);
-            async move { Ok(pr) }
+            let result = if let Some(message) = &self.create_pr_error {
+                Err(ForgeError::Api {
+                    message: message.clone(),
+                    source: message.clone().into(),
+                })
+            } else {
+                self.created_prs.lock().unwrap().push(params);
+                Ok(pr)
+            };
+            async move { result }
         }
 
         fn update_pr_base(
@@ -1908,6 +1974,11 @@ mod tests {
         ops: Option<OpLog>,
         /// Local bookmark names the repo reports for `jj bookmark list`.
         local_bookmarks: Vec<String>,
+        /// Bookmark whose `jj git push` fails, the way jj refuses a commit it
+        /// will not push.
+        fail_push: Option<String>,
+        /// When set, every `jj bookmark delete` fails.
+        fail_delete: bool,
     }
 
     impl MockJjRunner {
@@ -1918,6 +1989,8 @@ mod tests {
                     push_calls: Arc::clone(&calls),
                     ops: None,
                     local_bookmarks: Vec::new(),
+                    fail_push: None,
+                    fail_delete: false,
                 },
                 calls,
             )
@@ -1930,6 +2003,8 @@ mod tests {
                     push_calls: Arc::clone(&calls),
                     ops: Some(ops),
                     local_bookmarks: Vec::new(),
+                    fail_push: None,
+                    fail_delete: false,
                 },
                 calls,
             )
@@ -1938,6 +2013,23 @@ mod tests {
         fn with_local_bookmarks(mut self, names: &[&str]) -> Self {
             self.local_bookmarks = names.iter().map(ToString::to_string).collect();
             self
+        }
+
+        fn with_failing_push(mut self, bookmark: &str) -> Self {
+            self.fail_push = Some(bookmark.to_string());
+            self
+        }
+
+        fn with_failing_delete(mut self) -> Self {
+            self.fail_delete = true;
+            self
+        }
+    }
+
+    fn jj_refusal(command: &str) -> JjError {
+        JjError::CommandFailed {
+            command: command.to_string(),
+            stderr: "Error: Won't push commit abc123 since it has no description".to_string(),
         }
     }
 
@@ -1962,6 +2054,16 @@ mod tests {
                     .unwrap()
                     .push(Op::CreateBookmark(args[2].to_string()));
             }
+            if args[0] == "bookmark" && args[1] == "delete" {
+                if let Some(ops) = &self.ops {
+                    ops.lock()
+                        .unwrap()
+                        .push(Op::DeleteBookmark(args[2].to_string()));
+                }
+                if self.fail_delete {
+                    return futures_ready(Err(jj_refusal("jj bookmark delete")));
+                }
+            }
             if args[0] == "git" && args[1] == "push" {
                 let bookmark = args
                     .iter()
@@ -1976,10 +2078,20 @@ mod tests {
                 if let Some(ops) = &self.ops {
                     ops.lock().unwrap().push(Op::Push(bookmark.clone()));
                 }
+                let refused = self.fail_push.as_deref() == Some(bookmark.as_str());
                 self.push_calls.lock().unwrap().push((bookmark, remote));
+                if refused {
+                    return futures_ready(Err(jj_refusal("jj git push")));
+                }
             }
-            async move { Ok(output) }
+            futures_ready(Ok(output))
         }
+    }
+
+    /// An already-resolved future, so `run_jj` can return early from the
+    /// failure branches with the same future type as the success path.
+    fn futures_ready<T: Send>(value: T) -> std::future::Ready<T> {
+        std::future::ready(value)
     }
 
     // -----------------------------------------------------------------------
@@ -2919,6 +3031,164 @@ mod tests {
         );
         // The earlier, still-free bookmark must not have been created.
         assert!(ops.lock().unwrap().is_empty(), "repo was mutated: {ops:?}");
+    }
+
+    /// A two-bookmark plan where both bookmarks are new; the second one's
+    /// PR is based on the first.
+    fn two_new_bookmarks_plan() -> SubmissionPlan {
+        let new_plan = |name: &str, base: &str| BookmarkPlan {
+            bookmark_name: name.to_string(),
+            base: base.to_string(),
+            title: format!("{name} title"),
+            body: None,
+            existing_pr: None,
+            needs_push: true,
+            needs_create: true,
+            needs_base_update: false,
+            needs_title_sync: false,
+            needs_body_sync: false,
+        };
+        SubmissionPlan {
+            bookmark_creations: vec![
+                BookmarkCreation {
+                    bookmark_name: "feat-a".to_string(),
+                    change_id: "ch_a".to_string(),
+                    short_change_id: "ch_a".to_string(),
+                },
+                BookmarkCreation {
+                    bookmark_name: "feat-b".to_string(),
+                    change_id: "ch_b".to_string(),
+                    short_change_id: "ch_b".to_string(),
+                },
+            ],
+            bookmark_plans: vec![new_plan("feat-a", "main"), new_plan("feat-b", "feat-a")],
+            remote: "origin".to_string(),
+            pr_mode: PrMode::Regular,
+            default_branch: "main".to_string(),
+        }
+    }
+
+    /// When jj refuses a push, the bookmarks this run created but never
+    /// pushed are deleted again, so the failed run leaves no stray bookmark
+    /// for the next run to present as pre-existing. The bookmark that was
+    /// pushed stays — its remote branch and PR exist.
+    #[tokio::test]
+    async fn execute_rolls_back_unpushed_bookmarks_when_a_push_fails() {
+        let ops: OpLog = Arc::new(Mutex::new(Vec::new()));
+        let plan = two_new_bookmarks_plan();
+
+        let (runner, _push_calls) = MockJjRunner::new_with_ops(Arc::clone(&ops));
+        let jj = Jj::new(runner.with_failing_push("feat-b"));
+        let forge = MockForge::new().with_ops(Arc::clone(&ops));
+        let env = test_comment_env();
+
+        let err = execute_submission_plan(
+            &plan,
+            &jj,
+            &forge,
+            &env,
+            StackPlacement::Comment,
+            NativeStacks::Ignore,
+        )
+        .await
+        .unwrap_err();
+
+        assert!(
+            matches!(&err, SubmitError::PushFailed { bookmark, .. } if bookmark == "feat-b"),
+            "unexpected error: {err:?}",
+        );
+        assert_eq!(
+            *ops.lock().unwrap(),
+            vec![
+                Op::CreateBookmark("feat-a".to_string()),
+                Op::CreateBookmark("feat-b".to_string()),
+                Op::Push("feat-a".to_string()),
+                Op::CreatePr("feat-a".to_string()),
+                Op::Push("feat-b".to_string()),
+                Op::DeleteBookmark("feat-b".to_string()),
+            ],
+        );
+    }
+
+    /// The rollback keys on "created and not yet pushed", not on the push
+    /// failing: a forge failure after the first push still deletes the
+    /// bookmark further up the stack that was never pushed.
+    #[tokio::test]
+    async fn execute_rolls_back_unpushed_bookmarks_when_pr_creation_fails() {
+        let ops: OpLog = Arc::new(Mutex::new(Vec::new()));
+        let plan = two_new_bookmarks_plan();
+
+        let (runner, _push_calls) = MockJjRunner::new_with_ops(Arc::clone(&ops));
+        let jj = Jj::new(runner);
+        let mut forge = MockForge::new().with_ops(Arc::clone(&ops));
+        forge.create_pr_error = Some("boom".to_string());
+        let env = test_comment_env();
+
+        let err = execute_submission_plan(
+            &plan,
+            &jj,
+            &forge,
+            &env,
+            StackPlacement::Comment,
+            NativeStacks::Ignore,
+        )
+        .await
+        .unwrap_err();
+
+        assert!(
+            matches!(&err, SubmitError::PrCreateFailed { bookmark, .. } if bookmark == "feat-a"),
+            "unexpected error: {err:?}",
+        );
+        assert_eq!(
+            *ops.lock().unwrap(),
+            vec![
+                Op::CreateBookmark("feat-a".to_string()),
+                Op::CreateBookmark("feat-b".to_string()),
+                Op::Push("feat-a".to_string()),
+                Op::CreatePr("feat-a".to_string()),
+                Op::DeleteBookmark("feat-b".to_string()),
+            ],
+        );
+    }
+
+    /// A rollback that itself fails is reported but never replaces the
+    /// run's original error — that is what the user has to act on.
+    #[tokio::test]
+    async fn execute_keeps_the_original_error_when_rollback_fails() {
+        let ops: OpLog = Arc::new(Mutex::new(Vec::new()));
+        let plan = two_new_bookmarks_plan();
+
+        let (runner, _push_calls) = MockJjRunner::new_with_ops(Arc::clone(&ops));
+        let jj = Jj::new(runner.with_failing_push("feat-a").with_failing_delete());
+        let forge = MockForge::new().with_ops(Arc::clone(&ops));
+        let env = test_comment_env();
+
+        let err = execute_submission_plan(
+            &plan,
+            &jj,
+            &forge,
+            &env,
+            StackPlacement::Comment,
+            NativeStacks::Ignore,
+        )
+        .await
+        .unwrap_err();
+
+        assert!(
+            matches!(&err, SubmitError::PushFailed { bookmark, .. } if bookmark == "feat-a"),
+            "unexpected error: {err:?}",
+        );
+        // Both bookmarks were unpushed; both deletions were attempted.
+        assert_eq!(
+            *ops.lock().unwrap(),
+            vec![
+                Op::CreateBookmark("feat-a".to_string()),
+                Op::CreateBookmark("feat-b".to_string()),
+                Op::Push("feat-a".to_string()),
+                Op::DeleteBookmark("feat-a".to_string()),
+                Op::DeleteBookmark("feat-b".to_string()),
+            ],
+        );
     }
 
     /// Names that are free pass the pre-flight check untouched.

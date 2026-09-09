@@ -709,6 +709,18 @@ If you change any of the following, update `scripts/record-demo.py` in the same 
   Execute re-queries the reserved names and fails with `stakk::submit::bookmark_names_taken` *before* creating anything,
   so a name that appeared between selection and execution cannot leave a half-applied plan.
   The query is skipped when there is nothing to create.
+  Bookmark creation and the push loop share one fallible scope: when anything in it fails,
+  the bookmarks created in that run but *not yet pushed* are deleted again
+  (`roll_back_unpushed_bookmarks`, best effort — a failed delete is a printed warning, never the returned error),
+  so a run jj or the forge rejected leaves no stray bookmark for the next run to present as pre-existing.
+  Pushed bookmarks stay: their remote branch, and possibly a PR, exist.
+  The rule keys on "created and unpushed", not on which step failed —
+  a PR-creation failure on the first bookmark still deletes the unpushed one above it.
+  Undescribed commits are additionally caught in the analyze phase (`stakk::submit::undescribed_commits`),
+  since stakk needs the description for the PR title anyway; jj's other push refusals
+  (conflicts, a placeholder author)
+  are deliberately *not* pre-checked —
+  the rollback covers them and the reworded `push_failed` help points at jj's own message.
   Accepted limitation: nothing checks a new bookmark's name against the bookmarks revset (only against existing names).
   Under a custom `--bookmarks-revset` that excludes the new name,
   the submission succeeds but subsequent runs will not see or manage that bookmark's PR.
