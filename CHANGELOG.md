@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.6.0](https://github.com/glennib/stakk/compare/v2.5.1...v2.6.0) - 2026-09-09
+
+### Added
+
+- *(submit)* add short forms for the selection flags
+- *(submit)* refuse undescribed commits before touching the repo
+
+### Fixed
+
+- *(submit)* roll back unpushed bookmarks when a run fails
+
+### Other
+
+- *(deps)* update dependency cargo:release-plz to v0.3.164 ([#251](https://github.com/glennib/stakk/pull/251))
+- *(deps)* update dependency rumdl to v0.2.69 ([#250](https://github.com/glennib/stakk/pull/250))
+- *(deps)* update dependency cargo:release-plz to v0.3.163 ([#249](https://github.com/glennib/stakk/pull/249))
+- *(deps)* update dependency uv to v0.12.11 ([#248](https://github.com/glennib/stakk/pull/248))
+- *(deps)* update dependency rumdl to v0.2.68 ([#246](https://github.com/glennib/stakk/pull/246))
+
 ## [2.5.1](https://github.com/glennib/stakk/compare/v2.5.0...v2.5.1) - 2026-09-07
 
 ### Other
