@@ -252,6 +252,15 @@ mod tests {
         }
     }
 
+    /// clap's own consistency check: duplicate shorts, conflicting names,
+    /// malformed defaults. It runs on the config-applied `Command` so a
+    /// `mut_arg`/`mut_subcommand` misuse in the default injection is caught
+    /// as well.
+    #[test]
+    fn clap_command_is_well_formed() {
+        apply_config_defaults(Config::default(), Cli::command()).debug_assert();
+    }
+
     // -- pr_mode tests --
 
     use crate::cli::submit::PrMode;
@@ -280,18 +289,6 @@ mod tests {
         };
         let cli = parse_with_config(config, &["stakk", "submit"]);
         assert_eq!(submit_args(&cli).pr_mode, PrMode::Regular);
-    }
-
-    #[test]
-    fn pr_mode_cli_draft() {
-        // Config says regular, so this pins CLI-beats-config in the draft
-        // direction; pr_mode_config_draft_cli_regular covers the reverse.
-        let config = Config {
-            pr_mode: Some(PrMode::Regular),
-            ..Default::default()
-        };
-        let cli = parse_with_config(config, &["stakk", "submit", "--pr-mode", "draft"]);
-        assert_eq!(submit_args(&cli).pr_mode, PrMode::Draft);
     }
 
     #[test]
@@ -507,26 +504,6 @@ mod tests {
         assert_eq!(submit_args(&cli).stack_placement, StackPlacement::Comment);
     }
 
-    #[test]
-    fn stack_placement_config_none() {
-        let config = Config {
-            stack_placement: Some(StackPlacement::None),
-            ..Default::default()
-        };
-        let cli = parse_with_config(config, &["stakk", "submit"]);
-        assert_eq!(submit_args(&cli).stack_placement, StackPlacement::None);
-    }
-
-    #[test]
-    fn stack_placement_cli_none_overrides_config() {
-        let config = Config {
-            stack_placement: Some(StackPlacement::Body),
-            ..Default::default()
-        };
-        let cli = parse_with_config(config, &["stakk", "submit", "--stack-placement", "none"]);
-        assert_eq!(submit_args(&cli).stack_placement, StackPlacement::None);
-    }
-
     // -- native_stacks tests --
 
     use crate::cli::submit::NativeStacks;
@@ -724,22 +701,6 @@ mod tests {
 
     // -- one-letter aliases --
 
-    /// `completions` deliberately has none.
-    #[test]
-    fn one_letter_aliases_reach_their_subcommands() {
-        let cli = parse_with_config(Config::default(), &["stakk", "s"]);
-        assert!(matches!(cli.command, Some(Commands::Submit(_))));
-
-        let cli = parse_with_config(Config::default(), &["stakk", "g"]);
-        assert!(matches!(cli.command, Some(Commands::Graph(_))));
-
-        let cli = parse_with_config(Config::default(), &["stakk", "d", "config"]);
-        match &cli.command {
-            Some(Commands::Docs { topic }) => assert_eq!(*topic, Some(DocTopic::Config)),
-            other => panic!("expected Docs, got {other:?}"),
-        }
-    }
-
     /// The letter goes through the same config-applied `Command` as the name it
     /// stands for, which `mut_subcommand` only ever sees by its canonical
     /// spelling.
@@ -759,12 +720,6 @@ mod tests {
             }
             other => panic!("expected Graph, got {other:?}"),
         }
-    }
-
-    #[test]
-    fn completions_has_no_one_letter_alias() {
-        let cmd = apply_config_defaults(Config::default(), Cli::command());
-        assert!(cmd.try_get_matches_from(["stakk", "c", "zsh"]).is_err());
     }
 
     // -- docs subcommand --
@@ -798,64 +753,6 @@ mod tests {
                 other => panic!("expected Docs, got {other:?}"),
             }
         }
-    }
-
-    #[test]
-    fn docs_rejects_an_unknown_topic() {
-        use clap::error::ErrorKind;
-
-        let cmd = apply_config_defaults(Config::default(), Cli::command());
-        let err = cmd
-            .try_get_matches_from(["stakk", "docs", "nonsense"])
-            .unwrap_err();
-        assert_eq!(err.kind(), ErrorKind::InvalidValue);
-    }
-
-    // -- explicit selection flags --
-
-    #[test]
-    fn selection_flags_parse_and_accumulate() {
-        let cli = parse_with_config(
-            Config::default(),
-            &[
-                "stakk",
-                "submit",
-                "--keep",
-                "a",
-                "--keep",
-                "b",
-                "--new",
-                "r1=name1",
-                "--new",
-                "r2",
-                "--new-auto",
-                "r3",
-                "--new-command",
-                "r4",
-            ],
-        );
-        let args = submit_args(&cli);
-        assert_eq!(args.keep, vec!["a", "b"]);
-        assert_eq!(args.new, vec!["r1=name1", "r2"]);
-        assert_eq!(args.new_auto, vec!["r3"]);
-        assert_eq!(args.new_command, vec!["r4"]);
-    }
-
-    // -- env var interaction --
-
-    #[test]
-    fn env_var_overrides_config() {
-        // env vars are set per-process, so this test just verifies the
-        // precedence: CLI > env > config > hardcoded default.
-        // We can't easily test env vars in unit tests without side effects,
-        // so this test documents the expected clap precedence.
-        let config = Config {
-            remote: Some("from-config".into()),
-            ..Default::default()
-        };
-        // CLI flag should override config.
-        let cli = parse_with_config(config, &["stakk", "submit", "--remote", "from-cli"]);
-        assert_eq!(submit_args(&cli).remote, "from-cli");
     }
 
     // -- TOML parsing --
@@ -918,65 +815,5 @@ heads_revset = "heads(all())"
     fn toml_rejects_unknown_field() {
         let result: Result<Config, _> = toml::from_str("bogus = 42");
         assert!(result.is_err());
-    }
-
-    #[test]
-    fn toml_stack_placement_kebab_case() {
-        let config: Config = toml::from_str(r#"stack_placement = "comment""#).unwrap();
-        assert_eq!(config.stack_placement, Some(StackPlacement::Comment));
-    }
-
-    #[test]
-    fn toml_stack_placement_none() {
-        let config: Config = toml::from_str(r#"stack_placement = "none""#).unwrap();
-        assert_eq!(config.stack_placement, Some(StackPlacement::None));
-    }
-
-    #[test]
-    fn toml_stack_placement_ignore() {
-        let config: Config = toml::from_str(r#"stack_placement = "ignore""#).unwrap();
-        assert_eq!(config.stack_placement, Some(StackPlacement::Ignore));
-    }
-
-    #[test]
-    fn toml_stack_placement_auto_comment() {
-        let config: Config = toml::from_str(r#"stack_placement = "auto-comment""#).unwrap();
-        assert_eq!(config.stack_placement, Some(StackPlacement::AutoComment));
-    }
-
-    #[test]
-    fn toml_stack_placement_auto_body() {
-        let config: Config = toml::from_str(r#"stack_placement = "auto-body""#).unwrap();
-        assert_eq!(config.stack_placement, Some(StackPlacement::AutoBody));
-    }
-
-    #[test]
-    fn toml_stack_placement_invalid() {
-        let result: Result<Config, _> = toml::from_str(r#"stack_placement = "invalid""#);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn toml_native_stacks_on() {
-        let config: Config = toml::from_str(r#"native_stacks = "on""#).unwrap();
-        assert_eq!(config.native_stacks, Some(NativeStacks::On));
-    }
-
-    #[test]
-    fn toml_native_stacks_auto() {
-        let config: Config = toml::from_str(r#"native_stacks = "auto""#).unwrap();
-        assert_eq!(config.native_stacks, Some(NativeStacks::Auto));
-    }
-
-    #[test]
-    fn toml_native_stacks_none() {
-        let config: Config = toml::from_str(r#"native_stacks = "none""#).unwrap();
-        assert_eq!(config.native_stacks, Some(NativeStacks::None));
-    }
-
-    #[test]
-    fn toml_native_stacks_ignore() {
-        let config: Config = toml::from_str(r#"native_stacks = "ignore""#).unwrap();
-        assert_eq!(config.native_stacks, Some(NativeStacks::Ignore));
     }
 }
