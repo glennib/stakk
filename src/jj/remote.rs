@@ -1,19 +1,44 @@
-//! GitHub remote URL parsing.
+//! Remote URL parsing.
 
 use crate::GITHUB_COM;
 
-/// A parsed GitHub repository reference.
+/// URL scheme a forge API is reached over.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Scheme {
+    Http,
+    Https,
+}
+
+impl std::fmt::Display for Scheme {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Http => "http",
+            Self::Https => "https",
+        })
+    }
+}
+
+/// A parsed `<host>/<owner>/<repo>` remote, on any host.
+///
+/// Nothing here is forge-specific: [`parse_remote_url`] fills it for every
+/// host, and which forge that host runs is `crate::forge::detect`'s question,
+/// asked afterwards.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct GitHubRepo {
+pub struct RemoteRepo {
     /// Lowercased host the remote points at, e.g. `github.com` or
     /// `github.example.com`. Carries a port only for HTTP(S) remotes.
     pub host: String,
     pub owner: String,
     pub repo: String,
+    /// The remote URL's scheme. HTTP(S) remotes record theirs; SSH remotes
+    /// (both forms) record `https`, since the API is not reachable over SSH.
+    /// Read by [`RemoteRepo::forgejo_api_base_uri`] only —
+    /// [`RemoteRepo::github_api_base_uri`] is `https` regardless.
+    pub scheme: Scheme,
 }
 
-impl GitHubRepo {
-    /// The REST API base URI for this repository's host.
+impl RemoteRepo {
+    /// The GitHub REST API base URI for this repository's host.
     ///
     /// `None` for github.com, where octocrab's own default
     /// (`https://api.github.com`) is correct. GitHub Enterprise Server serves
@@ -21,25 +46,25 @@ impl GitHubRepo {
     ///
     /// Always `https`, even for an `http://` remote: a GHES reachable only over
     /// plain HTTP is not supported.
-    pub fn api_base_uri(&self) -> Option<String> {
+    pub fn github_api_base_uri(&self) -> Option<String> {
         (self.host != GITHUB_COM).then(|| format!("https://{}/api/v3", self.host))
+    }
+
+    /// The Forgejo REST API base URI for this repository's host.
+    ///
+    /// Forgejo serves its API from `/api/v1` on the same host as the web UI,
+    /// over the remote's own scheme — a plain-`http` instance on a `host:port`
+    /// is a supported (if local) setup. Always a value: unlike octocrab there
+    /// is no client default to fall back on, not even for codeberg.org.
+    pub fn forgejo_api_base_uri(&self) -> String {
+        format!("{}://{}/api/v1", self.scheme, self.host)
     }
 }
 
-impl std::fmt::Display for GitHubRepo {
+impl std::fmt::Display for RemoteRepo {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}/{}", self.owner, self.repo)
     }
-}
-
-/// Whether a remote's host may be treated as a GitHub host.
-///
-/// github.com always qualifies. Any other host has to be named explicitly —
-/// via `--github-host`, `STAKK_GITHUB_HOST`, `github_host` in `stakk.toml`, or
-/// `GH_HOST` — so an unrelated forge is not mistaken for GitHub Enterprise
-/// Server.
-pub fn is_accepted_host(host: &str, extra_host: Option<&str>) -> bool {
-    host == GITHUB_COM || extra_host.is_some_and(|extra| extra.eq_ignore_ascii_case(host))
 }
 
 /// Parse an owner/repo and its host from a remote URL, whatever the host.
@@ -55,24 +80,24 @@ pub fn is_accepted_host(host: &str, extra_host: Option<&str>) -> bool {
 /// on, and dropped for SSH URLs, where it is not.
 ///
 /// Returns `None` for anything that is not a `<host>/<owner>/<repo>` URL. The
-/// host is *not* checked here — see [`is_accepted_host`] and
-/// [`parse_github_url`].
-pub fn parse_remote_url(url: &str) -> Option<GitHubRepo> {
+/// host is not judged here: every host parses, and the result's `host` is
+/// lowercased so callers can compare it.
+pub fn parse_remote_url(url: &str) -> Option<RemoteRepo> {
     // SSH canonical format: ssh://git@host:2222/owner/repo.git
     if let Some(rest) = url.strip_prefix("ssh://") {
         let (authority, path) = rest.split_once('/')?;
         let host = strip_userinfo(authority);
         // An SSH port says nothing about where the API lives.
         let host = host.split_once(':').map_or(host, |(host, _)| host);
-        return build(host, path);
+        return build(host, path, Scheme::Https);
     }
 
     // HTTPS format: https://host/owner/repo.git
-    for scheme in ["https://", "http://"] {
-        if let Some(rest) = url.strip_prefix(scheme) {
+    for (prefix, scheme) in [("https://", Scheme::Https), ("http://", Scheme::Http)] {
+        if let Some(rest) = url.strip_prefix(prefix) {
             let (authority, path) = rest.split_once('/')?;
             // A port here is the one the API answers on too, so it stays.
-            return build(strip_userinfo(authority), path);
+            return build(strip_userinfo(authority), path, scheme);
         }
     }
 
@@ -80,13 +105,7 @@ pub fn parse_remote_url(url: &str) -> Option<GitHubRepo> {
     // without it, `host:owner/repo` cannot be told apart from a scheme prefix.
     let (userinfo_host, path) = url.split_once(':')?;
     let (_, host) = userinfo_host.rsplit_once('@')?;
-    build(host, path)
-}
-
-/// Parse a GitHub owner/repo from a remote URL, rejecting hosts that are not
-/// github.com or `extra_host`.
-pub fn parse_github_url(url: &str, extra_host: Option<&str>) -> Option<GitHubRepo> {
-    parse_remote_url(url).filter(|parsed| is_accepted_host(&parsed.host, extra_host))
+    build(host, path, Scheme::Https)
 }
 
 /// Drop a `user@` or `user:password@` prefix from a URL authority.
@@ -96,15 +115,16 @@ fn strip_userinfo(authority: &str) -> &str {
         .map_or(authority, |(_, host)| host)
 }
 
-fn build(host: &str, path: &str) -> Option<GitHubRepo> {
+fn build(host: &str, path: &str, scheme: Scheme) -> Option<RemoteRepo> {
     if host.is_empty() {
         return None;
     }
     let (owner, repo) = parse_owner_repo(path)?;
-    Some(GitHubRepo {
+    Some(RemoteRepo {
         host: host.to_ascii_lowercase(),
         owner,
         repo,
+        scheme,
     })
 }
 
@@ -128,12 +148,13 @@ fn parse_owner_repo(path: &str) -> Option<(String, String)> {
 mod tests {
     use super::*;
 
-    /// A github.com `GitHubRepo` for the common `glennib/stakk` case.
-    fn stakk() -> GitHubRepo {
-        GitHubRepo {
+    /// A github.com `RemoteRepo` for the common `glennib/stakk` case.
+    fn stakk() -> RemoteRepo {
+        RemoteRepo {
             host: GITHUB_COM.into(),
             owner: "glennib".into(),
             repo: "stakk".into(),
+            scheme: Scheme::Https,
         }
     }
 
@@ -141,153 +162,87 @@ mod tests {
 
     #[test]
     fn https_with_git_suffix() {
-        let result = parse_github_url("https://github.com/glennib/stakk.git", None);
+        let result = parse_remote_url("https://github.com/glennib/stakk.git");
         assert_eq!(result, Some(stakk()));
     }
 
     #[test]
     fn https_without_git_suffix() {
-        let result = parse_github_url("https://github.com/glennib/stakk", None);
+        let result = parse_remote_url("https://github.com/glennib/stakk");
         assert_eq!(result, Some(stakk()));
     }
 
     #[test]
     fn ssh_with_git_suffix() {
-        let result = parse_github_url("git@github.com:glennib/stakk.git", None);
+        let result = parse_remote_url("git@github.com:glennib/stakk.git");
         assert_eq!(result, Some(stakk()));
     }
 
     #[test]
     fn ssh_without_git_suffix() {
-        let result = parse_github_url("git@github.com:glennib/stakk", None);
+        let result = parse_remote_url("git@github.com:glennib/stakk");
         assert_eq!(result, Some(stakk()));
     }
 
     #[test]
     fn https_with_trailing_slash() {
-        let result = parse_github_url("https://github.com/owner/repo/", None);
+        let result = parse_remote_url("https://github.com/owner/repo/");
         assert_eq!(
             result,
-            Some(GitHubRepo {
+            Some(RemoteRepo {
                 host: GITHUB_COM.into(),
                 owner: "owner".into(),
                 repo: "repo".into(),
+                scheme: Scheme::Https,
             })
         );
     }
 
     #[test]
-    fn non_github_https() {
-        let result = parse_github_url("https://gitlab.com/owner/repo.git", None);
-        assert_eq!(result, None);
-    }
-
-    #[test]
-    fn non_github_ssh() {
-        let result = parse_github_url("git@gitlab.com:owner/repo.git", None);
-        assert_eq!(result, None);
-    }
-
-    #[test]
     fn empty_string() {
-        assert_eq!(parse_github_url("", None), None);
+        assert_eq!(parse_remote_url(""), None);
     }
 
     #[test]
     fn missing_repo() {
-        assert_eq!(parse_github_url("https://github.com/owner", None), None);
+        assert_eq!(parse_remote_url("https://github.com/owner"), None);
     }
 
     #[test]
     fn extra_path_segments() {
         assert_eq!(
-            parse_github_url("https://github.com/owner/repo/extra", None),
+            parse_remote_url("https://github.com/owner/repo/extra"),
             None
         );
     }
 
     #[test]
     fn ssh_canonical_with_git_suffix() {
-        let result = parse_github_url("ssh://git@github.com/glennib/stakk.git", None);
+        let result = parse_remote_url("ssh://git@github.com/glennib/stakk.git");
         assert_eq!(result, Some(stakk()));
     }
 
     #[test]
     fn ssh_canonical_without_git_suffix() {
-        let result = parse_github_url("ssh://git@github.com/glennib/stakk", None);
+        let result = parse_remote_url("ssh://git@github.com/glennib/stakk");
         assert_eq!(result, Some(stakk()));
     }
 
     #[test]
-    fn non_github_ssh_canonical() {
-        assert_eq!(
-            parse_github_url("ssh://git@gitlab.com/owner/repo.git", None),
-            None
-        );
+    fn host_is_lowercased() {
+        let result = parse_remote_url("git@GitHub.Example.COM:org/repo.git");
+        assert_eq!(result.map(|r| r.host), Some(ENTERPRISE.to_string()));
     }
 
     #[test]
-    fn enterprise_https() {
-        let result = parse_github_url("https://github.example.com/org/repo.git", Some(ENTERPRISE));
+    fn http_remote_keeps_scheme_and_port() {
         assert_eq!(
-            result,
-            Some(GitHubRepo {
-                host: ENTERPRISE.into(),
-                owner: "org".into(),
-                repo: "repo".into(),
-            })
-        );
-    }
-
-    #[test]
-    fn enterprise_ssh_scp_style() {
-        let result = parse_github_url("git@github.example.com:org/repo.git", Some(ENTERPRISE));
-        assert_eq!(
-            result,
-            Some(GitHubRepo {
-                host: ENTERPRISE.into(),
-                owner: "org".into(),
-                repo: "repo".into(),
-            })
-        );
-    }
-
-    #[test]
-    fn enterprise_ssh_canonical_without_git_suffix() {
-        let result = parse_github_url("ssh://git@github.example.com/org/repo", Some(ENTERPRISE));
-        assert_eq!(
-            result,
-            Some(GitHubRepo {
-                host: ENTERPRISE.into(),
-                owner: "org".into(),
-                repo: "repo".into(),
-            })
-        );
-    }
-
-    #[test]
-    fn enterprise_rejected_without_configuration() {
-        assert_eq!(
-            parse_github_url("git@github.example.com:org/repo.git", None),
-            None
-        );
-    }
-
-    #[test]
-    fn github_com_still_accepted_when_enterprise_host_configured() {
-        let result = parse_github_url("git@github.com:glennib/stakk.git", Some(ENTERPRISE));
-        assert_eq!(result, Some(stakk()));
-    }
-
-    #[test]
-    fn configured_host_match_is_case_insensitive() {
-        let result = parse_github_url("git@GitHub.Example.COM:org/repo.git", Some(ENTERPRISE));
-        assert_eq!(
-            result,
-            Some(GitHubRepo {
-                host: ENTERPRISE.into(),
-                owner: "org".into(),
-                repo: "repo".into(),
+            parse_remote_url("http://localhost:3000/stakk/probe.git"),
+            Some(RemoteRepo {
+                host: "localhost:3000".into(),
+                owner: "stakk".into(),
+                repo: "probe".into(),
+                scheme: Scheme::Http,
             })
         );
     }
@@ -318,10 +273,11 @@ mod tests {
         let result = parse_remote_url("git@gitlab.com:owner/repo.git");
         assert_eq!(
             result,
-            Some(GitHubRepo {
+            Some(RemoteRepo {
                 host: "gitlab.com".into(),
                 owner: "owner".into(),
                 repo: "repo".into(),
+                scheme: Scheme::Https,
             })
         );
     }
@@ -333,33 +289,90 @@ mod tests {
     }
 
     #[test]
-    fn api_base_uri_is_none_for_github_com() {
-        assert_eq!(stakk().api_base_uri(), None);
+    fn github_api_base_uri_is_none_for_github_com() {
+        assert_eq!(stakk().github_api_base_uri(), None);
     }
 
     #[test]
-    fn api_base_uri_is_v3_for_enterprise() {
-        let repo = GitHubRepo {
+    fn github_api_base_uri_is_v3_for_enterprise() {
+        let repo = RemoteRepo {
             host: ENTERPRISE.into(),
             owner: "org".into(),
             repo: "repo".into(),
+            scheme: Scheme::Https,
         };
         assert_eq!(
-            repo.api_base_uri().as_deref(),
+            repo.github_api_base_uri().as_deref(),
             Some("https://github.example.com/api/v3")
         );
     }
 
     #[test]
-    fn api_base_uri_keeps_an_https_port() {
-        let repo = GitHubRepo {
+    fn github_api_base_uri_keeps_an_https_port() {
+        let repo = RemoteRepo {
             host: "github.example.com:8443".into(),
             owner: "org".into(),
             repo: "repo".into(),
+            scheme: Scheme::Https,
         };
         assert_eq!(
-            repo.api_base_uri().as_deref(),
+            repo.github_api_base_uri().as_deref(),
             Some("https://github.example.com:8443/api/v3")
+        );
+    }
+
+    // ---- Scheme and the Forgejo API base ----
+
+    #[test]
+    fn scheme_is_recorded_per_url_form() {
+        let scheme = |url: &str| parse_remote_url(url).map(|r| r.scheme);
+        assert_eq!(scheme("http://localhost:3000/o/r.git"), Some(Scheme::Http));
+        assert_eq!(scheme("https://codeberg.org/o/r.git"), Some(Scheme::Https));
+        // SSH says nothing about the API's scheme; https is the assumption.
+        assert_eq!(scheme("git@codeberg.org:o/r.git"), Some(Scheme::Https));
+        assert_eq!(
+            scheme("ssh://git@codeberg.org:2222/o/r.git"),
+            Some(Scheme::Https)
+        );
+    }
+
+    #[test]
+    fn scheme_displays_as_the_url_prefix() {
+        assert_eq!(Scheme::Http.to_string(), "http");
+        assert_eq!(Scheme::Https.to_string(), "https");
+    }
+
+    #[test]
+    fn forgejo_api_base_uri_keeps_http_and_a_port() {
+        let repo = parse_remote_url("http://localhost:3000/stakk/probe.git").unwrap();
+        assert_eq!(repo.forgejo_api_base_uri(), "http://localhost:3000/api/v1");
+    }
+
+    #[test]
+    fn forgejo_api_base_uri_turns_ssh_into_https() {
+        let repo = parse_remote_url("git@codeberg.org:owner/repo.git").unwrap();
+        assert_eq!(repo.forgejo_api_base_uri(), "https://codeberg.org/api/v1");
+        let repo = parse_remote_url("ssh://git@git.example.com:2222/owner/repo.git").unwrap();
+        assert_eq!(
+            repo.forgejo_api_base_uri(),
+            "https://git.example.com/api/v1"
+        );
+    }
+
+    #[test]
+    fn forgejo_api_base_uri_has_no_special_case_for_codeberg() {
+        let repo = parse_remote_url("https://codeberg.org/owner/repo.git").unwrap();
+        assert_eq!(repo.forgejo_api_base_uri(), "https://codeberg.org/api/v1");
+    }
+
+    /// The recorded scheme is a Forgejo concern: a GHES over plain HTTP stays
+    /// unsupported, as `github_api_base_uri` documents.
+    #[test]
+    fn github_api_base_uri_stays_https_for_an_http_remote() {
+        let repo = parse_remote_url("http://github.example.com/org/repo.git").unwrap();
+        assert_eq!(
+            repo.github_api_base_uri().as_deref(),
+            Some("https://github.example.com/api/v3")
         );
     }
 }

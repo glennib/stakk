@@ -29,21 +29,32 @@ use crate::graph::layout::build_layout;
 use crate::graph::types::BookmarkSegment;
 use crate::graph::types::ChangeGraph;
 use crate::graph::types::RemoteState;
-use crate::jj::remote::parse_github_url;
+use crate::jj::remote::RemoteRepo;
+use crate::jj::remote::parse_remote_url;
 use crate::jj::types::GitRemote;
 
 /// Version of the JSON document emitted by `--format=json` and
 /// `--format=json-full`. Bumped on breaking schema changes; both
 /// projections always report the same version, because they are one schema.
-const SCHEMA_VERSION: u32 = 2;
+/// Version 3 is defined by what this module emits today, `remotes[].host`
+/// included: it has not shipped in a release yet, so it was reshaped in
+/// place rather than bumped.
+const SCHEMA_VERSION: u32 = 3;
 
 /// Everything `stakk graph` renders, gathered by the caller.
 pub struct GraphData<'a> {
     pub default_branch: &'a str,
     pub remotes: &'a [GitRemote],
     pub graph: &'a ChangeGraph,
-    /// Extra host to treat as GitHub, besides github.com.
-    pub github_host: Option<&'a str>,
+}
+
+/// The `<host>/<owner>/<repo>` reading of a remote URL, on any host, or
+/// `None` when the URL has no such shape (a local path, say). The graph
+/// never selects a forge, so no host gate applies here. Shared by both
+/// renderers so the JSON `host`/`repo` fields and the pretty `Remote:` line
+/// cannot disagree.
+fn parsed_remote(url: &str) -> Option<RemoteRepo> {
+    parse_remote_url(url)
 }
 
 /// Which projection of the JSON document to emit.
@@ -105,8 +116,11 @@ struct GraphReport<'a> {
 struct RemoteReport<'a> {
     name: &'a str,
     url: &'a str,
-    /// `owner/repo` when the URL is a GitHub remote.
-    github: Option<String>,
+    /// Lowercased host, keeping the port of an `http(s)` URL; `null` when
+    /// the URL has no `<host>/<owner>/<repo>` shape.
+    host: Option<String>,
+    /// `owner/repo`; `null` exactly when `host` is.
+    repo: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -188,10 +202,14 @@ fn build_report<'a>(data: &GraphData<'a>, projection: JsonProjection) -> GraphRe
         remotes: data
             .remotes
             .iter()
-            .map(|r| RemoteReport {
-                name: &r.name,
-                url: &r.url,
-                github: parse_github_url(&r.url, data.github_host).map(|g| g.to_string()),
+            .map(|r| {
+                let parsed = parsed_remote(&r.url);
+                RemoteReport {
+                    name: &r.name,
+                    url: &r.url,
+                    host: parsed.as_ref().map(|p| p.host.clone()),
+                    repo: parsed.map(|p| p.to_string()),
+                }
             })
             .collect(),
         excluded_bookmarks: &data.graph.excluded_bookmarks,
@@ -289,10 +307,10 @@ fn render_pretty(data: &GraphData, colors: bool) -> String {
 
     let _ = writeln!(out, "Default branch: {}", data.default_branch);
     for remote in data.remotes {
-        let github = parse_github_url(&remote.url, data.github_host)
+        let repo = parsed_remote(&remote.url)
             .map(|r| format!(" ({r})"))
             .unwrap_or_default();
-        let _ = writeln!(out, "Remote: {} {}{}", remote.name, remote.url, github);
+        let _ = writeln!(out, "Remote: {} {}{}", remote.name, remote.url, repo);
     }
     out.push('\n');
 
@@ -562,7 +580,6 @@ mod tests {
             default_branch: "main",
             remotes: &remotes,
             graph: &graph,
-            github_host: None,
         };
         insta::assert_snapshot!(render_pretty(&data, false));
     }
@@ -575,7 +592,6 @@ mod tests {
             default_branch: "main",
             remotes: &remotes,
             graph: &graph,
-            github_host: None,
         };
         let out = render_pretty(&data, false);
         assert!(out.contains("No bookmark stacks found."));
@@ -595,7 +611,6 @@ mod tests {
             default_branch: "main",
             remotes: &remotes,
             graph: &graph,
-            github_host: None,
         };
         let out = render_pretty(&data, false);
         assert!(out.contains("No bookmark stacks found."));
@@ -610,7 +625,6 @@ mod tests {
             default_branch: "main",
             remotes: &remotes,
             graph: &graph,
-            github_host: None,
         };
         serde_json::from_str(&render_json(&data, projection)).unwrap()
     }
@@ -626,7 +640,6 @@ mod tests {
             default_branch: "main",
             remotes: &remotes,
             graph: &graph,
-            github_host: None,
         };
         serde_json::from_str(&render(&data, format, false)).unwrap()
     }
@@ -639,7 +652,6 @@ mod tests {
             default_branch: "main",
             remotes: &remotes,
             graph: &graph,
-            github_host: None,
         };
         insta::assert_snapshot!(render_json(&data, JsonProjection::Sparse));
     }
@@ -652,7 +664,6 @@ mod tests {
             default_branch: "main",
             remotes: &remotes,
             graph: &graph,
-            github_host: None,
         };
         insta::assert_snapshot!(render_json(&data, JsonProjection::Full));
     }
@@ -708,9 +719,10 @@ mod tests {
     #[test]
     fn sparse_omits_full_only_fields() {
         let v = sample_json(JsonProjection::Sparse);
-        assert_eq!(v["schema_version"], 2);
+        assert_eq!(v["schema_version"], 3);
         assert_eq!(v["default_branch"], "main");
-        assert_eq!(v["remotes"][0]["github"], "glennib/stakk");
+        assert_eq!(v["remotes"][0]["host"], "github.com");
+        assert_eq!(v["remotes"][0]["repo"], "glennib/stakk");
         assert_eq!(v["excluded_bookmarks"][0], "merged-work");
         assert_eq!(v["excluded_head_count"], 1);
 
@@ -830,7 +842,6 @@ mod tests {
             default_branch: "main",
             remotes: &remotes,
             graph: &graph,
-            github_host: None,
         };
         let sparse = render_json(&data, JsonProjection::Sparse);
         let full = render_json(&data, JsonProjection::Full);
@@ -948,7 +959,6 @@ mod tests {
             default_branch: "main",
             remotes: &remotes,
             graph: &graph,
-            github_host: None,
         };
         let pretty = render(&data, GraphFormat::Pretty, false);
         assert!(
@@ -976,12 +986,15 @@ mod tests {
     fn json_shape() {
         let v = sample_json(JsonProjection::Full);
 
-        assert_eq!(v["schema_version"], 2);
+        assert_eq!(v["schema_version"], 3);
         assert_eq!(v["default_branch"], "main");
 
         assert_eq!(v["remotes"][0]["name"], "origin");
-        assert_eq!(v["remotes"][0]["github"], "glennib/stakk");
-        assert!(v["remotes"][1]["github"].is_null());
+        assert_eq!(v["remotes"][0]["host"], "github.com");
+        assert_eq!(v["remotes"][0]["repo"], "glennib/stakk");
+        // Any <host>/<owner>/<repo> URL is reported, not only supported forges.
+        assert_eq!(v["remotes"][1]["host"], "gitlab.com");
+        assert_eq!(v["remotes"][1]["repo"], "x/y");
 
         assert_eq!(v["excluded_bookmarks"][0], "merged-work");
         assert_eq!(v["excluded_head_count"], 1);
@@ -1070,5 +1083,78 @@ mod tests {
                 .len(),
             2
         );
+    }
+
+    /// `remotes[].host` and `repo` come from the forge-agnostic URL parse:
+    /// every `<host>/<owner>/<repo>` URL is reported, whichever forge it is
+    /// on, and a URL without that shape reports `null` for both. Both
+    /// renderers share the parse.
+    #[test]
+    fn remotes_report_host_and_repo_for_any_url() {
+        let graph = sample_graph();
+        let remotes = vec![
+            GitRemote {
+                name: "origin".to_string(),
+                url: "git@github.com:glennib/stakk.git".to_string(),
+            },
+            GitRemote {
+                name: "codeberg".to_string(),
+                url: "https://codeberg.org/glennib/stakk.git".to_string(),
+            },
+            GitRemote {
+                name: "corp".to_string(),
+                url: "https://git.corp:3000/o/r.git".to_string(),
+            },
+            GitRemote {
+                name: "local".to_string(),
+                url: "/srv/git/repo".to_string(),
+            },
+        ];
+        let data = GraphData {
+            default_branch: "main",
+            remotes: &remotes,
+            graph: &graph,
+        };
+        let expected = [
+            (
+                "origin",
+                serde_json::json!("github.com"),
+                serde_json::json!("glennib/stakk"),
+            ),
+            (
+                "codeberg",
+                serde_json::json!("codeberg.org"),
+                serde_json::json!("glennib/stakk"),
+            ),
+            (
+                "corp",
+                serde_json::json!("git.corp:3000"),
+                serde_json::json!("o/r"),
+            ),
+            ("local", serde_json::Value::Null, serde_json::Value::Null),
+        ];
+
+        for projection in [JsonProjection::Sparse, JsonProjection::Full] {
+            let v: serde_json::Value =
+                serde_json::from_str(&render_json(&data, projection)).unwrap();
+            for (i, (name, host, repo)) in expected.iter().enumerate() {
+                assert_eq!(v["remotes"][i]["name"], *name);
+                assert_eq!(v["remotes"][i]["host"], *host, "{name} {projection:?}");
+                assert_eq!(v["remotes"][i]["repo"], *repo, "{name} {projection:?}");
+            }
+        }
+
+        // The pretty `Remote:` line follows the same parse.
+        let pretty = render_pretty(&data, false);
+        for (name, _, repo) in &expected {
+            let line = pretty
+                .lines()
+                .find(|l| l.starts_with(&format!("Remote: {name} ")))
+                .unwrap();
+            match repo.as_str() {
+                Some(repo) => assert!(line.ends_with(&format!(" ({repo})")), "{line}"),
+                None => assert!(line.ends_with(" /srv/git/repo"), "{line}"),
+            }
+        }
     }
 }

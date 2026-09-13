@@ -1,13 +1,58 @@
 //! Forge trait and implementations.
 //!
-//! All forge interaction (GitHub, etc.) goes through the `Forge` trait. The
-//! core submission logic never imports forge-specific types directly.
+//! All forge interaction (GitHub, Forgejo) goes through the `Forge` trait.
+//! The core submission logic never imports forge-specific types directly.
 
 pub mod comment;
+pub mod detect;
+pub mod forgejo;
 pub mod github;
 
+use clap::ValueEnum as _;
 use miette::Diagnostic;
 use thiserror::Error;
+
+/// Which forge a remote is on and which client talks to it.
+///
+/// An explicit `--forge` (`STAKK_FORGE`, `forge` in `stakk.toml`) names it
+/// outright; otherwise the remote's host decides through
+/// [`detect::classify`]: the public hosts are built in, and any other host
+/// is looked up in the host table (`--host HOST=FORGE`, `STAKK_HOSTS`,
+/// `hosts` in `stakk.toml`, `GH_HOST`). There is no default kind: a
+/// self-hosted Forgejo and a GitHub Enterprise Server look alike from a URL,
+/// and guessing wrong would send a token to the wrong API.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ForgeKind {
+    /// GitHub, including GitHub Enterprise Server.
+    Github,
+    /// Forgejo, including codeberg.org, and Gitea, which speaks the same API.
+    Forgejo,
+}
+
+impl ForgeKind {
+    /// The forge's name as it appears in prose: `GitHub` or `Forgejo`.
+    ///
+    /// [`std::fmt::Display`] prints the clap value name (`github`, `forgejo`)
+    /// instead: it is what config defaults are re-injected as, what a
+    /// [`detect::HostRule`] prints, and what the post-probe hint quotes
+    /// inside a `hosts` entry.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Github => "GitHub",
+            Self::Forgejo => "Forgejo",
+        }
+    }
+}
+
+impl std::fmt::Display for ForgeKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let pv = self
+            .to_possible_value()
+            .expect("all variants have possible values");
+        f.write_str(pv.get_name())
+    }
+}
 
 /// Errors from forge operations.
 #[derive(Debug, Error, Diagnostic)]
@@ -23,7 +68,10 @@ pub enum ForgeError {
     #[error("authentication failed: {message}")]
     #[diagnostic(
         code(stakk::forge::auth_failed),
-        help("your token may have expired — run `gh auth login` to re-authenticate")
+        help(
+            "the token for this host was rejected — expired, revoked, or missing a scope. \
+             Re-check it; see `stakk docs auth`"
+        )
     )]
     AuthFailed {
         message: String,
@@ -206,4 +254,46 @@ pub trait Forge: Send + Sync {
         &self,
         stack_number: u64,
     ) -> impl std::future::Future<Output = Result<(), ForgeError>> + Send;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn forge_kind_displays_as_the_clap_value_name() {
+        assert_eq!(ForgeKind::Github.to_string(), "github");
+        assert_eq!(ForgeKind::Forgejo.to_string(), "forgejo");
+    }
+
+    #[test]
+    fn forge_kind_label_is_the_prose_name() {
+        assert_eq!(ForgeKind::Github.label(), "GitHub");
+        assert_eq!(ForgeKind::Forgejo.label(), "Forgejo");
+    }
+
+    /// The config file spells the kind the way the flag does.
+    #[test]
+    fn forge_kind_deserializes_from_the_lowercase_value_name() {
+        #[derive(serde::Deserialize)]
+        struct Holder {
+            forge: ForgeKind,
+        }
+        let holder: Holder = toml::from_str(r#"forge = "forgejo""#).unwrap();
+        assert_eq!(holder.forge, ForgeKind::Forgejo);
+        let holder: Holder = toml::from_str(r#"forge = "github""#).unwrap();
+        assert_eq!(holder.forge, ForgeKind::Github);
+        assert!(toml::from_str::<Holder>(r#"forge = "GitHub""#).is_err());
+    }
+
+    #[test]
+    fn auth_failed_help_names_no_forge_specific_tool() {
+        let err = ForgeError::AuthFailed {
+            message: "401".into(),
+            source: "unauthorized".into(),
+        };
+        let help = miette::Diagnostic::help(&err).unwrap().to_string();
+        assert!(help.contains("stakk docs auth"), "{help}");
+        assert!(!help.contains("gh "), "{help}");
+    }
 }

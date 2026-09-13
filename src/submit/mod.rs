@@ -260,9 +260,9 @@ pub enum SubmitError {
         help(
             "your branches were pushed and PRs were created/updated normally — only the \
              server-side stack linkage was skipped. GitHub's stacked pull requests are not \
-             available everywhere (GitHub Enterprise Server does not have them); set \
-             `--native-stacks auto` to use the feature only where available, or `ignore` (env: \
-             STAKK_NATIVE_STACKS)"
+             available everywhere (GitHub Enterprise Server does not have them, and Forgejo has \
+             no such feature); set `--native-stacks auto` to use the feature only where \
+             available, or `ignore` (env: STAKK_NATIVE_STACKS)"
         )
     )]
     StacksUnavailable {

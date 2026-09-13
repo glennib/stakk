@@ -3,18 +3,20 @@ source: src/graph/output.rs
 expression: "render_json(&data, JsonProjection::Full)"
 ---
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "default_branch": "main",
   "remotes": [
     {
       "name": "origin",
       "url": "git@github.com:glennib/stakk.git",
-      "github": "glennib/stakk"
+      "host": "github.com",
+      "repo": "glennib/stakk"
     },
     {
       "name": "mirror",
       "url": "https://gitlab.com/x/y.git",
-      "github": null
+      "host": "gitlab.com",
+      "repo": "x/y"
     }
   ],
   "excluded_bookmarks": [

@@ -12,7 +12,7 @@ Arguments:
 
           Possible values:
           - agents:    Submitting without the TUI, written for coding agents
-          - auth:      GitHub authentication: tokens, hosts, and troubleshooting
+          - auth:      Forge authentication: tokens, hosts, and troubleshooting
           - config:    Config files, precedence, and environment variables
           - graph:     The `stakk graph` document, field by field
           - scripting: Driving stakk from a program: exit codes and a worked example
@@ -32,12 +32,35 @@ Global options:
           
           [env: STAKK_CONFIG=]
 
-      --github-host <GITHUB_HOST>
-          Extra host to treat as GitHub, for GitHub Enterprise Server.
+      --forge <FORGE>
+          Which forge the remote is on: github or forgejo.
           
-          github.com is always accepted. Naming a host here additionally accepts
-          remotes on that host and talks to its API at https://<host>/api/v3.
-          Falls back to GH_HOST when unset, so an existing GitHub CLI setup works
-          without further configuration.
+          Optional. When unset, the remote's host decides: github.com and
+          codeberg.org are known, a host named with --host (STAKK_HOSTS, `hosts`
+          in stakk.toml, or the GitHub CLI's GH_HOST) is what it was named as,
+          and any other host is probed once over the network, which prints the
+          entry that skips the probe next time. Set this to skip all of that
+          for one run. Each forge has its own token
+          resolution; see `stakk docs auth`. Native stacks (--native-stacks)
+          are a GitHub feature: on Forgejo, `auto` and `none` are silent and
+          `on` fails after the PRs are submitted.
+
+          Possible values:
+          - github:  GitHub, including GitHub Enterprise Server
+          - forgejo: Forgejo, including codeberg.org, and Gitea, which speaks the same API
           
-          [env: STAKK_GITHUB_HOST=]
+          [env: STAKK_FORGE=]
+
+      --host <HOST=FORGE>
+          Map a host to its forge, as HOST=FORGE. Repeatable.
+          
+          HOST is the remote URL's host, with the port for an http(s) remote
+          (ghe.example.com, or localhost:3000); FORGE is github or forgejo.
+          github.com and codeberg.org need no entry. A later entry wins over an
+          earlier one for the same host, and every entry here wins over `hosts`
+          in stakk.toml and over GH_HOST, which counts as a github entry.
+          STAKK_HOSTS takes a comma-separated list. GitHub is reached at
+          https://<host>/api/v3, Forgejo at <scheme>://<host>/api/v1 with the
+          remote URL's own scheme and port, so a plain-http instance works.
+          
+          [env: STAKK_HOSTS=]

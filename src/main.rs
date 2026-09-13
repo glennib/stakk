@@ -20,20 +20,37 @@ use crate::cli::GraphFormat;
 use crate::cli::submit::SubmitArgs;
 use crate::error::StakkError::Interrupted;
 use crate::error::StakkError::{self};
+use crate::forge::Forge;
+use crate::forge::ForgeKind;
 use crate::forge::comment::StackPlacement;
+use crate::forge::detect;
+use crate::forge::detect::Classification;
+use crate::forge::detect::DetectError;
+use crate::forge::detect::HostRules;
+use crate::forge::detect::ProbeOutcome;
+use crate::forge::forgejo::transport::ReqwestTransport;
 use crate::jj::Jj;
-use crate::jj::remote::parse_github_url;
+use crate::jj::remote::RemoteRepo;
 use crate::jj::remote::parse_remote_url;
 use crate::jj::runner::RealJjRunner;
 use crate::jj::version::MIN_SUPPORTED_JJ_VERSION;
 
-/// The public GitHub host, always accepted without configuration.
+/// The public GitHub host, GitHub without any configuration.
 ///
 /// Lives at the crate root because it is neither a VCS nor a forge concept:
-/// `jj::remote` uses it to gate remote hosts, `auth` to pick which token
-/// environment variables apply. Either module owning it would make the other
-/// depend on it for no reason.
+/// `forge::detect` has it built in, `auth` uses it to pick which token
+/// environment variables apply, and `jj::remote` to leave octocrab its default
+/// API base. Any one of those owning it would make the others depend on it
+/// for no reason.
 pub const GITHUB_COM: &str = "github.com";
+
+/// The public Forgejo host, Forgejo without any configuration.
+///
+/// Lives next to [`GITHUB_COM`] for the same reason it does: the public hosts
+/// are a crate-level fact that `forge::detect` has built in, not a property of
+/// the forge client, and keeping the two side by side is what shows they play
+/// the same role for their forge.
+pub const CODEBERG_ORG: &str = "codeberg.org";
 
 #[tokio::main]
 async fn main() {
@@ -70,21 +87,20 @@ async fn run() -> Result<(), StakkError> {
         warn_if_jj_too_old().await;
     }
 
-    // The extra host to treat as GitHub. CLI, STAKK_GITHUB_HOST and the config
-    // file are resolved by clap; GH_HOST is the last resort so an existing
-    // GitHub CLI setup needs no stakk-specific configuration.
-    let github_host = cli
-        .github_host
-        .clone()
-        .or_else(|| std::env::var("GH_HOST").ok().filter(|h| !h.is_empty()));
-    let github_host = github_host.as_deref();
+    // The host table, layered lowest first: GH_HOST (the GitHub CLI's own
+    // setting, so an existing gh setup needs nothing further), `hosts` from
+    // the config file, then `--host`/STAKK_HOSTS. The config layer is merged
+    // here rather than injected as a clap default: a default is replaced
+    // wholesale by the first typed `--host`, while the table merges per host.
+    let gh_host = std::env::var("GH_HOST").ok();
+    let rules = HostRules::layered(gh_host.as_deref(), config.hosts.as_ref(), &cli.hosts);
 
     match cli.command {
         Some(Commands::Submit(args)) => {
-            submit_bookmark(&args, github_host).await?;
+            submit_bookmark(&args, cli.forge, &rules).await?;
         }
         Some(Commands::Graph(args)) => {
-            print_graph(&args, github_host).await?;
+            print_graph(&args).await?;
         }
         Some(Commands::Completions { shell }) => {
             clap_complete::generate(shell, &mut Cli::command(), "stakk", &mut std::io::stdout());
@@ -98,9 +114,9 @@ async fn run() -> Result<(), StakkError> {
             // a hand-built value, so clap defaults, `STAKK_*` environment
             // variables and config-injected defaults all reach it. The global
             // flags are unaffected: `--config` is pre-parsed from the real
-            // argv, and `github_host` comes from the real parse above.
+            // argv, and `--forge` and `--host` come from the real parse above.
             let args = cli::default_submit_args(config).unwrap_or_else(|e| e.exit());
-            submit_bookmark(&args, github_host).await?;
+            submit_bookmark(&args, cli.forge, &rules).await?;
         }
     }
 
@@ -127,26 +143,118 @@ async fn warn_if_jj_too_old() {
 
 /// Submits a selection of bookmarks as stacked pull requests using the
 /// three-phase pipeline: analyze, plan, execute.
-async fn submit_bookmark(args: &SubmitArgs, github_host: Option<&str>) -> Result<(), StakkError> {
+///
+/// Resolves the remote, then the forge for its host, then the token, and
+/// builds the concrete forge client for that kind to hand to
+/// [`run_submission`]. `Forge` uses return-position `impl Future`, so it is
+/// not dyn-compatible: the two forges are two match arms constructing two
+/// types, and the pipeline behind them is generic rather than an enum
+/// forwarding every method.
+///
+/// `explicit` is `--forge`, which skips the host lookup; `rules` is the host
+/// table it falls back to.
+async fn submit_bookmark(
+    args: &SubmitArgs,
+    explicit: Option<ForgeKind>,
+    rules: &HostRules,
+) -> Result<(), StakkError> {
     let pb = indicatif::ProgressBar::new_spinner();
     pb.enable_steady_tick(std::time::Duration::from_millis(120));
 
-    let jj = Jj::new(RealJjRunner);
+    // Resolve the remote before the forge and the token: its host decides
+    // both.
+    pb.set_message("Resolving remote...");
+    let (remote_name, repo) = resolve_remote(&args.remote).await?;
 
-    // Resolve the remote before the token: its host decides which token to ask
-    // for.
-    pb.set_message("Resolving GitHub remote...");
-    let (remote_name, github_repo) = resolve_github_remote(Some(&args.remote), github_host).await?;
+    let kind = match detect::classify(&repo.host, explicit, rules) {
+        Classification::Forge(kind) => kind,
+        Classification::Unsupported(forge) => {
+            return Err(DetectError::Unsupported {
+                host: repo.host,
+                forge,
+            }
+            .into());
+        }
+        Classification::Unknown => {
+            pb.set_message(format!("Detecting the forge at {}...", repo.host));
+            let transport = ReqwestTransport::probing().map_err(DetectError::Client)?;
+            match detect::probe(&transport, &repo).await {
+                ProbeOutcome::Detected(kind) => {
+                    // `suspend`, not `println`: indicatif drops `println`
+                    // output while the draw target is hidden (stderr not a
+                    // terminal), and the scripted runs that would lose it are
+                    // the ones the hint is for.
+                    pb.suspend(|| {
+                        eprintln!(
+                            "  Detected {} at {host}; skip this probe next time with `hosts = {{ \
+                             \"{host}\" = \"{kind}\" }}` in stakk.toml or `--host {host}={kind}`",
+                            kind.label(),
+                            host = repo.host,
+                        );
+                    });
+                    kind
+                }
+                ProbeOutcome::Unsupported(forge) => {
+                    return Err(DetectError::Unsupported {
+                        host: repo.host,
+                        forge,
+                    }
+                    .into());
+                }
+                ProbeOutcome::Ambiguous(report) => {
+                    return Err(DetectError::Ambiguous {
+                        host: repo.host,
+                        report,
+                    }
+                    .into());
+                }
+                ProbeOutcome::Unknown(report) => {
+                    return Err(DetectError::Unknown {
+                        host: repo.host,
+                        report,
+                    }
+                    .into());
+                }
+            }
+        }
+    };
 
     pb.set_message("Resolving authentication...");
-    let auth_token = auth::resolve_token(&github_repo.host).await?;
+    match kind {
+        ForgeKind::Github => {
+            let auth_token = auth::resolve_token(&repo.host).await?;
+            let forge = forge::github::GitHubForge::new(
+                &auth_token.token,
+                repo.owner.clone(),
+                repo.repo.clone(),
+                repo.github_api_base_uri().as_deref(),
+            )?;
+            run_submission(forge, args, &remote_name, pb).await
+        }
+        ForgeKind::Forgejo => {
+            let auth_token = auth::resolve_forgejo_token(&repo.host)?;
+            let forge = forge::forgejo::ForgejoForge::new(
+                &auth_token.token,
+                repo.owner.clone(),
+                repo.repo.clone(),
+                &repo.forgejo_api_base_uri(),
+            )?;
+            run_submission(forge, args, &remote_name, pb).await
+        }
+    }
+}
 
-    let forge = forge::github::GitHubForge::new(
-        &auth_token.token,
-        github_repo.owner.clone(),
-        github_repo.repo.clone(),
-        github_repo.api_base_uri().as_deref(),
-    )?;
+/// Everything from the change graph onward, generic over the forge.
+///
+/// `pb` is the spinner `submit_bookmark` started for the remote and token
+/// steps; it is finished here, once the graph is built.
+async fn run_submission<F: Forge>(
+    forge: F,
+    args: &SubmitArgs,
+    remote_name: &str,
+    pb: indicatif::ProgressBar,
+) -> Result<(), StakkError> {
+    let jj = Jj::new(RealJjRunner);
 
     // Build the change graph.
     pb.set_message("Building change graph...");
@@ -223,7 +331,7 @@ async fn submit_bookmark(args: &SubmitArgs, github_host: Option<&str>) -> Result
         &analysis,
         bookmark_creations,
         &forge,
-        &remote_name,
+        remote_name,
         args.pr_mode,
         args.sync_pr_content,
         args.trailers,
@@ -282,55 +390,30 @@ async fn submit_bookmark(args: &SubmitArgs, github_host: Option<&str>) -> Result
     Ok(())
 }
 
-/// Resolve the GitHub remote from jj's remote list.
+/// Find the remote called `name` in jj's remote list and parse its URL.
 ///
-/// If `preferred` is given, looks for that specific remote name. Otherwise,
-/// falls back to the first remote with a GitHub URL.
-///
-/// `github_host` is an extra host to accept besides github.com.
-///
-/// Returns the remote name and parsed `GitHubRepo`.
-async fn resolve_github_remote(
-    preferred: Option<&str>,
-    github_host: Option<&str>,
-) -> Result<(String, jj::remote::GitHubRepo), StakkError> {
+/// Returns the remote name and the parsed `RemoteRepo`. Which forge the host
+/// runs is not decided here — that is `forge::detect`'s job, once the host is
+/// known.
+async fn resolve_remote(name: &str) -> Result<(String, RemoteRepo), StakkError> {
     let jj = Jj::new(RealJjRunner);
     let remotes = jj.get_git_remote_list().await?;
 
-    if let Some(name) = preferred {
-        if let Some(remote) = remotes.iter().find(|r| r.name == name) {
-            if let Some(repo) = parse_github_url(&remote.url, github_host) {
-                return Ok((remote.name.clone(), repo));
-            }
-            // An owner/repo URL on an unconfigured host gets a diagnostic that
-            // names the host, rather than the generic "not a GitHub URL".
-            if let Some(parsed) = parse_remote_url(&remote.url) {
-                return Err(StakkError::RemoteHostNotConfigured {
-                    name: name.to_string(),
-                    url: remote.url.clone(),
-                    host: parsed.host,
-                });
-            }
-            return Err(StakkError::RemoteNotGithub {
+    let remote =
+        remotes
+            .iter()
+            .find(|r| r.name == name)
+            .ok_or_else(|| StakkError::RemoteNotFound {
                 name: name.to_string(),
-                url: remote.url.clone(),
-            });
-        }
-        return Err(StakkError::RemoteNotFound {
-            name: name.to_string(),
-        });
-    }
-
-    for remote in &remotes {
-        if let Some(repo) = parse_github_url(&remote.url, github_host) {
-            return Ok((remote.name.clone(), repo));
-        }
-    }
-
-    Err(StakkError::NoGithubRemote)
+            })?;
+    let repo = parse_remote_url(&remote.url).ok_or_else(|| StakkError::RemoteNotRepoUrl {
+        name: name.to_string(),
+        url: remote.url.clone(),
+    })?;
+    Ok((remote.name.clone(), repo))
 }
 
-async fn print_graph(args: &GraphArgs, github_host: Option<&str>) -> Result<(), StakkError> {
+async fn print_graph(args: &GraphArgs) -> Result<(), StakkError> {
     // No spinner in json mode: machine-readable output stays quiet.
     let spinner = matches!(args.format, GraphFormat::Pretty).then(|| {
         let pb = indicatif::ProgressBar::new_spinner();
@@ -360,7 +443,6 @@ async fn print_graph(args: &GraphArgs, github_host: Option<&str>) -> Result<(), 
         default_branch: &default_branch,
         remotes: &remotes,
         graph: &change_graph,
-        github_host,
     };
     print!(
         "{}",

@@ -1,13 +1,13 @@
 # stakk
 
-**stakk** turns [Jujutsu](https://github.com/jj-vcs/jj) bookmarks into GitHub stacked pull requests.
+**stakk** turns [Jujutsu](https://github.com/jj-vcs/jj) bookmarks into GitHub or Forgejo stacked pull requests.
 Pick a stack, name the bookmarks that still need one, and stakk pushes and maintains one PR per bookmark:
 correct base branches, a stack overview on every PR, no duplicates on re-runs.
 It works with
 [GitHub's native stacked pull requests](https://docs.github.com/en/pull-requests/how-tos/stacked-pull-requests): opt in
 with `--native-stacks auto` and GitHub renders the stack itself and retargets PRs as the stack merges.
 
-jj stays in charge of your commits and bookmarks; stakk acts only where that state has to exist on GitHub.
+jj stays in charge of your commits and bookmarks; stakk acts only where that state has to exist on the forge.
 It never calls `git` — everything goes through `jj`, so workspaces and non-colocated repos just work.
 
 ![Interactive stakk submission flow](media/stakk.gif)
@@ -114,9 +114,20 @@ Every key and variable: [docs/config.md](docs/config.md) or `stakk docs config`.
 
 ### GitHub Enterprise Server
 
-Name the host with `--github-host`, `STAKK_GITHUB_HOST`, `github_host` in `stakk.toml`, or `GH_HOST`;
-stakk then accepts remotes on it and uses `https://<host>/api/v3`.
+github.com needs nothing, and an Enterprise host is recognised on first use by how its API answers.
+To skip that probe, map the host once with `--host ghe.example.com=github`, `STAKK_HOSTS`, `hosts` in `stakk.toml`,
+or the GitHub CLI's `GH_HOST`. stakk talks to `https://<host>/api/v3`.
 Tokens are resolved per host like the GitHub CLI does it, so an Enterprise token is never sent to github.com.
+Setup and troubleshooting: [docs/auth.md](docs/auth.md) or `stakk docs auth`.
+
+### Forgejo
+
+codeberg.org needs nothing, and any other instance is recognised on first use by how its API answers;
+map it once with `--host git.example.com=forgejo`, `STAKK_HOSTS` or `hosts` in `stakk.toml` to skip that probe.
+A `host:port` over plain `http` works: stakk talks to `<scheme>://<host>/api/v1` with the remote's own scheme.
+`--forge forgejo` (`STAKK_FORGE`, `forge = "forgejo"`) skips the lookup for one run.
+The token comes from `FORGEJO_TOKEN` and nothing else.
+`--native-stacks` is a GitHub feature: on Forgejo `auto` and `none` are silent, and you get stack comments.
 Setup and troubleshooting: [docs/auth.md](docs/auth.md) or `stakk docs auth`.
 
 ## Non-interactive selection

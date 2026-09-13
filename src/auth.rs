@@ -1,4 +1,13 @@
-//! GitHub authentication token resolution.
+//! Forge authentication token resolution.
+//!
+//! Two forges, two resolutions that share nothing but [`AuthToken`]:
+//!
+//! - **GitHub** ([`resolve_token`]) delegates to the GitHub CLI first, then
+//!   falls back to the host's token environment variables.
+//! - **Forgejo** ([`resolve_forgejo_token`]) reads `FORGEJO_TOKEN` and nothing
+//!   else — no `gh`, no GitHub variables, no per-host split.
+//!
+//! # GitHub
 //!
 //! Resolves a token for a specific host by delegating to the GitHub CLI first:
 //! 1. `gh auth token --hostname <host>`. Note that gh reads the token
@@ -31,6 +40,8 @@ pub enum TokenSource {
     GhEnterpriseTokenEnv,
     /// From `GITHUB_ENTERPRISE_TOKEN` environment variable.
     GitHubEnterpriseTokenEnv,
+    /// From `FORGEJO_TOKEN` environment variable.
+    ForgejoTokenEnv,
 }
 
 /// A resolved authentication token with its source.
@@ -96,6 +107,16 @@ pub enum AuthError {
         help("run `gh auth login --hostname {host}`, or set {}", env_var_list(host))
     )]
     NoAuthFound { host: String },
+
+    #[error("no Forgejo token found for {host}")]
+    #[diagnostic(
+        code(stakk::auth::no_forgejo_token),
+        help(
+            "set {FORGEJO_TOKEN} to a personal access token — Forgejo mints them under Settings → \
+             Applications on {host}"
+        )
+    )]
+    NoForgejoToken { host: String },
 
     #[error("failed to run `gh auth token`: {0}")]
     #[diagnostic(
@@ -208,6 +229,42 @@ async fn try_gh_cli(host: &str, gh: &impl GhRunner) -> Result<Option<String>, Au
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(e) => Err(AuthError::GhCliError(e)),
     }
+}
+
+/// The one environment variable a Forgejo token is read from.
+const FORGEJO_TOKEN: &str = "FORGEJO_TOKEN";
+
+/// Resolve a Forgejo authentication token for `host`.
+///
+/// Reads `FORGEJO_TOKEN` and nothing else: no `gh` (it knows nothing about
+/// Forgejo), none of the GitHub variables (a GitHub token must never be sent
+/// to a Forgejo host), and no per-host split — there is no "enterprise token
+/// must never reach the public host" rule to mirror, so a user with two
+/// Forgejo hosts sets the variable per shell, as for any CLI. `host` only
+/// names the instance in the error.
+///
+/// Like [`resolve_token`], this does NOT validate the token: a revoked one
+/// resolves fine and fails at the first API call.
+pub fn resolve_forgejo_token(host: &str) -> Result<AuthToken, AuthError> {
+    resolve_forgejo_token_with(host, |name| std::env::var(name).ok())
+}
+
+/// [`resolve_forgejo_token`] with the environment lookup injected, so tests
+/// never mutate the process environment. There is no runner to inject: the
+/// signature has nowhere to run `gh` from, which is the guarantee.
+fn resolve_forgejo_token_with(
+    host: &str,
+    lookup: impl Fn(&str) -> Option<String>,
+) -> Result<AuthToken, AuthError> {
+    lookup(FORGEJO_TOKEN)
+        .filter(|token| !token.is_empty())
+        .map(|token| AuthToken {
+            token,
+            source: TokenSource::ForgejoTokenEnv,
+        })
+        .ok_or_else(|| AuthError::NoForgejoToken {
+            host: host.to_string(),
+        })
 }
 
 #[cfg(test)]
@@ -395,5 +452,55 @@ mod tests {
         let help_text = help.to_string();
         assert!(help_text.contains("gh auth login --hostname github.example.com"));
         assert!(help_text.contains("GH_ENTERPRISE_TOKEN/GITHUB_ENTERPRISE_TOKEN"));
+    }
+
+    const FORGEJO_HOST: &str = "codeberg.org";
+
+    #[test]
+    fn forgejo_reads_forgejo_token() {
+        let found = resolve_forgejo_token_with(FORGEJO_HOST, env(&[("FORGEJO_TOKEN", "f")]))
+            .expect("a token should be found");
+        assert_eq!(found.token, "f");
+        assert_eq!(found.source, TokenSource::ForgejoTokenEnv);
+    }
+
+    #[test]
+    fn forgejo_treats_an_empty_variable_as_unset() {
+        let err = resolve_forgejo_token_with(FORGEJO_HOST, env(&[("FORGEJO_TOKEN", "")]))
+            .expect_err("an empty token is no token");
+        assert!(matches!(err, AuthError::NoForgejoToken { host } if host == FORGEJO_HOST));
+    }
+
+    /// The GitHub variables never reach a Forgejo host, whichever of the four
+    /// is set.
+    #[test]
+    fn forgejo_ignores_the_github_variables() {
+        let err = resolve_forgejo_token_with(
+            FORGEJO_HOST,
+            env(&[
+                ("GH_TOKEN", "a"),
+                ("GITHUB_TOKEN", "b"),
+                ("GH_ENTERPRISE_TOKEN", "c"),
+                ("GITHUB_ENTERPRISE_TOKEN", "d"),
+            ]),
+        )
+        .expect_err("no Forgejo token is set");
+        assert!(matches!(err, AuthError::NoForgejoToken { .. }));
+    }
+
+    #[test]
+    fn auth_error_no_forgejo_token_is_actionable() {
+        let err = AuthError::NoForgejoToken {
+            host: FORGEJO_HOST.to_string(),
+        };
+        assert_eq!(err.to_string(), "no Forgejo token found for codeberg.org");
+        let help = miette::Diagnostic::help(&err)
+            .expect("NoForgejoToken should have diagnostic help")
+            .to_string();
+        assert!(help.contains("FORGEJO_TOKEN"), "{help}");
+        assert!(help.contains("Settings → Applications"), "{help}");
+        assert!(help.contains(FORGEJO_HOST), "{help}");
+        // No `gh auth login`: gh knows nothing about Forgejo.
+        assert!(!help.contains("gh "), "{help}");
     }
 }

@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::path::Path;
 use std::path::PathBuf;
 
@@ -7,6 +8,7 @@ use crate::cli::submit::NativeStacks;
 use crate::cli::submit::PrMode;
 use crate::cli::submit::SyncPrContent;
 use crate::cli::submit::TrailerHandling;
+use crate::forge::ForgeKind;
 use crate::forge::comment::StackPlacement;
 
 /// Pre-parse the config file path from raw CLI args or environment, before clap
@@ -55,11 +57,14 @@ pub struct RemovedEnvVar {
 /// valid ones. The environment is the only configuration surface where a stale
 /// setting is silently ignored, which is why this table exists.
 ///
-/// **Removal:** this table, [`removed_env_vars`] and its caller in `main.rs` go
-/// at v3.0.0 at the latest, and may go in any 2.x once the 1.x population has
-/// moved. Advisory warnings are explicitly not stable surface (see
+/// **Removal:** an entry may go once the population that set its variable has
+/// moved, at the second major after the one that retired it at the latest —
+/// the 1.x entries at v3.0.0 (or any 2.x), the 2.x entries at v4.0.0 — and the
+/// table, [`removed_env_vars`] and its caller in `main.rs` go with the last
+/// entry. Advisory warnings are explicitly not stable surface (see
 /// `docs/stability.md`), so deleting them is not a break.
 static REMOVED_ENV_VARS: &[RemovedEnvVar] = &[
+    // Retired in 1.x.
     RemovedEnvVar {
         name: "STAKK_DRAFT",
         advice: "use STAKK_PR_MODE=draft or pr_mode in stakk.toml",
@@ -67,6 +72,12 @@ static REMOVED_ENV_VARS: &[RemovedEnvVar] = &[
     RemovedEnvVar {
         name: "STAKK_TEMPLATE",
         advice: "use STAKK_TEMPLATE_PATH or template_path in stakk.toml",
+    },
+    // Retired in 2.x, with the GitHub-only host setting.
+    RemovedEnvVar {
+        name: "STAKK_GITHUB_HOST",
+        advice: "use STAKK_HOSTS=<host>=github, --host <host>=github, or hosts in stakk.toml; \
+                 GH_HOST still works",
     },
 ];
 
@@ -109,8 +120,14 @@ pub struct Config {
     #[serde(default = "default_true")]
     pub inherit: bool,
     pub remote: Option<String>,
-    /// Extra host to treat as GitHub, for GitHub Enterprise Server.
-    pub github_host: Option<String>,
+    /// Which forge the remote is on. Unset means the remote's host decides
+    /// (`forge::detect`).
+    pub forge: Option<ForgeKind>,
+    /// Host → forge, for GitHub Enterprise Server and self-hosted Forgejo.
+    /// The one non-scalar key, and the one that is not injected as a clap
+    /// default: `--host` entries merge into it per host instead
+    /// (`HostRules::layered` in `main::run`).
+    pub hosts: Option<BTreeMap<String, ForgeKind>>,
     pub pr_mode: Option<PrMode>,
     pub template_path: Option<String>,
     pub stack_placement: Option<StackPlacement>,
@@ -128,7 +145,8 @@ impl Default for Config {
         Self {
             inherit: true,
             remote: None,
-            github_host: None,
+            forge: None,
+            hosts: None,
             pr_mode: None,
             template_path: None,
             stack_placement: None,
@@ -192,13 +210,24 @@ impl Config {
     }
 
     /// Merge `self` with a fallback config. For each `Option` field, `self`
-    /// wins if `Some`, otherwise `fallback` is used. `inherit` is not
-    /// merged — it is a directive, not a setting.
+    /// wins if `Some`, otherwise `fallback` is used. `hosts`, the one table,
+    /// merges per key with `self` winning a shared host, so a user-level
+    /// table of company hosts survives a repo that adds one more. `inherit`
+    /// is not merged — it is a directive, not a setting.
     fn merge(self, fallback: Self) -> Self {
         Self {
             inherit: self.inherit,
             remote: self.remote.or(fallback.remote),
-            github_host: self.github_host.or(fallback.github_host),
+            forge: self.forge.or(fallback.forge),
+            hosts: match (self.hosts, fallback.hosts) {
+                (Some(mut hosts), Some(fallback_hosts)) => {
+                    for (host, forge) in fallback_hosts {
+                        hosts.entry(host).or_insert(forge);
+                    }
+                    Some(hosts)
+                }
+                (hosts, fallback_hosts) => hosts.or(fallback_hosts),
+            },
             pr_mode: self.pr_mode.or(fallback.pr_mode),
             template_path: self.template_path.or(fallback.template_path),
             stack_placement: self.stack_placement.or(fallback.stack_placement),
@@ -272,17 +301,20 @@ mod tests {
     fn merge_self_wins() {
         let a = Config {
             remote: Some("from-repo".into()),
+            forge: Some(ForgeKind::Forgejo),
             pr_mode: Some(PrMode::Draft),
             ..Default::default()
         };
         let b = Config {
             remote: Some("from-user".into()),
+            forge: Some(ForgeKind::Github),
             pr_mode: Some(PrMode::Regular),
             template_path: Some("user-template".into()),
             ..Default::default()
         };
         let merged = a.merge(b);
         assert_eq!(merged.remote.as_deref(), Some("from-repo"));
+        assert_eq!(merged.forge, Some(ForgeKind::Forgejo));
         assert_eq!(merged.pr_mode, Some(PrMode::Draft));
         assert_eq!(merged.template_path.as_deref(), Some("user-template"));
     }
@@ -292,10 +324,52 @@ mod tests {
         let a = Config::default();
         let b = Config {
             remote: Some("from-user".into()),
+            forge: Some(ForgeKind::Forgejo),
+            hosts: Some(BTreeMap::from([(
+                "git.example.com".to_string(),
+                ForgeKind::Forgejo,
+            )])),
             ..Default::default()
         };
         let merged = a.merge(b);
         assert_eq!(merged.remote.as_deref(), Some("from-user"));
+        assert_eq!(merged.forge, Some(ForgeKind::Forgejo));
+        assert_eq!(
+            merged.hosts,
+            Some(BTreeMap::from([(
+                "git.example.com".to_string(),
+                ForgeKind::Forgejo
+            )]))
+        );
+    }
+
+    /// `hosts` is the one field merged per key rather than replaced: the repo
+    /// wins a host both name, and each side's other hosts survive.
+    #[test]
+    fn merge_hosts_unions_per_key_repo_winning() {
+        let repo = Config {
+            hosts: Some(BTreeMap::from([
+                ("shared.example.com".to_string(), ForgeKind::Github),
+                ("repo.example.com".to_string(), ForgeKind::Forgejo),
+            ])),
+            ..Default::default()
+        };
+        let user = Config {
+            hosts: Some(BTreeMap::from([
+                ("shared.example.com".to_string(), ForgeKind::Forgejo),
+                ("user.example.com".to_string(), ForgeKind::Forgejo),
+            ])),
+            ..Default::default()
+        };
+        let merged = repo.merge(user);
+        assert_eq!(
+            merged.hosts,
+            Some(BTreeMap::from([
+                ("shared.example.com".to_string(), ForgeKind::Github),
+                ("repo.example.com".to_string(), ForgeKind::Forgejo),
+                ("user.example.com".to_string(), ForgeKind::Forgejo),
+            ]))
+        );
     }
 
     #[test]
@@ -356,6 +430,18 @@ mod tests {
                 ),
             ]
         );
+    }
+
+    #[test]
+    fn removed_env_vars_reports_the_github_host_variable() {
+        let found = removed_env_vars(lookup_from(&[("STAKK_GITHUB_HOST", "ghe.example.com")]));
+        let names: Vec<_> = found.iter().map(|v| v.name).collect();
+        assert_eq!(names, ["STAKK_GITHUB_HOST"]);
+        let advice = found[0].advice;
+        assert!(advice.contains("STAKK_HOSTS"), "{advice}");
+        assert!(advice.contains("hosts in stakk.toml"), "{advice}");
+        // GH_HOST is not retired, and the advice says so.
+        assert!(advice.contains("GH_HOST still works"), "{advice}");
     }
 
     #[test]

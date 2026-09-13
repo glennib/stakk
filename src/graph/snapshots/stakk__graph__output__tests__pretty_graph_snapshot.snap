@@ -4,7 +4,7 @@ expression: "render_pretty(&data, false)"
 ---
 Default branch: main
 Remote: origin git@github.com:glennib/stakk.git (glennib/stakk)
-Remote: mirror https://gitlab.com/x/y.git
+Remote: mirror https://gitlab.com/x/y.git (x/y)
 
  ○  wmtk  feat-a  (no description set)
  ○  ptsz  "feat a work"
