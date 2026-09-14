@@ -3039,6 +3039,7 @@ dependencies = [
  "rustls",
  "serde",
  "serde_json",
+ "tempfile",
  "textwrap",
  "thiserror 2.0.20",
  "tokio",

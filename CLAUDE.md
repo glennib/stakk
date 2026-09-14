@@ -29,6 +29,29 @@ Never edit `CHANGELOG.md` or the `version` field by hand, and do not pin a versi
 - **Unit/integration tests**: `cargo nextest run --all-targets`.
 - **Final pre-commit check**: `mise run ci` — run this after implementing plans
   and before committing.
+- **End-to-end suite** (`tests/e2e/`, nextest binary `e2e`):
+  black-box runs of the `stakk` binary against real jj and a real forge — a throwaway Forgejo container —
+  covering forge-agnostic submission (`--keep`/`--new*`, stack comments and body fences, placement migration,
+  content sync, dry run, `--native-stacks auto`), forge detection
+  (the harness names no forge, so every default run reaches the instance through the network probe;
+  `STAKK_HOSTS` and `STAKK_FORGE` each get a scenario that proves they skip it) and `stakk graph` on real jj output
+  (schema, sparse-subset, stack order, `remote_state`).
+  Not covered: the TUI, failure and rollback paths, anything GitHub-specific.
+  - Needs podman or docker; not part of `mise run ci`.
+    `mise run e2e` starts the instance if needed and runs the suite; `mise run e2e -- -E 'test(/s01/)'` runs one;
+    `eval "$(scripts/e2e-forgejo.py env)"` then `cargo nextest run --profile e2e` iterates without the script;
+    `mise run e2e:down` discards the instance.
+    `.config/nextest.toml` keeps the default profile from running the `e2e` binary
+    and the `e2e` profile from running anything else.
+  - The crate imports nothing from `src/`: its Forgejo client and serde structs are an independent second
+    implementation, so the assertions cannot share a bug with the forge under test.
+  - Every `stakk` run gets `STAKK_CONFIG` pointing at a harness-written file containing `inherit = false` —
+    the only way to keep the developer's user config out, since `--config` alone still merges it —
+    and an environment scrubbed of `STAKK_*`, `GH_*`, `GITHUB_*` and `FORGEJO_TOKEN` before the harness's own go in.
+    jj gets a harness-written `JJ_CONFIG` and `GIT_TERMINAL_PROMPT=0`; `HOME` is untouched.
+  - After the first push into a fresh repository Forgejo keeps reporting it `empty` for a while,
+    so `JjRepo::new` polls `GET /repos/{o}/{r}` until `empty == false` (60 s timeout) before returning.
+    Later pushes of new branches are visible immediately.
 
 ## Development Principles
 
