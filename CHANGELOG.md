@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.6.1](https://github.com/glennib/stakk/compare/v2.6.0...v2.6.1) - 2026-09-15
+
+### Other
+
+- *(deps)* update rust crate clap_complete to v4.6.11 ([#274](https://github.com/glennib/stakk/pull/274))
+- *(deps)* update dependency uv to v0.12.15 ([#273](https://github.com/glennib/stakk/pull/273))
+- *(deps)* update dependency uv to v0.12.14 ([#272](https://github.com/glennib/stakk/pull/272))
+- *(deps)* update rust crate clap to v4.6.7 ([#270](https://github.com/glennib/stakk/pull/270))
+- *(deps)* update rust crate clap_complete to v4.6.10 ([#271](https://github.com/glennib/stakk/pull/271))
+- *(deps)* update rust crate octocrab to v0.54.2 ([#269](https://github.com/glennib/stakk/pull/269))
+- *(deps)* lock file maintenance ([#268](https://github.com/glennib/stakk/pull/268))
+- *(deps)* update rust crate textwrap to v0.16.4 ([#267](https://github.com/glennib/stakk/pull/267))
+- *(deps)* update dependency cargo:release-plz to v0.3.167 ([#266](https://github.com/glennib/stakk/pull/266))
+- *(deps)* update dependency cargo:release-plz to v0.3.166 ([#265](https://github.com/glennib/stakk/pull/265))
+- *(cli)* replace declaration-echo tests with clap's self-check
+- *(deps)* update rust crate jiff to v0.2.37 ([#264](https://github.com/glennib/stakk/pull/264))
+- *(deps)* update dependency rumdl to v0.2.73 ([#263](https://github.com/glennib/stakk/pull/263))
+- *(deps)* update dependency rumdl to v0.2.72 ([#262](https://github.com/glennib/stakk/pull/262))
+- *(deps)* update rust crate toml to v1.1.6 ([#261](https://github.com/glennib/stakk/pull/261))
+- *(deps)* update dependency uv to v0.12.13 ([#260](https://github.com/glennib/stakk/pull/260))
+- *(deps)* update dependency cargo:cargo-nextest to v0.9.144 ([#259](https://github.com/glennib/stakk/pull/259))
+- *(deps)* update dependency rumdl to v0.2.71 ([#258](https://github.com/glennib/stakk/pull/258))
+- *(deps)* update dependency cargo:release-plz to v0.3.165 ([#257](https://github.com/glennib/stakk/pull/257))
+- *(deps)* update rust crate console to v0.16.6 ([#256](https://github.com/glennib/stakk/pull/256))
+- *(deps)* update dependency rumdl to v0.2.70 ([#255](https://github.com/glennib/stakk/pull/255))
+- *(deps)* update rust crate textwrap to v0.16.3 ([#253](https://github.com/glennib/stakk/pull/253))
+- *(deps)* update dependency uv to v0.12.12 ([#252](https://github.com/glennib/stakk/pull/252))
+
 ## [2.6.0](https://github.com/glennib/stakk/compare/v2.5.1...v2.6.0) - 2026-09-09
 
 ### Added
