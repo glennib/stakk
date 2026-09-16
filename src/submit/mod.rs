@@ -1605,7 +1605,6 @@ mod tests {
                 files: vec![],
                 is_immutable: false,
                 local_bookmark_names: vec![],
-                remote_bookmark_names: vec![],
                 short_change_id: change_id[..4.min(change_id.len())].to_string(),
             }],
         }
@@ -3850,7 +3849,6 @@ mod tests {
             files: vec![],
             is_immutable: false,
             local_bookmark_names: vec![],
-            remote_bookmark_names: vec![],
             short_change_id: "ch1".to_string(),
         }];
 
@@ -3880,7 +3878,6 @@ mod tests {
             files: vec![],
             is_immutable: false,
             local_bookmark_names: vec![],
-            remote_bookmark_names: vec![],
             short_change_id: "ch1".to_string(),
         }];
 
@@ -3908,7 +3905,6 @@ mod tests {
                 files: vec![],
                 is_immutable: false,
                 local_bookmark_names: vec![],
-                remote_bookmark_names: vec![],
                 short_change_id: "ch1".to_string(),
             },
             SegmentCommit {
@@ -3928,7 +3924,6 @@ mod tests {
                 files: vec![],
                 is_immutable: false,
                 local_bookmark_names: vec![],
-                remote_bookmark_names: vec![],
                 short_change_id: "ch2".to_string(),
             },
         ];
@@ -3967,7 +3962,6 @@ mod tests {
             files: vec![],
             is_immutable: false,
             local_bookmark_names: vec![],
-            remote_bookmark_names: vec![],
             short_change_id: "ch1".to_string(),
         }];
 
@@ -3994,7 +3988,6 @@ mod tests {
             files: vec![],
             is_immutable: false,
             local_bookmark_names: vec![],
-            remote_bookmark_names: vec![],
             short_change_id: "ch1".to_string(),
         }];
 
@@ -4022,7 +4015,6 @@ mod tests {
                 files: vec![],
                 is_immutable: false,
                 local_bookmark_names: vec![],
-                remote_bookmark_names: vec![],
                 short_change_id: "ch1".to_string(),
             },
             SegmentCommit {
@@ -4042,7 +4034,6 @@ mod tests {
                 files: vec![],
                 is_immutable: false,
                 local_bookmark_names: vec![],
-                remote_bookmark_names: vec![],
                 short_change_id: "ch2".to_string(),
             },
         ];
@@ -4075,7 +4066,6 @@ mod tests {
             files: vec![],
             is_immutable: false,
             local_bookmark_names: vec![],
-            remote_bookmark_names: vec![],
             short_change_id: "ch1".to_string(),
         }];
 
@@ -4105,7 +4095,6 @@ mod tests {
             files: vec![],
             is_immutable: false,
             local_bookmark_names: vec![],
-            remote_bookmark_names: vec![],
             short_change_id: "ch1".to_string(),
         }];
 
@@ -4133,7 +4122,6 @@ mod tests {
                 files: vec![],
                 is_immutable: false,
                 local_bookmark_names: vec![],
-                remote_bookmark_names: vec![],
                 short_change_id: "ch1".to_string(),
             },
             SegmentCommit {
@@ -4153,7 +4141,6 @@ mod tests {
                 files: vec![],
                 is_immutable: false,
                 local_bookmark_names: vec![],
-                remote_bookmark_names: vec![],
                 short_change_id: "ch2".to_string(),
             },
         ];

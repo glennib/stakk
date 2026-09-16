@@ -70,7 +70,6 @@ pub struct LogEntryRaw {
 #[derive(Debug, Clone, Deserialize)]
 pub struct BookmarkEntryRaw {
     pub name: String,
-    pub synced: bool,
     /// `None` if the bookmark is conflicted (no normal target).
     pub target: Option<CommitData>,
 }
@@ -92,12 +91,6 @@ pub struct Bookmark {
         )
     )]
     pub change_id: String,
-    /// Whether the local bookmark matches its remote tracking target.
-    ///
-    /// False only when a *tracked* remote disagrees, so a never-pushed
-    /// bookmark is `true` just like an up-to-date one.
-    /// `graph::derive_remote_states` separates the two.
-    pub synced: bool,
 }
 
 /// Processed log entry for public API.
@@ -208,7 +201,6 @@ mod tests {
     fn deserialize_bookmark_entry_raw() {
         let json = r#"{
             "name": "feature",
-            "synced": false,
             "target": {
                 "commit_id": "abc123",
                 "parents": ["def456"],
@@ -220,14 +212,13 @@ mod tests {
         }"#;
         let entry: BookmarkEntryRaw = serde_json::from_str(json).unwrap();
         assert_eq!(entry.name, "feature");
-        assert!(!entry.synced);
         assert!(entry.target.is_some());
         assert_eq!(entry.target.unwrap().commit_id, "abc123");
     }
 
     #[test]
     fn deserialize_bookmark_entry_conflicted() {
-        let json = r#"{"name":"conflict","synced":false,"target":null}"#;
+        let json = r#"{"name":"conflict","target":null}"#;
         let entry: BookmarkEntryRaw = serde_json::from_str(json).unwrap();
         assert_eq!(entry.name, "conflict");
         assert!(entry.target.is_none());

@@ -13,17 +13,9 @@ summary: Submitting without the TUI, written for coding agents.
 stakk graph --format=json
 ```
 
-Each segment lists its bookmarks with a `remote_state`:
-
-| `remote_state` | Meaning | A submission… |
-|----------------|---------|---------------|
-| `unpushed` | No remote counterpart | pushes it for the first time |
-| `diverged` | A tracked remote sits elsewhere | moves the remote to your commit |
-| `synced` | Some remote is on this commit | pushes nothing, given one remote |
-
-This comes from jj alone and says nothing about pull requests;
-stakk learns which PRs exist in `stakk submit`'s plan phase.
-`synced` means "on some remote", not "on the one you push to" — with several remotes, check `remotes[]`.
+Each segment lists its bookmarks by `name`; an unbookmarked head has an empty list.
+The document says nothing about pushes or pull requests — stakk learns both in `stakk submit`'s plan phase,
+and `--dry-run` prints them.
 
 ## Naming boundaries
 
@@ -112,7 +104,7 @@ excluded_heads[] {change_id, short_change_id}
 remotes[]        name, url, host, repo ("owner/repo"; host and repo are
                  null when the URL is not <host>/<owner>/<repo>)
 stacks[]
-  segments[]     bookmarks[] {name, remote_state}
+  segments[]     bookmarks[] {name}
     commits[]    oldest first: change_id, short_change_id, title,
                  committer_timestamp, is_immutable, local_bookmark_names[],
                  is_boundary, is_leaf

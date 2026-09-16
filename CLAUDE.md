@@ -35,7 +35,7 @@ Never edit `CHANGELOG.md` or the `version` field by hand, and do not pin a versi
   content sync, dry run, `--native-stacks auto`), forge detection
   (the harness names no forge, so every default run reaches the instance through the network probe;
   `STAKK_HOSTS` and `STAKK_FORGE` each get a scenario that proves they skip it) and `stakk graph` on real jj output
-  (schema, sparse-subset, stack order, `remote_state`).
+  (schema, sparse-subset, stack order).
   Not covered: the TUI, failure and rollback paths, anything GitHub-specific.
   - Needs podman or docker; not part of `mise run ci`.
     `mise run e2e` starts the instance if needed and runs the suite; `mise run e2e -- -E 'test(/s01/)'` runs one;
@@ -400,9 +400,7 @@ If you change any of the following, update `scripts/record-demo.py` in the same 
      (stacking, leaves, segment grouping, merge taint) and `Bookmark::change_id` are the surviving cases.
      `Bookmark::change_id` is what `parse_bookmarks_single` reads to pin production's `jj bookmark list` parse:
      it comes from the nested `CommitData` in `BookmarkEntryRaw::target`
-     (`BOOKMARK_TEMPLATE` emits only `name`, `synced` and `target`, so there is no change-ID field to take it from).
-     `Bookmark::synced` is *not* on this list — `graph::derive_remote_states` reads it in production,
-     which is also what keeps `BookmarkEntryRaw::synced` read rather than suppressed.
+     (`BOOKMARK_TEMPLATE` emits only `name` and `target`, so there is no change-ID field to take it from).
      A stack-roots set is *not* on this list: roots are the changes absent from `adjacency_list`,
      so a field recording them is a second copy of a fact production already derives,
      and nothing but its own tests read it.
@@ -753,14 +751,10 @@ If you change any of the following, update `scripts/record-demo.py` in the same 
   `committer_timestamp` is in *both* projections on purpose: stack order is derived from the committer timestamp
   (`group_segments_into_stacks`), not the author one, so without it in sparse a consumer cannot reproduce or override
   the order it is being handed.
-- Each segment reports `bookmarks: [{name, remote_state}]`,
-  where `remote_state` is `unpushed` / `diverged` / `synced` from `graph::derive_remote_states`.
-  Two facts are needed and neither suffices alone: jj's `synced()` is false only when a *tracked* remote disagrees,
-  so a never-pushed bookmark reports `synced = true` exactly like an up-to-date one.
-  The tiebreaker is whether a remote bookmark of the same name sits on the segment's boundary commit.
-  Match the name exactly up to the `@` — a bare prefix test calls `feat` synced when `feat-2@origin` is on the commit —
-  and skip jj's internal `name@git`, which is not a push target.
-  The state is offline and says nothing about pull requests, only about what a push would do.
+- Each segment reports `bookmarks: [{name}]` — objects, not bare names,
+  so a per-bookmark field can be added later without renaming the list.
+  The document carries no push state: `stakk graph` takes no `--remote`, so it could only say "on *some* remote",
+  and what a push would do is `stakk submit --dry-run`'s answer.
 - `excluded_bookmarks` (names) and `excluded_heads`
   (change ids)
   are separate lists because a single counter

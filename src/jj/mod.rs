@@ -62,7 +62,8 @@ pub enum JjError {
 }
 
 // Template for `jj bookmark list`: produces one JSON object per line.
-const BOOKMARK_TEMPLATE: &str = r#""{\"name\":" ++ json(self.name()) ++ ",\"synced\":" ++ json(self.synced()) ++ ",\"target\":" ++ json(self.normal_target()) ++ "}\n""#;
+const BOOKMARK_TEMPLATE: &str =
+    r#""{\"name\":" ++ json(self.name()) ++ ",\"target\":" ++ json(self.normal_target()) ++ "}\n""#;
 
 // Template for `jj bookmark list` when only names matter: one JSON string per
 // line. Deliberately does not go through `BOOKMARK_TEMPLATE`, whose parser
@@ -306,7 +307,6 @@ fn parse_bookmarks(output: &str) -> Result<Vec<Bookmark>, JjError> {
                 name: raw.name,
                 commit_id: target.commit_id,
                 change_id: target.change_id,
-                synced: raw.synced,
             });
         }
     }
@@ -411,21 +411,20 @@ mod tests {
 
     #[test]
     fn parse_bookmarks_single() {
-        let input = r#"{"name":"feature","synced":false,"target":{"commit_id":"abc123","parents":["def456"],"change_id":"xyz789","description":"my feature\n","author":{"name":"A","email":"a@b.c","timestamp":"2026-01-01T00:00:00Z"},"committer":{"name":"A","email":"a@b.c","timestamp":"2026-01-01T00:00:00Z"}}}"#;
+        let input = r#"{"name":"feature","target":{"commit_id":"abc123","parents":["def456"],"change_id":"xyz789","description":"my feature\n","author":{"name":"A","email":"a@b.c","timestamp":"2026-01-01T00:00:00Z"},"committer":{"name":"A","email":"a@b.c","timestamp":"2026-01-01T00:00:00Z"}}}"#;
         let bookmarks = parse_bookmarks(input).unwrap();
         assert_eq!(bookmarks.len(), 1);
         assert_eq!(bookmarks[0].name, "feature");
         assert_eq!(bookmarks[0].commit_id, "abc123");
         assert_eq!(bookmarks[0].change_id, "xyz789");
-        assert!(!bookmarks[0].synced);
     }
 
     #[test]
     fn parse_bookmarks_multiple() {
         let input = concat!(
-            r#"{"name":"a","synced":true,"target":{"commit_id":"111","parents":[],"change_id":"aaa","description":"","author":{"name":"A","email":"a@b.c","timestamp":"T"},"committer":{"name":"A","email":"a@b.c","timestamp":"T"}}}"#,
+            r#"{"name":"a","target":{"commit_id":"111","parents":[],"change_id":"aaa","description":"","author":{"name":"A","email":"a@b.c","timestamp":"T"},"committer":{"name":"A","email":"a@b.c","timestamp":"T"}}}"#,
             "\n",
-            r#"{"name":"b","synced":false,"target":{"commit_id":"222","parents":[],"change_id":"bbb","description":"","author":{"name":"A","email":"a@b.c","timestamp":"T"},"committer":{"name":"A","email":"a@b.c","timestamp":"T"}}}"#,
+            r#"{"name":"b","target":{"commit_id":"222","parents":[],"change_id":"bbb","description":"","author":{"name":"A","email":"a@b.c","timestamp":"T"},"committer":{"name":"A","email":"a@b.c","timestamp":"T"}}}"#,
         );
         let bookmarks = parse_bookmarks(input).unwrap();
         assert_eq!(bookmarks.len(), 2);
@@ -435,7 +434,7 @@ mod tests {
 
     #[test]
     fn parse_bookmarks_conflicted_skipped() {
-        let input = r#"{"name":"conflict","synced":false,"target":null}"#;
+        let input = r#"{"name":"conflict","target":null}"#;
         let bookmarks = parse_bookmarks(input).unwrap();
         assert!(bookmarks.is_empty());
     }
@@ -450,8 +449,8 @@ mod tests {
     fn parse_bookmarks_deduplicates_unsynced() {
         // When a bookmark is unsynced, jj emits two entries: local and remote
         // tracking target. We should keep only the first (local) entry.
-        let local = r#"{"name":"feat","synced":false,"target":{"commit_id":"new","parents":[],"change_id":"x1","description":"","author":{"name":"A","email":"a@b.c","timestamp":"T"},"committer":{"name":"A","email":"a@b.c","timestamp":"T"}}}"#;
-        let remote = r#"{"name":"feat","synced":false,"target":{"commit_id":"old","parents":[],"change_id":"x2","description":"","author":{"name":"A","email":"a@b.c","timestamp":"T"},"committer":{"name":"A","email":"a@b.c","timestamp":"T"}}}"#;
+        let local = r#"{"name":"feat","target":{"commit_id":"new","parents":[],"change_id":"x1","description":"","author":{"name":"A","email":"a@b.c","timestamp":"T"},"committer":{"name":"A","email":"a@b.c","timestamp":"T"}}}"#;
+        let remote = r#"{"name":"feat","target":{"commit_id":"old","parents":[],"change_id":"x2","description":"","author":{"name":"A","email":"a@b.c","timestamp":"T"},"committer":{"name":"A","email":"a@b.c","timestamp":"T"}}}"#;
         let input = format!("{local}\n{remote}");
         let bookmarks = parse_bookmarks(&input).unwrap();
         assert_eq!(bookmarks.len(), 1);
@@ -477,7 +476,7 @@ mod tests {
     fn parse_bookmark_names_keeps_conflicted_bookmarks() {
         // Conflicted bookmarks have no normal target and are dropped by
         // `parse_bookmarks`, but their names are still taken.
-        let conflicted = r#"{"name":"conflict","synced":false,"target":null}"#;
+        let conflicted = r#"{"name":"conflict","target":null}"#;
         assert!(parse_bookmarks(conflicted).unwrap().is_empty());
         assert!(
             parse_bookmark_names("\"conflict\"\n")
@@ -623,7 +622,7 @@ mod tests {
                 assert_eq!(args[0], "bookmark");
                 assert_eq!(args[1], "list");
                 assert_eq!(args[3], "custom-revset");
-                Ok(r#"{"name":"my-feature","synced":false,"target":{"commit_id":"abc","parents":[],"change_id":"xyz","description":"feat","author":{"name":"A","email":"a@b.c","timestamp":"T"},"committer":{"name":"A","email":"a@b.c","timestamp":"T"}}}"#.to_string())
+                Ok(r#"{"name":"my-feature","target":{"commit_id":"abc","parents":[],"change_id":"xyz","description":"feat","author":{"name":"A","email":"a@b.c","timestamp":"T"},"committer":{"name":"A","email":"a@b.c","timestamp":"T"}}}"#.to_string())
             },
         };
         let jj = Jj::new(runner);

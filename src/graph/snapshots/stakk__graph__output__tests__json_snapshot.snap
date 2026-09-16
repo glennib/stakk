@@ -34,8 +34,7 @@ expression: "render_json(&data, JsonProjection::Sparse)"
         {
           "bookmarks": [
             {
-              "name": "base",
-              "remote_state": "synced"
+              "name": "base"
             }
           ],
           "commits": [
@@ -66,8 +65,7 @@ expression: "render_json(&data, JsonProjection::Sparse)"
         {
           "bookmarks": [
             {
-              "name": "feat-a",
-              "remote_state": "unpushed"
+              "name": "feat-a"
             }
           ],
           "commits": [
@@ -102,8 +100,7 @@ expression: "render_json(&data, JsonProjection::Sparse)"
         {
           "bookmarks": [
             {
-              "name": "base",
-              "remote_state": "synced"
+              "name": "base"
             }
           ],
           "commits": [
@@ -134,8 +131,7 @@ expression: "render_json(&data, JsonProjection::Sparse)"
         {
           "bookmarks": [
             {
-              "name": "feat-b",
-              "remote_state": "diverged"
+              "name": "feat-b"
             }
           ],
           "commits": [

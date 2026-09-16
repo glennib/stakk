@@ -12,7 +12,6 @@
 //! `Option`s skipped when absent, so sparse is a strict subset of full by
 //! construction: same names, same types, same values, same order.
 
-use std::collections::HashMap;
 use std::fmt::Write as _;
 
 use serde::Serialize;
@@ -29,7 +28,6 @@ use crate::graph::layout::build_layout;
 use crate::graph::types::BookmarkSegment;
 use crate::graph::types::ChangeGraph;
 use crate::graph::types::ExcludedHead;
-use crate::graph::types::RemoteState;
 use crate::jj::remote::RemoteRepo;
 use crate::jj::remote::parse_remote_url;
 use crate::jj::types::GitRemote;
@@ -139,11 +137,10 @@ struct SegmentReport<'a> {
 }
 
 #[derive(Serialize)]
+/// One bookmark on a segment's boundary commit. An object rather than a bare
+/// name so a per-bookmark field can be added without renaming the list.
 struct SegmentBookmarkReport<'a> {
     name: &'a str,
-    /// `unpushed`, `diverged` or `synced`. Derived from jj alone, so it
-    /// describes what a push would do, never whether a PR exists.
-    remote_state: &'static str,
 }
 
 /// One commit. Fields typed `Option` are full-only: they are omitted, not
@@ -224,12 +221,7 @@ fn build_report<'a>(data: &GraphData<'a>, projection: JsonProjection) -> GraphRe
                     .iter()
                     .enumerate()
                     .map(|(seg_idx, segment)| {
-                        segment_report(
-                            segment,
-                            seg_idx == stack.segments.len() - 1,
-                            &data.graph.bookmark_remote_states,
-                            projection,
-                        )
+                        segment_report(segment, seg_idx == stack.segments.len() - 1, projection)
                     })
                     .collect(),
             })
@@ -237,29 +229,18 @@ fn build_report<'a>(data: &GraphData<'a>, projection: JsonProjection) -> GraphRe
     }
 }
 
-fn segment_report<'a>(
-    segment: &'a BookmarkSegment,
+fn segment_report(
+    segment: &BookmarkSegment,
     is_last_segment: bool,
-    remote_states: &HashMap<String, RemoteState>,
     projection: JsonProjection,
-) -> SegmentReport<'a> {
+) -> SegmentReport<'_> {
     let full = projection == JsonProjection::Full;
     let commit_count = segment.commits.len();
     SegmentReport {
         bookmarks: segment
             .bookmark_names
             .iter()
-            .map(|name| SegmentBookmarkReport {
-                name,
-                // A bookmark always reaches the state map via this same
-                // segment list, so the fallback is unreachable; it stays
-                // rather than panicking on a graph built by hand in a test.
-                remote_state: remote_states
-                    .get(name)
-                    .copied()
-                    .unwrap_or(RemoteState::Unpushed)
-                    .as_str(),
-            })
+            .map(|name| SegmentBookmarkReport { name })
             .collect(),
         // Internal order is newest-first; the document is oldest-first.
         commits: segment
@@ -454,7 +435,6 @@ mod tests {
             stack_leaves: HashSet::new(),
             segments: HashMap::new(),
             tainted_change_ids: HashSet::new(),
-            bookmark_remote_states: HashMap::new(),
             excluded_bookmarks: Vec::new(),
             excluded_heads: Vec::new(),
             stacks,
@@ -502,7 +482,6 @@ mod tests {
                     } else {
                         vec![]
                     },
-                    remote_bookmark_names: vec![],
                 })
                 .collect(),
         }
@@ -542,11 +521,6 @@ mod tests {
             .local_bookmark_names
             .push("old-mark".to_string());
 
-        let mut base = base;
-        base.commits[0]
-            .remote_bookmark_names
-            .push("base@origin".to_string());
-
         let mut graph = make_graph(vec![
             BranchStack {
                 segments: vec![base.clone(), feat_a],
@@ -554,11 +528,6 @@ mod tests {
             BranchStack {
                 segments: vec![base, feat_b],
             },
-        ]);
-        graph.bookmark_remote_states = HashMap::from([
-            ("base".to_string(), RemoteState::Synced),
-            ("feat-a".to_string(), RemoteState::Unpushed),
-            ("feat-b".to_string(), RemoteState::Diverged),
         ]);
         graph.excluded_bookmarks = vec!["merged-work".to_string()];
         graph.excluded_heads = vec![ExcludedHead {
@@ -1021,21 +990,11 @@ mod tests {
         let stacks = v["stacks"].as_array().unwrap();
         assert_eq!(stacks.len(), 2);
 
-        // Each segment names its bookmarks with the push state a submission
-        // would act on. All three states appear in the fixture.
+        // Each segment names its bookmarks as objects, so a per-bookmark
+        // field can be added later without renaming the list.
         assert_eq!(stacks[0]["segments"][0]["bookmarks"][0]["name"], "base");
-        assert_eq!(
-            stacks[0]["segments"][0]["bookmarks"][0]["remote_state"],
-            "synced"
-        );
-        assert_eq!(
-            stacks[0]["segments"][1]["bookmarks"][0]["remote_state"],
-            "unpushed"
-        );
-        assert_eq!(
-            stacks[1]["segments"][1]["bookmarks"][0]["remote_state"],
-            "diverged"
-        );
+        assert_eq!(stacks[0]["segments"][1]["bookmarks"][0]["name"], "feat-a");
+        assert_eq!(stacks[1]["segments"][1]["bookmarks"][0]["name"], "feat-b");
 
         // Commits are oldest-first: the base segment's trunk-side commit
         // comes first, the bookmarked commit last.

@@ -1,9 +1,7 @@
-//! `stakk graph` against real jj output, G1–G4 in the plan. The command is
+//! `stakk graph` against real jj output, G1–G3 in the plan. The command is
 //! offline, but `trunk()` needs a remote, and the Forgejo repository is
-//! exactly that. G4 is the reason these live here: `remote_state` needs a
-//! real push and a real amend.
+//! exactly that.
 
-use std::collections::BTreeMap;
 use std::thread;
 use std::time::Duration;
 
@@ -42,25 +40,6 @@ fn segment_bookmarks(stack: &Value) -> Vec<Vec<String>> {
                 .collect()
         })
         .collect()
-}
-
-/// `bookmark name -> remote_state` over every segment of every stack.
-fn remote_states(doc: &Value) -> BTreeMap<String, String> {
-    let mut states = BTreeMap::new();
-    for stack in doc["stacks"].as_array().expect("stacks") {
-        for segment in stack["segments"].as_array().expect("segments") {
-            for bookmark in segment["bookmarks"].as_array().expect("bookmarks") {
-                states.insert(
-                    bookmark["name"].as_str().expect("name").to_string(),
-                    bookmark["remote_state"]
-                        .as_str()
-                        .expect("remote_state")
-                        .to_string(),
-                );
-            }
-        }
-    }
-    states
 }
 
 /// Every key path in `sparse` exists in `full` with the same value. Arrays
@@ -205,32 +184,5 @@ async fn g03_stack_order_newest_first() {
     assert_eq!(
         segment_bookmarks(&stacks[1]),
         vec![vec!["feat-a".to_string()], vec!["feat-b".to_string()]]
-    );
-}
-
-#[tokio::test]
-async fn g04_remote_states() {
-    let s = Scenario::new("g04").await;
-    let (_, b) = s.seed_feat_a_feat_b();
-    s.repo.push("feat-a");
-    s.repo.push("feat-b");
-    s.repo.describe(&b, "feat b amended\n\nBody of b, again.");
-    let x = s
-        .repo
-        .commit("main", "feat x\n\nBody of x.", &[("x.txt", "x\n")]);
-    s.repo.bookmark("feat-x", &x);
-    s.repo.new_empty_head(&x);
-
-    let doc = s.stakk.graph_json("json");
-
-    let states = remote_states(&doc);
-    assert_eq!(
-        states,
-        BTreeMap::from([
-            ("feat-a".to_string(), "synced".to_string()),
-            ("feat-b".to_string(), "diverged".to_string()),
-            ("feat-x".to_string(), "unpushed".to_string()),
-        ]),
-        "{doc:#}"
     );
 }

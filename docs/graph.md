@@ -8,9 +8,9 @@ summary: The `stakk graph` document, field by field.
 `--format=json` and `--format=json-full` as a schema-versioned document for a machine.
 It is offline — jj only — so it needs no network or credentials.
 
-Nothing in it has been near GitHub: no PR numbers, titles, review or CI state.
-`remote_state` (below) says where a *bookmark* stands against its remote, which is not the same thing;
-stakk learns which PRs exist during `stakk submit`'s plan phase.
+Nothing in it has been near a forge: no PR numbers, titles, review or CI state,
+and nothing about what a push would do. stakk learns both during `stakk submit`'s plan phase,
+and `--dry-run` prints them.
 
 ## Two projections, one schema
 
@@ -47,19 +47,9 @@ so "the most recently modified stack" can be computed rather than assumed.
 
 A segment is a run of commits ending at a PR boundary.
 
-- `bookmarks[]` — `name` and `remote_state` per bookmark on the boundary commit; empty for an unbookmarked head
+- `bookmarks[]` — one `{name}` per bookmark on the boundary commit; empty for an unbookmarked head.
+  An object rather than a bare name, so a per-bookmark field can be added without renaming the list
 - `commits[]` — oldest first, matching the `--bookmark-command` payload
-
-| `remote_state` | Meaning |
-|----------------|---------|
-| `unpushed` | No remote bookmark of this name on this commit, on any remote. A push creates it |
-| `diverged` | A tracked remote disagrees with the local bookmark — the usual state after a rebase or amend. A push moves it |
-| `synced` | A remote bookmark of this name sits on this commit, on *some* remote |
-
-**`remote_state` does not know which remote you push to.**
-`stakk graph` takes no `--remote`, so with several remotes a bookmark on `mirror`
-but never pushed to `origin` reports `synced`.
-With one remote, `synced` does mean a push is a no-op. jj's internal `name@git` never counts.
 
 Several bookmarks on one commit are one boundary: two `--keep`s naming them is `stakk::selection::duplicate_mark`.
 
@@ -97,5 +87,8 @@ The order of `stacks[]` and the pretty format are not.
   not only GitHub ones.
 - `remotes[].host` is added.
 - There is no top-level `forge` field: the graph is offline and does not select a forge.
+- `bookmarks[].remote_state` is removed.
+  It was derived from jj alone and could not know which remote a submission pushes to,
+  so `synced` meant "on some remote"; what a push would do is `stakk submit --dry-run`'s answer.
 - `excluded_head_count` is replaced by `excluded_heads[]`, listing each head's `change_id` and `short_change_id`
   instead of counting them.
