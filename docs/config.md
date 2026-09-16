@@ -165,8 +165,7 @@ Tokens are resolved per host and never sent across hosts: `stakk docs auth`.
 | `GH_ENTERPRISE_TOKEN`, `GITHUB_ENTERPRISE_TOKEN` | Token for any other GitHub host, in that order |
 | `FORGEJO_TOKEN` | Token for any Forgejo host |
 
-`STAKK_DRAFT`, `STAKK_TEMPLATE` and `STAKK_GITHUB_HOST` are retired in favour of `STAKK_PR_MODE=draft`,
-`STAKK_TEMPLATE_PATH` and `STAKK_HOSTS`; `stakk submit` warns while any of them is set.
+`STAKK_GITHUB_HOST` is retired in favour of `STAKK_HOSTS`; `stakk submit` warns while it is set.
 
 `--dry-run` and the selection flags (`--keep`, `--new`, `--new-auto`, `--new-command`) have no environment variables
 or config keys on purpose: they are per-invocation decisions.
