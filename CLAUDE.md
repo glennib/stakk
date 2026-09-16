@@ -476,14 +476,12 @@ If you change any of the following, update `scripts/record-demo.py` in the same 
 - Subcommand aliases are part of the stable contract (`docs/stability.md`),
   so they are added deliberately and removed only in a major.
   `submit`, `graph` and `docs` carry their initial letter as a visible alias; `completions` deliberately does not.
-  `Commands::Graph` additionally carries `show`,
-  announced in the stability doc's **Deprecated** section as due for removal.
-  Note that `s` is submit while `show` is graph — the two are unrelated, and the collision retires with `show`.
+  Those letters are the only aliases: the former `show` alias of `graph` was removed in 3.0.0.
   `DocTopic` has *no* aliases: topic names are explicitly not stable, so a renamed topic is renamed outright.
   `apply_config_defaults` reaches a subcommand with `mut_subcommand("graph", …)`, which matches the *canonical* name —
   an alias resolves to the same command, so config defaults follow it,
   but renaming a subcommand without updating that string silently drops config-file defaults with no compile error.
-  `show_alias_is_graph_and_still_gets_revset_defaults` is the guard.
+  `one_letter_aliases_still_get_config_defaults` is the guard.
 - Remote host handling: `jj::remote::parse_remote_url` parses `<host>/<owner>/<repo>` for *any* host
   and records the URL's scheme (SSH remotes record `https`); there is no per-forge URL gate.
   Which forge a host runs is `forge::detect::classify`'s answer, in this order: an explicit `--forge`

@@ -32,15 +32,6 @@ Changing any of these needs a major release.
   `2` is clap's usage-error convention and follows clap, not this contract.
   Details: `stakk docs scripting`.
 
-## Deprecated
-
-Still supported and still covered by the rules above until the major release that removes them.
-
-- **`stakk show`** — an alias for `stakk graph`, to be removed in the next major release.
-  The command renders the change graph and `show` says nothing about that
-  (in jj's vocabulary `show` is a single commit).
-  Migration is the command name only; flags, output and `schema_version` are unchanged.
-
 ## Not stable
 
 These may change in any release.
