@@ -52,6 +52,8 @@ The context holds `stack`, `stack_size`, `default_branch`, `current_bookmark` an
 Each entry carries `bookmark_name`, `pr_url`, `pr_number`, `title`, `base`, `is_draft`, `position`,
 `is_current` and `is_leaf`.
 `stakk submit --help` prints the same list with a worked example.
+The context is stable surface — names are only added, never renamed or removed, short of a major release
+(`stakk docs stability`); the built-in template's text is not.
 
 `title` is the *commit-derived* title,
 which can differ from the PR's live title when `--sync-pr-content` excludes titles.

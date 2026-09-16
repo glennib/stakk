@@ -29,6 +29,12 @@ Changing any of these needs a major release.
   sparse stays a strict subset of full.
   The *order* of `stacks[]` is not part of this.
   Field by field: `stakk docs graph`.
+- **The render context of `--template-path` templates.**
+  The top-level names `stack`, `stack_size`, `default_branch`, `current_bookmark` and `stakk_url`;
+  on each `stack` entry `bookmark_name`, `pr_url`, `pr_number`, `title`, `base`, `is_draft`, `position`,
+  `is_current` and `is_leaf`; and the trunk-first order of `stack`.
+  A name may be added in any release; renaming or removing one, or reordering `stack`, needs a major.
+  The built-in template's text is not covered — see below.
 - **The JSON handed to `--bookmark-command` on stdin**, under its own `schema_version` (currently `1`).
   The schema is in `stakk submit --help`.
 - **Exit codes:** `0` success, `1` failure, `130` interrupted.
@@ -41,6 +47,8 @@ These may change in any release.
 
 - **The rendered text of `stakk docs` and `--help`.**
   Only the `stakk docs <topic>` invocation shape is stable.
+- **The built-in stack comment template.**
+  What it renders may change in any release; the context it renders from is stable (above).
 - **The order of `stacks[]` in the `stakk graph` JSON.**
   Choose a stack by its bookmarks or contents, never by index.
 - **The `pretty` output of `stakk graph`.**
