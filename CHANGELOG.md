@@ -7,6 +7,95 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.0](https://github.com/glennib/stakk/compare/v2.6.0...v3.0.0) - 2026-09-16
+
+stakk submits to Forgejo — codeberg.org or a self-hosted instance — as well as to GitHub,
+and decides which forge a remote is on from its host instead of assuming GitHub.
+Everything `submit` does on GitHub works on Forgejo except native stacks, which Forgejo does not have.
+`FORGEJO_TOKEN` is the only token source there.
+
+The forge is decided in this order: `--forge` (`STAKK_FORGE`, `forge` in `stakk.toml`);
+the built-in hosts, where github.com is GitHub, codeberg.org is Forgejo,
+and bitbucket.org and gitlab.com are refused by name;
+the host table `--host HOST=FORGE`, `STAKK_HOSTS`, `hosts` in `stakk.toml` and `GH_HOST`;
+then an unauthenticated probe for a host none of that names, which prints the `hosts` entry that skips it next time.
+`stakk graph` never probes.
+
+The breaks follow from that: `--github-host` named a host and assumed a forge, so it becomes the `hosts` table,
+and the graph JSON can no longer have a field called `github`.
+Two unrelated removals are collected here because a major was open —
+the `show` alias of `stakk graph`, and the two graph JSON fields that reported more than an offline document knows.
+
+### Migrating from v2
+
+| v2                                     | v3                                                                         |
+| -------------------------------------- | -------------------------------------------------------------------------- |
+| `stakk` / `stakk submit`               | unchanged — TUI                                                            |
+| `stakk show` (any flags)               | `stakk graph`, or `stakk g` — flags and output unchanged                   |
+| `--github-host HOST`                   | `--host HOST=github` (repeatable, global)                                  |
+| `STAKK_GITHUB_HOST=HOST`               | `STAKK_HOSTS=HOST=github` (comma-separated for several)                    |
+| `github_host = "HOST"`                 | `hosts = { "HOST" = "github" }`                                            |
+| `GH_HOST`                              | unchanged — read as an implicit GitHub entry below the rest                |
+| `.remotes[].github`                    | `.remotes[].repo`, for any forge, with `.remotes[].host` beside it         |
+| `.segments[].bookmarks[].remote_state` | removed — `stakk submit --dry-run` answers it against the real remote      |
+| `.excluded_head_count`                 | `.excluded_heads[]` of `{change_id, short_change_id}`; count is its length |
+| `schema_version: 2`                    | `schema_version: 3`                                                        |
+
+A stale `STAKK_GITHUB_HOST` warns on stderr and names its replacement; a stale `github_host` key fails loudly,
+since `Config` denies unknown fields.
+The 1.x warnings for `STAKK_DRAFT` and `STAKK_TEMPLATE` are gone; the table keeps an entry for two majors at most.
+
+Diagnostic codes are not stable surface, and these changed because their names said "GitHub"
+where the check is now forge-neutral:
+`stakk::remote::not_github` is `stakk::remote::not_a_repo_url`;
+`stakk::remote::no_github` and `stakk::remote::host_not_configured` are replaced by `stakk::detect::unknown_forge`,
+`stakk::detect::ambiguous_forge` and `stakk::detect::unsupported_forge`;
+`stakk::auth::no_forgejo_token` is new.
+
+`docs/stability.md` now exempts the `native_stacks` default from the semver guard,
+so it may change from `ignore` to `auto` in a minor release once GitHub's stacked pull requests leave public preview.
+It also puts the stack-comment template's render context under the contract:
+names may be added in any release, but renaming, removing or reordering them needs a major.
+
+### Added
+
+- *(graph)* [**breaking**] remove `remote_state` from the graph document
+- *(graph)* [**breaking**] report excluded heads by change id
+- *(cli)* [**breaking**] remove the `show` alias of `stakk graph`
+- *(forge)* [**breaking**] add Forgejo support
+
+### Other
+
+- *(deps)* update rust crate rustls to v0.23.45 ([#278](https://github.com/glennib/stakk/pull/278))
+- name Forgejo in the crate description
+- *(stability)* put the template render context under the contract
+- *(config)* drop the 1.x removed-variable warnings
+- *(stability)* let the `native_stacks` default flip in a minor
+- *(e2e)* black-box suite against a throwaway Forgejo
+- *(deps)* update rust crate clap_complete to v4.6.11 ([#274](https://github.com/glennib/stakk/pull/274))
+- *(deps)* update dependency uv to v0.12.15 ([#273](https://github.com/glennib/stakk/pull/273))
+- *(deps)* update dependency uv to v0.12.14 ([#272](https://github.com/glennib/stakk/pull/272))
+- *(deps)* update rust crate clap to v4.6.7 ([#270](https://github.com/glennib/stakk/pull/270))
+- *(deps)* update rust crate clap_complete to v4.6.10 ([#271](https://github.com/glennib/stakk/pull/271))
+- *(deps)* update rust crate octocrab to v0.54.2 ([#269](https://github.com/glennib/stakk/pull/269))
+- *(deps)* lock file maintenance ([#268](https://github.com/glennib/stakk/pull/268))
+- *(deps)* update rust crate textwrap to v0.16.4 ([#267](https://github.com/glennib/stakk/pull/267))
+- *(deps)* update dependency cargo:release-plz to v0.3.167 ([#266](https://github.com/glennib/stakk/pull/266))
+- *(deps)* update dependency cargo:release-plz to v0.3.166 ([#265](https://github.com/glennib/stakk/pull/265))
+- *(cli)* replace declaration-echo tests with clap's self-check
+- *(deps)* update rust crate jiff to v0.2.37 ([#264](https://github.com/glennib/stakk/pull/264))
+- *(deps)* update dependency rumdl to v0.2.73 ([#263](https://github.com/glennib/stakk/pull/263))
+- *(deps)* update dependency rumdl to v0.2.72 ([#262](https://github.com/glennib/stakk/pull/262))
+- *(deps)* update rust crate toml to v1.1.6 ([#261](https://github.com/glennib/stakk/pull/261))
+- *(deps)* update dependency uv to v0.12.13 ([#260](https://github.com/glennib/stakk/pull/260))
+- *(deps)* update dependency cargo:cargo-nextest to v0.9.144 ([#259](https://github.com/glennib/stakk/pull/259))
+- *(deps)* update dependency rumdl to v0.2.71 ([#258](https://github.com/glennib/stakk/pull/258))
+- *(deps)* update dependency cargo:release-plz to v0.3.165 ([#257](https://github.com/glennib/stakk/pull/257))
+- *(deps)* update rust crate console to v0.16.6 ([#256](https://github.com/glennib/stakk/pull/256))
+- *(deps)* update dependency rumdl to v0.2.70 ([#255](https://github.com/glennib/stakk/pull/255))
+- *(deps)* update rust crate textwrap to v0.16.3 ([#253](https://github.com/glennib/stakk/pull/253))
+- *(deps)* update dependency uv to v0.12.12 ([#252](https://github.com/glennib/stakk/pull/252))
+
 ## [2.6.0](https://github.com/glennib/stakk/compare/v2.5.1...v2.6.0) - 2026-09-09
 
 ### Added
