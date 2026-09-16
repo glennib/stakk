@@ -835,7 +835,9 @@ If you change any of the following, update `scripts/record-demo.py` in the same 
   so the flip is not a behavior change and not a semver break —
   and the intended GA change is a single default flip of `native_stacks` to `auto`: native rendering where enabled,
   stack comments everywhere else, never both.
-  The `--native-stacks` docs advertise that its default may change.
+  `docs/stability.md` exempts this one default from the semver guard, so the flip can land in a minor release,
+  and the `--native-stacks` help, `docs/config.md`, `docs/template.md` and the README all say so —
+  keep those five in step when the default moves.
 - **`--native-stacks` reuses the placement vocabulary** — its members are `on`/`auto`/`none`/`ignore`,
   where `none` and `ignore` follow the same rule as their `--stack-placement` namesakes:
   `none` registers nothing *and* dissolves the server-side stacks containing submitted PRs

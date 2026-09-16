@@ -68,7 +68,8 @@ Modes: `on` (fail where the feature is unavailable), `auto`
 (register where available, skip where not — GitHub Enterprise Server, for example),
 `none` (register nothing and dissolve the server-side stacks stakk's PRs are in), and `ignore`
 (never touch the stack API).
-The default is `ignore` until the feature reaches general availability, then `auto`.
+The default is `ignore` while the feature is a public preview and may become `auto` in a minor release
+once it leaves it — the one default the [stability contract](docs/stability.md) exempts.
 
 Native stacks layer on top of the base-branch chain stakk maintains anyway; nothing else about a submission changes.
 

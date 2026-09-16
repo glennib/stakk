@@ -73,7 +73,9 @@ stack_placement = "body"
 # preview): "on" (fail where unavailable), "auto" (register where
 # available, skip silently where not), "none" (register nothing and
 # dissolve standing server-side stacks) or "ignore" (default; never
-# touch the stack API — may change to "auto" at general availability).
+# touch the stack API). The default is "ignore" while the feature is a
+# public preview and may become "auto" in a minor release once it
+# leaves it — the one default exempt from the stability contract.
 # A single-PR submission is not a stack and skips the registration;
 # "none" retires its stacks anyway.
 native_stacks = "auto"

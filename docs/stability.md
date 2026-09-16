@@ -21,6 +21,9 @@ Changing any of these needs a major release.
   The GitHub token variables (`GH_TOKEN`, `GITHUB_TOKEN`, `GH_ENTERPRISE_TOKEN`, `GITHUB_ENTERPRISE_TOKEN`, `GH_HOST`)
   follow the GitHub CLI's names and are stable for as long as it keeps them.
 - **Config file keys and their defaults.** The list: `stakk docs config`.
+  One default is exempt: `native_stacks` is `ignore` while GitHub's stacked pull requests are a public preview,
+  and may become `auto` in a *minor* release once they leave it.
+  The release that flips it says so in the changelog; nothing else about the key changes.
 - **The `stakk graph` JSON document under its `schema_version`** — field names, types and meanings.
   Currently `3`, reported by both the sparse `json` and the `json-full` projection;
   sparse stays a strict subset of full.
