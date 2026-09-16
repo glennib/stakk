@@ -21,25 +21,25 @@ Changing any of these needs a major release.
   The GitHub token variables (`GH_TOKEN`, `GITHUB_TOKEN`, `GH_ENTERPRISE_TOKEN`, `GITHUB_ENTERPRISE_TOKEN`, `GH_HOST`)
   follow the GitHub CLI's names and are stable for as long as it keeps them.
 - **Config file keys and their defaults.** The list: `stakk docs config`.
+  One default is exempt: `native_stacks` is `ignore` while GitHub's stacked pull requests are a public preview,
+  and may become `auto` in a *minor* release once they leave it.
+  The release that flips it says so in the changelog; nothing else about the key changes.
 - **The `stakk graph` JSON document under its `schema_version`** — field names, types and meanings.
   Currently `3`, reported by both the sparse `json` and the `json-full` projection;
   sparse stays a strict subset of full.
   The *order* of `stacks[]` is not part of this.
   Field by field: `stakk docs graph`.
+- **The render context of `--template-path` templates.**
+  The top-level names `stack`, `stack_size`, `default_branch`, `current_bookmark` and `stakk_url`;
+  on each `stack` entry `bookmark_name`, `pr_url`, `pr_number`, `title`, `base`, `is_draft`, `position`,
+  `is_current` and `is_leaf`; and the trunk-first order of `stack`.
+  A name may be added in any release; renaming or removing one, or reordering `stack`, needs a major.
+  The built-in template's text is not covered — see below.
 - **The JSON handed to `--bookmark-command` on stdin**, under its own `schema_version` (currently `1`).
   The schema is in `stakk submit --help`.
 - **Exit codes:** `0` success, `1` failure, `130` interrupted.
   `2` is clap's usage-error convention and follows clap, not this contract.
   Details: `stakk docs scripting`.
-
-## Deprecated
-
-Still supported and still covered by the rules above until the major release that removes them.
-
-- **`stakk show`** — an alias for `stakk graph`, to be removed in the next major release.
-  The command renders the change graph and `show` says nothing about that
-  (in jj's vocabulary `show` is a single commit).
-  Migration is the command name only; flags, output and `schema_version` are unchanged.
 
 ## Not stable
 
@@ -47,6 +47,8 @@ These may change in any release.
 
 - **The rendered text of `stakk docs` and `--help`.**
   Only the `stakk docs <topic>` invocation shape is stable.
+- **The built-in stack comment template.**
+  What it renders may change in any release; the context it renders from is stable (above).
 - **The order of `stacks[]` in the `stakk graph` JSON.**
   Choose a stack by its bookmarks or contents, never by index.
 - **The `pretty` output of `stakk graph`.**

@@ -35,7 +35,7 @@ Never edit `CHANGELOG.md` or the `version` field by hand, and do not pin a versi
   content sync, dry run, `--native-stacks auto`), forge detection
   (the harness names no forge, so every default run reaches the instance through the network probe;
   `STAKK_HOSTS` and `STAKK_FORGE` each get a scenario that proves they skip it) and `stakk graph` on real jj output
-  (schema, sparse-subset, stack order, `remote_state`).
+  (schema, sparse-subset, stack order).
   Not covered: the TUI, failure and rollback paths, anything GitHub-specific.
   - Needs podman or docker; not part of `mise run ci`.
     `mise run e2e` starts the instance if needed and runs the suite; `mise run e2e -- -E 'test(/s01/)'` runs one;
@@ -400,9 +400,7 @@ If you change any of the following, update `scripts/record-demo.py` in the same 
      (stacking, leaves, segment grouping, merge taint) and `Bookmark::change_id` are the surviving cases.
      `Bookmark::change_id` is what `parse_bookmarks_single` reads to pin production's `jj bookmark list` parse:
      it comes from the nested `CommitData` in `BookmarkEntryRaw::target`
-     (`BOOKMARK_TEMPLATE` emits only `name`, `synced` and `target`, so there is no change-ID field to take it from).
-     `Bookmark::synced` is *not* on this list — `graph::derive_remote_states` reads it in production,
-     which is also what keeps `BookmarkEntryRaw::synced` read rather than suppressed.
+     (`BOOKMARK_TEMPLATE` emits only `name` and `target`, so there is no change-ID field to take it from).
      A stack-roots set is *not* on this list: roots are the changes absent from `adjacency_list`,
      so a field recording them is a second copy of a fact production already derives,
      and nothing but its own tests read it.
@@ -476,14 +474,12 @@ If you change any of the following, update `scripts/record-demo.py` in the same 
 - Subcommand aliases are part of the stable contract (`docs/stability.md`),
   so they are added deliberately and removed only in a major.
   `submit`, `graph` and `docs` carry their initial letter as a visible alias; `completions` deliberately does not.
-  `Commands::Graph` additionally carries `show`,
-  announced in the stability doc's **Deprecated** section as due for removal.
-  Note that `s` is submit while `show` is graph — the two are unrelated, and the collision retires with `show`.
+  Those letters are the only aliases: the former `show` alias of `graph` was removed in 3.0.0.
   `DocTopic` has *no* aliases: topic names are explicitly not stable, so a renamed topic is renamed outright.
   `apply_config_defaults` reaches a subcommand with `mut_subcommand("graph", …)`, which matches the *canonical* name —
   an alias resolves to the same command, so config defaults follow it,
   but renaming a subcommand without updating that string silently drops config-file defaults with no compile error.
-  `show_alias_is_graph_and_still_gets_revset_defaults` is the guard.
+  `one_letter_aliases_still_get_config_defaults` is the guard.
 - Remote host handling: `jj::remote::parse_remote_url` parses `<host>/<owner>/<repo>` for *any* host
   and records the URL's scheme (SSH remotes record `https`); there is no per-forge URL gate.
   Which forge a host runs is `forge::detect::classify`'s answer, in this order: an explicit `--forge`
@@ -755,18 +751,16 @@ If you change any of the following, update `scripts/record-demo.py` in the same 
   `committer_timestamp` is in *both* projections on purpose: stack order is derived from the committer timestamp
   (`group_segments_into_stacks`), not the author one, so without it in sparse a consumer cannot reproduce or override
   the order it is being handed.
-- Each segment reports `bookmarks: [{name, remote_state}]`,
-  where `remote_state` is `unpushed` / `diverged` / `synced` from `graph::derive_remote_states`.
-  Two facts are needed and neither suffices alone: jj's `synced()` is false only when a *tracked* remote disagrees,
-  so a never-pushed bookmark reports `synced = true` exactly like an up-to-date one.
-  The tiebreaker is whether a remote bookmark of the same name sits on the segment's boundary commit.
-  Match the name exactly up to the `@` — a bare prefix test calls `feat` synced when `feat-2@origin` is on the commit —
-  and skip jj's internal `name@git`, which is not a push target.
-  The state is offline and says nothing about pull requests, only about what a push would do.
-- `excluded_bookmarks` (names) and `excluded_head_count` are separate
-  because the old single counter conflated bookmarks excluded by merge taint with unbookmarked *heads* excluded the same
-  way.
-  Heads have no name to report, so a consumer reading only a count could not say what it lost.
+- Each segment reports `bookmarks: [{name}]` — objects, not bare names,
+  so a per-bookmark field can be added later without renaming the list.
+  The document carries no push state: `stakk graph` takes no `--remote`, so it could only say "on *some* remote",
+  and what a push would do is `stakk submit --dry-run`'s answer.
+- `excluded_bookmarks` (names) and `excluded_heads`
+  (change ids)
+  are separate lists because a single counter
+  once conflated bookmarks excluded by merge taint with unbookmarked *heads* excluded the same way.
+  A head has no bookmark to name it, so it is reported by `change_id` and `short_change_id`,
+  which is what `jj log -r` and the selection flags take.
 - Reserved bookmark names: `Jj::get_local_bookmark_names`
   (`jj bookmark list` with *no* `-r`) is the single source of truth for "this name is taken".
   The change graph is not — it cannot see trunk's own bookmark
@@ -837,7 +831,9 @@ If you change any of the following, update `scripts/record-demo.py` in the same 
   so the flip is not a behavior change and not a semver break —
   and the intended GA change is a single default flip of `native_stacks` to `auto`: native rendering where enabled,
   stack comments everywhere else, never both.
-  The `--native-stacks` docs advertise that its default may change.
+  `docs/stability.md` exempts this one default from the semver guard, so the flip can land in a minor release,
+  and the `--native-stacks` help, `docs/config.md`, `docs/template.md` and the README all say so —
+  keep those five in step when the default moves.
 - **`--native-stacks` reuses the placement vocabulary** — its members are `on`/`auto`/`none`/`ignore`,
   where `none` and `ignore` follow the same rule as their `--stack-placement` namesakes:
   `none` registers nothing *and* dissolves the server-side stacks containing submitted PRs

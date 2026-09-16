@@ -59,20 +59,12 @@ pub struct RemovedEnvVar {
 ///
 /// **Removal:** an entry may go once the population that set its variable has
 /// moved, at the second major after the one that retired it at the latest —
-/// the 1.x entries at v3.0.0 (or any 2.x), the 2.x entries at v4.0.0 — and the
-/// table, [`removed_env_vars`] and its caller in `main.rs` go with the last
-/// entry. Advisory warnings are explicitly not stable surface (see
-/// `docs/stability.md`), so deleting them is not a break.
+/// the 2.x entries at v4.0.0 — and the table, [`removed_env_vars`] and its
+/// caller in `main.rs` go with the last entry. Advisory warnings are
+/// explicitly not stable surface (see `docs/stability.md`), so deleting them
+/// is not a break; the 1.x entries (`STAKK_DRAFT`, `STAKK_TEMPLATE`) went at
+/// v3.0.0 under this rule.
 static REMOVED_ENV_VARS: &[RemovedEnvVar] = &[
-    // Retired in 1.x.
-    RemovedEnvVar {
-        name: "STAKK_DRAFT",
-        advice: "use STAKK_PR_MODE=draft or pr_mode in stakk.toml",
-    },
-    RemovedEnvVar {
-        name: "STAKK_TEMPLATE",
-        advice: "use STAKK_TEMPLATE_PATH or template_path in stakk.toml",
-    },
     // Retired in 2.x, with the GitHub-only host setting.
     RemovedEnvVar {
         name: "STAKK_GITHUB_HOST",
@@ -88,8 +80,8 @@ static REMOVED_ENV_VARS: &[RemovedEnvVar] = &[
 /// environment, the way `auth::token_from_env` takes its lookup.
 ///
 /// An empty value counts as absent — the same rule `main.rs` applies to
-/// `GH_HOST` — so `STAKK_DRAFT=` is not reported, and emptying the variable is
-/// a way to silence the warning where the export cannot be dropped.
+/// `GH_HOST` — so `STAKK_GITHUB_HOST=` is not reported, and emptying the
+/// variable is a way to silence the warning where the export cannot be dropped.
 pub fn removed_env_vars(lookup: impl Fn(&str) -> Option<String>) -> Vec<&'static RemovedEnvVar> {
     REMOVED_ENV_VARS
         .iter()
@@ -412,27 +404,6 @@ mod tests {
     }
 
     #[test]
-    fn removed_env_vars_reports_draft_and_template() {
-        let found = removed_env_vars(lookup_from(&[
-            ("STAKK_DRAFT", "1"),
-            ("STAKK_TEMPLATE", "/path/to/template.md.jinja"),
-        ]));
-        assert_eq!(
-            matched(&found),
-            vec![
-                (
-                    "STAKK_DRAFT",
-                    "use STAKK_PR_MODE=draft or pr_mode in stakk.toml"
-                ),
-                (
-                    "STAKK_TEMPLATE",
-                    "use STAKK_TEMPLATE_PATH or template_path in stakk.toml"
-                ),
-            ]
-        );
-    }
-
-    #[test]
     fn removed_env_vars_reports_the_github_host_variable() {
         let found = removed_env_vars(lookup_from(&[("STAKK_GITHUB_HOST", "ghe.example.com")]));
         let names: Vec<_> = found.iter().map(|v| v.name).collect();
@@ -446,16 +417,16 @@ mod tests {
 
     #[test]
     fn removed_env_vars_treats_empty_as_unset() {
-        let found = removed_env_vars(lookup_from(&[("STAKK_DRAFT", ""), ("STAKK_TEMPLATE", "")]));
+        let found = removed_env_vars(lookup_from(&[("STAKK_GITHUB_HOST", "")]));
         assert!(matched(&found).is_empty());
     }
 
     #[test]
     fn removed_env_vars_ignores_current_names() {
-        // Names are matched exactly: STAKK_TEMPLATE_PATH is not STAKK_TEMPLATE.
+        // Names are matched exactly: STAKK_HOSTS is not STAKK_GITHUB_HOST.
         let found = removed_env_vars(lookup_from(&[
-            ("STAKK_PR_MODE", "draft"),
-            ("STAKK_TEMPLATE_PATH", "/path/to/template.md.jinja"),
+            ("STAKK_HOSTS", "ghe.example.com=github"),
+            ("STAKK_GITHUB_HOST", ""),
         ]));
         assert!(matched(&found).is_empty());
     }

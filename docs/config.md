@@ -73,7 +73,9 @@ stack_placement = "body"
 # preview): "on" (fail where unavailable), "auto" (register where
 # available, skip silently where not), "none" (register nothing and
 # dissolve standing server-side stacks) or "ignore" (default; never
-# touch the stack API — may change to "auto" at general availability).
+# touch the stack API). The default is "ignore" while the feature is a
+# public preview and may become "auto" in a minor release once it
+# leaves it — the one default exempt from the stability contract.
 # A single-PR submission is not a stack and skips the registration;
 # "none" retires its stacks anyway.
 native_stacks = "auto"
@@ -163,8 +165,7 @@ Tokens are resolved per host and never sent across hosts: `stakk docs auth`.
 | `GH_ENTERPRISE_TOKEN`, `GITHUB_ENTERPRISE_TOKEN` | Token for any other GitHub host, in that order |
 | `FORGEJO_TOKEN` | Token for any Forgejo host |
 
-`STAKK_DRAFT`, `STAKK_TEMPLATE` and `STAKK_GITHUB_HOST` are retired in favour of `STAKK_PR_MODE=draft`,
-`STAKK_TEMPLATE_PATH` and `STAKK_HOSTS`; `stakk submit` warns while any of them is set.
+`STAKK_GITHUB_HOST` is retired in favour of `STAKK_HOSTS`; `stakk submit` warns while it is set.
 
 `--dry-run` and the selection flags (`--keep`, `--new`, `--new-auto`, `--new-command`) have no environment variables
 or config keys on purpose: they are per-invocation decisions.

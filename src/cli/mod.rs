@@ -104,10 +104,7 @@ pub enum Commands {
     #[command(visible_alias = "s")]
     Submit(Box<SubmitArgs>),
     /// Render the repository's bookmark stacks as a graph.
-    // `show` is a supported alias, visible so `--help` answers for it. It is
-    // deprecated and will be removed in a future major — see
-    // docs/stability.md.
-    #[command(visible_aliases = ["g", "show"])]
+    #[command(visible_alias = "g")]
     Graph(GraphArgs),
     /// Generate shell completions for the given shell.
     Completions {
@@ -835,24 +832,6 @@ mod tests {
             Some(Commands::Graph(args)) => {
                 assert_eq!(args.revset.bookmarks_revset, "custom()");
                 assert_eq!(args.revset.heads_revset, "heads(custom())");
-            }
-            other => panic!("expected Graph, got {other:?}"),
-        }
-    }
-
-    /// `apply_config_defaults` reaches the subcommand by its canonical name,
-    /// so the alias must resolve to the same config-applied command rather
-    /// than to an unconfigured one.
-    #[test]
-    fn show_alias_is_graph_and_still_gets_revset_defaults() {
-        let config = Config {
-            bookmarks_revset: Some("custom()".into()),
-            ..Default::default()
-        };
-        let cli = parse_with_config(config, &["stakk", "show"]);
-        match &cli.command {
-            Some(Commands::Graph(args)) => {
-                assert_eq!(args.revset.bookmarks_revset, "custom()");
             }
             other => panic!("expected Graph, got {other:?}"),
         }

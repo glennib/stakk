@@ -35,6 +35,8 @@ While `--native-stacks` is `ignore` (its default) or `none`, the auto modes are 
 which is why `auto-comment` is the default:
 the intended end state is a single default flip of `native_stacks` to `auto`,
 giving native rendering where enabled and stack comments everywhere else, never both.
+That flip may come in a minor release once GitHub's feature leaves public preview;
+`stakk docs stability` exempts this one default.
 
 A submission producing a single PR is not a stack: no stack info is written, and stale artifacts from an earlier,
 larger stack are cleaned up (unless the mode is `ignore`).
@@ -50,6 +52,8 @@ The context holds `stack`, `stack_size`, `default_branch`, `current_bookmark` an
 Each entry carries `bookmark_name`, `pr_url`, `pr_number`, `title`, `base`, `is_draft`, `position`,
 `is_current` and `is_leaf`.
 `stakk submit --help` prints the same list with a worked example.
+The context is stable surface — names are only added, never renamed or removed, short of a major release
+(`stakk docs stability`); the built-in template's text is not.
 
 `title` is the *commit-derived* title,
 which can differ from the PR's live title when `--sync-pr-content` excludes titles.

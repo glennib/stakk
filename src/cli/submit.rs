@@ -314,8 +314,10 @@ pub struct SubmitArgs {
     /// comments or body fences are still written unless placement is
     /// none, ignore, or an auto mode that resolved to native.
     ///
-    /// The default may change to auto once GitHub's stacked pull
-    /// requests reach general availability.
+    /// The default is ignore while GitHub's stacked pull requests are a
+    /// public preview, and may become auto in a minor release once they
+    /// leave it — the one default the stability contract exempts
+    /// (`stakk docs stability`).
     #[arg(
         long,
         env = "STAKK_NATIVE_STACKS",

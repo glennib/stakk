@@ -103,10 +103,11 @@ def selection_flags(stack: dict) -> list:
 
 
 def describe(stack: dict) -> None:
-    """What a submission would push, known before touching GitHub."""
+    """The stack's bookmarks, trunk-first; what a push would do is
+    `stakk submit --dry-run`'s answer, below."""
     for segment in stack["segments"]:
         for bookmark in segment["bookmarks"]:
-            print(f"  {bookmark['name']}: {bookmark['remote_state']}")
+            print(f"  {bookmark['name']}")
 
 
 def submit(flags: list, dry_run: bool) -> None:

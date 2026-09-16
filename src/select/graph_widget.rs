@@ -462,9 +462,8 @@ mod tests {
             stack_leaves: HashSet::new(),
             segments: HashMap::new(),
             tainted_change_ids: HashSet::new(),
-            bookmark_remote_states: HashMap::new(),
             excluded_bookmarks: Vec::new(),
-            excluded_head_count: 0,
+            excluded_heads: Vec::new(),
             stacks,
         }
     }
@@ -503,7 +502,6 @@ mod tests {
                     short_change_id: change_id[..4.min(change_id.len())].to_string(),
                     is_immutable: false,
                     local_bookmark_names: vec![],
-                    remote_bookmark_names: vec![],
                 })
                 .collect(),
         }

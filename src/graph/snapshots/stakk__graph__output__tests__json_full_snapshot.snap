@@ -22,15 +22,19 @@ expression: "render_json(&data, JsonProjection::Full)"
   "excluded_bookmarks": [
     "merged-work"
   ],
-  "excluded_head_count": 1,
+  "excluded_heads": [
+    {
+      "change_id": "yqosqzytrlpu",
+      "short_change_id": "yqos"
+    }
+  ],
   "stacks": [
     {
       "segments": [
         {
           "bookmarks": [
             {
-              "name": "base",
-              "remote_state": "synced"
+              "name": "base"
             }
           ],
           "commits": [
@@ -81,8 +85,7 @@ expression: "render_json(&data, JsonProjection::Full)"
         {
           "bookmarks": [
             {
-              "name": "feat-a",
-              "remote_state": "unpushed"
+              "name": "feat-a"
             }
           ],
           "commits": [
@@ -137,8 +140,7 @@ expression: "render_json(&data, JsonProjection::Full)"
         {
           "bookmarks": [
             {
-              "name": "base",
-              "remote_state": "synced"
+              "name": "base"
             }
           ],
           "commits": [
@@ -189,8 +191,7 @@ expression: "render_json(&data, JsonProjection::Full)"
         {
           "bookmarks": [
             {
-              "name": "feat-b",
-              "remote_state": "diverged"
+              "name": "feat-b"
             }
           ],
           "commits": [
