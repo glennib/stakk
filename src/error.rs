@@ -4,6 +4,7 @@ use thiserror::Error;
 use crate::auth::AuthError;
 use crate::config::ConfigError;
 use crate::forge::ForgeError;
+use crate::forge::detect::DetectError;
 use crate::jj::JjError;
 use crate::select::bookmark_gen::BookmarkGenError;
 use crate::submit::SubmitError;
@@ -46,32 +47,21 @@ pub enum StakkError {
     #[diagnostic(transparent)]
     Config(#[from] ConfigError),
 
-    /// The specified remote is not a GitHub URL.
-    #[error("remote '{name}' is not a GitHub URL: {url}")]
-    #[diagnostic(
-        code(stakk::remote::not_github),
-        help(
-            "stakk expects an owner/repo remote URL, e.g. git@github.com:owner/repo.git; for a \
-             GitHub Enterprise Server host, also set --github-host"
-        )
-    )]
-    RemoteNotGithub { name: String, url: String },
+    /// The remote's host could not be matched to a forge.
+    #[error(transparent)]
+    #[diagnostic(transparent)]
+    Detect(#[from] DetectError),
 
-    /// The remote is an owner/repo URL, but on a host stakk has not been told
-    /// to treat as GitHub.
-    #[error("remote '{name}' is on host '{host}', which is not a configured GitHub host: {url}")]
+    /// The specified remote's URL has no `<host>/<owner>/<repo>` shape at all.
+    #[error("remote '{name}' is not an owner/repo URL: {url}")]
     #[diagnostic(
-        code(stakk::remote::host_not_configured),
+        code(stakk::remote::not_a_repo_url),
         help(
-            "if {host} is a GitHub Enterprise Server host, name it with --github-host {host}, \
-             STAKK_GITHUB_HOST, github_host in stakk.toml, or GH_HOST"
+            "stakk expects a <host>/<owner>/<repo> remote URL, e.g. git@github.com:owner/repo.git \
+             or https://codeberg.org/owner/repo.git"
         )
     )]
-    RemoteHostNotConfigured {
-        name: String,
-        url: String,
-        host: String,
-    },
+    RemoteNotRepoUrl { name: String, url: String },
 
     /// The specified remote was not found.
     #[error("remote '{name}' not found")]
@@ -80,18 +70,6 @@ pub enum StakkError {
         help("run `jj git remote list` to see available remotes")
     )]
     RemoteNotFound { name: String },
-
-    /// No GitHub remote was found on this repository.
-    #[error("no GitHub remote found")]
-    #[diagnostic(
-        code(stakk::remote::no_github),
-        help(
-            "make sure this repository has a GitHub remote configured; for a GitHub Enterprise \
-             Server host, name it with --github-host, STAKK_GITHUB_HOST, github_host in \
-             stakk.toml, or GH_HOST"
-        )
-    )]
-    NoGithubRemote,
 
     /// Failed to load a custom template file.
     #[error("failed to load template '{path}': {reason}")]
@@ -126,4 +104,29 @@ pub enum StakkError {
     #[error("interrupted")]
     #[diagnostic(code(stakk::interrupted))]
     Interrupted,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn help(err: &StakkError) -> String {
+        miette::Diagnostic::help(err).unwrap().to_string()
+    }
+
+    #[test]
+    fn not_a_repo_url_is_forge_neutral() {
+        let err = StakkError::RemoteNotRepoUrl {
+            name: "origin".into(),
+            url: "/srv/git/repo".into(),
+        };
+        assert_eq!(
+            err.to_string(),
+            "remote 'origin' is not an owner/repo URL: /srv/git/repo"
+        );
+        let help = help(&err);
+        assert!(help.contains("<host>/<owner>/<repo>"), "{help}");
+        assert!(!help.contains("--host"), "{help}");
+        assert!(!help.contains("--forge"), "{help}");
+    }
 }

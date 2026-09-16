@@ -20,9 +20,13 @@ Sparse is a strict subset of full (same names, types, values), and both report t
 
 ## Top level
 
-- `schema_version` — currently `2`; bumped on breaking schema changes
+- `schema_version` — currently `3`; bumped on breaking schema changes
 - `default_branch`
-- `remotes[]` — `name`, `url`, `github` (`owner/repo`, or `null` for a non-GitHub remote)
+- `remotes[]` — `name`, `url`, `host`
+  (lowercased, keeping the port of an `http(s)` URL),
+  `repo` (`owner/repo`); `host` and `repo` are `null` when the URL is not `<host>/<owner>/<repo>`, such as a local path.
+  The document does not say which forge a host runs — that is `stakk submit`'s decision,
+  which is why there is no `forge` field
 - `excluded_bookmarks[]` — bookmarks left out because their history contains a merge, which the stacking model
   does not represent; stakk cannot manage these
 - `excluded_head_count` — unbookmarked heads left out for the same reason, counted because they have no name
@@ -85,3 +89,10 @@ Stack order follows `committer_timestamp`, not `author.timestamp`, because a reb
 
 Field names, types and the sparse/full subset relationship are covered by `schema_version`.
 The order of `stacks[]` and the pretty format are not.
+
+### Changes from version 2
+
+- `remotes[].github` is renamed to `remotes[].repo` and is filled for every `<host>/<owner>/<repo>` URL,
+  not only GitHub ones.
+- `remotes[].host` is added.
+- There is no top-level `forge` field: the graph is offline and does not select a forge.

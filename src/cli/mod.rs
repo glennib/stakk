@@ -18,8 +18,10 @@ use crate::config::Config;
 // file. Re-exported because the topic is a CLI value like any other, even
 // though the docs module is where it comes from.
 pub use crate::docs::DocTopic;
+use crate::forge::ForgeKind;
+use crate::forge::detect::HostRule;
 
-/// stakk — bridge Jujutsu bookmarks to GitHub stacked pull requests.
+/// stakk — bridge Jujutsu bookmarks to GitHub or Forgejo stacked pull requests.
 #[derive(Debug, Parser)]
 #[command(version, about, after_long_help = env!("CARGO_PKG_REPOSITORY"))]
 pub struct Cli {
@@ -41,20 +43,48 @@ pub struct Cli {
     )]
     pub config: Option<PathBuf>,
 
-    /// Extra host to treat as GitHub, for GitHub Enterprise Server.
+    /// Which forge the remote is on: github or forgejo.
     ///
-    /// github.com is always accepted. Naming a host here additionally accepts
-    /// remotes on that host and talks to its API at https://<host>/api/v3.
-    /// Falls back to GH_HOST when unset, so an existing GitHub CLI setup works
-    /// without further configuration.
+    /// Optional. When unset, the remote's host decides: github.com and
+    /// codeberg.org are known, a host named with --host (STAKK_HOSTS, `hosts`
+    /// in stakk.toml, or the GitHub CLI's GH_HOST) is what it was named as,
+    /// and any other host is probed once over the network, which prints the
+    /// entry that skips the probe next time. Set this to skip all of that
+    /// for one run. Each forge has its own token
+    /// resolution; see `stakk docs auth`. Native stacks (--native-stacks)
+    /// are a GitHub feature: on Forgejo, `auto` and `none` are silent and
+    /// `on` fails after the PRs are submitted.
     #[arg(
         long,
         global = true,
-        env = "STAKK_GITHUB_HOST",
+        env = "STAKK_FORGE",
+        value_enum,
         help_heading = "Global options",
         verbatim_doc_comment
     )]
-    pub github_host: Option<String>,
+    pub forge: Option<ForgeKind>,
+
+    /// Map a host to its forge, as HOST=FORGE. Repeatable.
+    ///
+    /// HOST is the remote URL's host, with the port for an http(s) remote
+    /// (ghe.example.com, or localhost:3000); FORGE is github or forgejo.
+    /// github.com and codeberg.org need no entry. A later entry wins over an
+    /// earlier one for the same host, and every entry here wins over `hosts`
+    /// in stakk.toml and over GH_HOST, which counts as a github entry.
+    /// STAKK_HOSTS takes a comma-separated list. GitHub is reached at
+    /// https://<host>/api/v3, Forgejo at <scheme>://<host>/api/v1 with the
+    /// remote URL's own scheme and port, so a plain-http instance works.
+    #[arg(
+        long = "host",
+        global = true,
+        env = "STAKK_HOSTS",
+        value_name = "HOST=FORGE",
+        value_delimiter = ',',
+        value_parser = HostRule::parse,
+        help_heading = "Global options",
+        verbatim_doc_comment
+    )]
+    pub hosts: Vec<HostRule>,
 
     #[command(subcommand)]
     pub command: Option<Commands>,
@@ -67,8 +97,8 @@ pub struct Cli {
 /// Aliases are stable surface — see `docs/stability.md`.
 #[derive(Debug, Subcommand)]
 pub enum Commands {
-    /// Submit bookmarks as GitHub pull requests (default when no command
-    /// given).
+    /// Submit bookmarks as GitHub or Forgejo pull requests (default when no
+    /// command given).
     // Boxed: SubmitArgs is by far the largest payload (clippy
     // large_enum_variant).
     #[command(visible_alias = "s")]
@@ -174,7 +204,8 @@ pub fn default_submit_args(config: Config) -> Result<SubmitArgs, clap::Error> {
 fn set_default(cmd: Command, arg_id: &str, value: &str) -> Command {
     // Leak the value so clap can store it as a `'static` default. This is
     // acceptable because the CLI runs once and exits — the leaked count is
-    // bounded by the number of config fields.
+    // bounded by the number of scalar config fields (`hosts` is merged in
+    // `main::run` and never leaked).
     let leaked: &'static str = Box::leak(value.to_string().into_boxed_str());
     cmd.mut_arg(arg_id, |a| a.default_value(leaked))
 }
@@ -184,9 +215,14 @@ fn set_default(cmd: Command, arg_id: &str, value: &str) -> Command {
 /// Global args are defined once on the root and propagated to subcommands by
 /// clap, so `mut_arg` must run on the root — calling it on a subcommand would
 /// panic with "Argument is undefined".
+///
+/// `hosts` is deliberately absent: a clap default is replaced wholesale by
+/// the first typed `--host`, while the host table merges per host, so
+/// `main::run` layers the config table under the parsed `--host` list itself
+/// (`HostRules::layered`).
 fn apply_global_defaults(config: &Config, mut cmd: Command) -> Command {
-    if let Some(ref host) = config.github_host {
-        cmd = set_default(cmd, "github_host", host);
+    if let Some(kind) = config.forge {
+        cmd = set_default(cmd, "forge", &kind.to_string());
     }
     cmd
 }
@@ -367,73 +403,196 @@ mod tests {
         assert_eq!(submit_args(&cli).remote, "other");
     }
 
-    // -- github_host tests --
+    // -- forge tests --
     //
-    // github_host is a `global = true` arg on the root command, so its config
-    // default is injected there rather than per subcommand. These cover that it
-    // still reaches every subcommand.
+    // forge is a `global = true` arg on the root command, so its config default
+    // is injected there rather than per subcommand. These cover that it still
+    // reaches every subcommand.
 
+    /// No default: unset means the remote's host decides (`forge::detect`).
     #[test]
-    fn github_host_default_none() {
+    fn forge_default_none() {
         let cli = parse_with_config(Config::default(), &["stakk", "submit"]);
-        assert_eq!(cli.github_host, None);
+        assert_eq!(cli.forge, None);
     }
 
     #[test]
-    fn github_host_from_config() {
+    fn forge_from_config() {
         let config = Config {
-            github_host: Some("github.example.com".into()),
+            forge: Some(ForgeKind::Forgejo),
             ..Default::default()
         };
         let cli = parse_with_config(config, &["stakk", "submit"]);
-        assert_eq!(cli.github_host.as_deref(), Some("github.example.com"));
+        assert_eq!(cli.forge, Some(ForgeKind::Forgejo));
     }
 
     #[test]
-    fn github_host_cli_overrides_config() {
+    fn forge_cli_overrides_config() {
         let config = Config {
-            github_host: Some("github.example.com".into()),
+            forge: Some(ForgeKind::Forgejo),
             ..Default::default()
         };
-        let cli = parse_with_config(
-            config,
-            &["stakk", "submit", "--github-host", "ghe.other.com"],
-        );
-        assert_eq!(cli.github_host.as_deref(), Some("ghe.other.com"));
+        let cli = parse_with_config(config, &["stakk", "submit", "--forge", "github"]);
+        assert_eq!(cli.forge, Some(ForgeKind::Github));
     }
 
     #[test]
-    fn github_host_is_global_and_parses_before_the_subcommand() {
+    fn forge_is_global_and_parses_on_either_side_of_the_subcommand() {
         // `global = true` makes it insertable anywhere; the submit flags are
         // accepted only after `submit`.
         let cli = parse_with_config(
             Config::default(),
-            &["stakk", "--github-host", "ghe.example.com", "submit"],
+            &["stakk", "--forge", "forgejo", "submit"],
         );
-        assert_eq!(cli.github_host.as_deref(), Some("ghe.example.com"));
+        assert_eq!(cli.forge, Some(ForgeKind::Forgejo));
+        let cli = parse_with_config(Config::default(), &["stakk", "submit", "--forge=forgejo"]);
+        assert_eq!(cli.forge, Some(ForgeKind::Forgejo));
     }
 
     #[test]
-    fn github_host_from_config_reaches_graph() {
+    fn forge_from_config_reaches_graph() {
         let config = Config {
-            github_host: Some("github.example.com".into()),
+            forge: Some(ForgeKind::Forgejo),
             ..Default::default()
         };
         let cli = parse_with_config(config, &["stakk", "graph"]);
-        assert_eq!(cli.github_host.as_deref(), Some("github.example.com"));
+        assert_eq!(cli.forge, Some(ForgeKind::Forgejo));
     }
 
     /// The bare form has no subcommand to carry the global arg, and `main.rs`
-    /// reads `github_host` off this parse — not off the synthetic `submit`
-    /// parse, which yields a `SubmitArgs` with no host field.
+    /// reads `forge` off this parse — not off the synthetic `submit` parse,
+    /// which yields a `SubmitArgs` with no forge field.
     #[test]
-    fn github_host_from_config_reaches_bare_stakk() {
+    fn forge_from_config_reaches_bare_stakk() {
         let config = Config {
-            github_host: Some("github.example.com".into()),
+            forge: Some(ForgeKind::Forgejo),
             ..Default::default()
         };
         let cli = parse_with_config(config, &["stakk"]);
-        assert_eq!(cli.github_host.as_deref(), Some("github.example.com"));
+        assert_eq!(cli.forge, Some(ForgeKind::Forgejo));
+    }
+
+    // -- hosts tests --
+    //
+    // `--host` is a `global = true` arg like `--forge`, but its config
+    // counterpart `hosts` is *not* injected as a clap default: a default is
+    // replaced wholesale by the first typed `--host`, and the table merges per
+    // host instead (`HostRules::layered`, called from `main::run`). These cover
+    // the clap side only.
+
+    fn host_rule(host: &str, forge: ForgeKind) -> HostRule {
+        HostRule {
+            host: host.into(),
+            forge,
+        }
+    }
+
+    #[test]
+    fn hosts_default_empty() {
+        let cli = parse_with_config(Config::default(), &["stakk", "submit"]);
+        assert!(cli.hosts.is_empty());
+    }
+
+    #[test]
+    fn hosts_single() {
+        let cli = parse_with_config(
+            Config::default(),
+            &["stakk", "submit", "--host", "ghe.example.com=github"],
+        );
+        assert_eq!(
+            cli.hosts,
+            vec![host_rule("ghe.example.com", ForgeKind::Github)]
+        );
+    }
+
+    #[test]
+    fn hosts_repeat_appends_in_order() {
+        let cli = parse_with_config(
+            Config::default(),
+            &[
+                "stakk",
+                "submit",
+                "--host",
+                "ghe.example.com=github",
+                "--host=localhost:3000=forgejo",
+            ],
+        );
+        assert_eq!(
+            cli.hosts,
+            vec![
+                host_rule("ghe.example.com", ForgeKind::Github),
+                host_rule("localhost:3000", ForgeKind::Forgejo),
+            ]
+        );
+    }
+
+    /// The comma delimiter exists for `STAKK_HOSTS`, and applies on the
+    /// command line too.
+    #[test]
+    fn hosts_comma_splits() {
+        let cli = parse_with_config(
+            Config::default(),
+            &[
+                "stakk",
+                "submit",
+                "--host",
+                "ghe.example.com=github,git.example.com=forgejo",
+            ],
+        );
+        assert_eq!(
+            cli.hosts,
+            vec![
+                host_rule("ghe.example.com", ForgeKind::Github),
+                host_rule("git.example.com", ForgeKind::Forgejo),
+            ]
+        );
+    }
+
+    #[test]
+    fn hosts_rejects_malformed() {
+        for (value, expected) in [
+            ("ghe.example.com", "HOST=FORGE"),
+            ("ghe.example.com=gitlab", "github or forgejo"),
+        ] {
+            let err = apply_config_defaults(Config::default(), Cli::command())
+                .try_get_matches_from(["stakk", "submit", "--host", value])
+                .unwrap_err()
+                .to_string();
+            assert!(err.contains(expected), "{value}: {err}");
+        }
+    }
+
+    #[test]
+    fn hosts_is_global_and_parses_on_either_side_of_the_subcommand() {
+        let cli = parse_with_config(
+            Config::default(),
+            &["stakk", "--host", "localhost:3000=forgejo", "graph"],
+        );
+        assert_eq!(
+            cli.hosts,
+            vec![host_rule("localhost:3000", ForgeKind::Forgejo)]
+        );
+        let cli = parse_with_config(
+            Config::default(),
+            &["stakk", "submit", "--host", "localhost:3000=forgejo"],
+        );
+        assert_eq!(
+            cli.hosts,
+            vec![host_rule("localhost:3000", ForgeKind::Forgejo)]
+        );
+    }
+
+    /// The bare form reads `--host` off the real parse, like `--forge`.
+    #[test]
+    fn hosts_reach_bare_stakk() {
+        let cli = parse_with_config(
+            Config::default(),
+            &["stakk", "--host", "ghe.example.com=github"],
+        );
+        assert_eq!(
+            cli.hosts,
+            vec![host_rule("ghe.example.com", ForgeKind::Github)]
+        );
     }
 
     // -- template_path tests --
@@ -761,7 +920,8 @@ mod tests {
     fn toml_deserialize_full() {
         let toml_str = r#"
 remote = "upstream"
-github_host = "github.example.com"
+forge = "forgejo"
+hosts = { "ghe.example.com" = "github", "git.example.com:3000" = "forgejo" }
 pr_mode = "draft"
 template_path = "/path/to/template.jinja"
 stack_placement = "body"
@@ -775,7 +935,14 @@ heads_revset = "heads(all())"
 "#;
         let config: Config = toml::from_str(toml_str).unwrap();
         assert_eq!(config.remote.as_deref(), Some("upstream"));
-        assert_eq!(config.github_host.as_deref(), Some("github.example.com"));
+        assert_eq!(config.forge, Some(ForgeKind::Forgejo));
+        assert_eq!(
+            config.hosts,
+            Some(std::collections::BTreeMap::from([
+                ("ghe.example.com".to_string(), ForgeKind::Github),
+                ("git.example.com:3000".to_string(), ForgeKind::Forgejo),
+            ]))
+        );
         assert_eq!(config.pr_mode, Some(PrMode::Draft));
         assert_eq!(
             config.template_path.as_deref(),
@@ -809,6 +976,32 @@ heads_revset = "heads(all())"
         let config: Config = toml::from_str(r#"pr_mode = "regular""#).unwrap();
         assert_eq!(config.pr_mode, Some(PrMode::Regular));
         assert!(config.remote.is_none());
+    }
+
+    /// A `[hosts]` table section is the same map as the inline form.
+    #[test]
+    fn toml_hosts_as_table_section() {
+        let config: Config = toml::from_str(
+            r#"
+[hosts]
+"git.example.com" = "forgejo"
+"ghe.example.com" = "github"
+"#,
+        )
+        .unwrap();
+        assert_eq!(
+            config.hosts,
+            Some(std::collections::BTreeMap::from([
+                ("ghe.example.com".to_string(), ForgeKind::Github),
+                ("git.example.com".to_string(), ForgeKind::Forgejo),
+            ]))
+        );
+    }
+
+    #[test]
+    fn toml_hosts_rejects_unknown_forge() {
+        let result: Result<Config, _> = toml::from_str(r#"hosts = { "x.example.com" = "gitlab" }"#);
+        assert!(result.is_err());
     }
 
     #[test]

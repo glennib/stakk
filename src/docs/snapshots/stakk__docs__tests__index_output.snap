@@ -5,7 +5,7 @@ expression: index()
 stakk documentation topics:
 
   agents      Submitting without the TUI, written for coding agents
-  auth        GitHub authentication: tokens, hosts, and troubleshooting
+  auth        Forge authentication: tokens, hosts, and troubleshooting
   config      Config files, precedence, and environment variables
   graph       The `stakk graph` document, field by field
   scripting   Driving stakk from a program: exit codes and a worked example

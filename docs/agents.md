@@ -47,7 +47,7 @@ In `--new <rev>=<name>` the name starts at the first `=` outside parentheses and
 so `remote_bookmarks(main, remote=origin)=<name>` works.
 
 Submit flags go after the subcommand: `stakk submit --dry-run`, not `stakk --dry-run submit`.
-Only `--config` and `--github-host` are accepted on either side.
+Only `--config`, `--forge` and `--host` are accepted on either side.
 
 ## What the marks decide
 
@@ -108,7 +108,8 @@ Sparse is a strict subset of full, so paths never change between them.
 
 ```text
 schema_version, default_branch, excluded_bookmarks[], excluded_head_count
-remotes[]        name, url, github ("owner/repo" | null)
+remotes[]        name, url, host, repo ("owner/repo"; host and repo are
+                 null when the URL is not <host>/<owner>/<repo>)
 stacks[]
   segments[]     bookmarks[] {name, remote_state}
     commits[]    oldest first: change_id, short_change_id, title,

@@ -17,10 +17,12 @@ Changing any of these needs a major release.
 
 - **Subcommand names, their aliases, and their flags, long and short forms alike.**
   Removing an alias is as breaking as removing a flag.
-- **`STAKK_`-prefixed environment variables.**
+- **`STAKK_`-prefixed environment variables**, and `FORGEJO_TOKEN`.
+  The GitHub token variables (`GH_TOKEN`, `GITHUB_TOKEN`, `GH_ENTERPRISE_TOKEN`, `GITHUB_ENTERPRISE_TOKEN`, `GH_HOST`)
+  follow the GitHub CLI's names and are stable for as long as it keeps them.
 - **Config file keys and their defaults.** The list: `stakk docs config`.
 - **The `stakk graph` JSON document under its `schema_version`** — field names, types and meanings.
-  Currently `2`, reported by both the sparse `json` and the `json-full` projection;
+  Currently `3`, reported by both the sparse `json` and the `json-full` projection;
   sparse stays a strict subset of full.
   The *order* of `stacks[]` is not part of this.
   Field by field: `stakk docs graph`.

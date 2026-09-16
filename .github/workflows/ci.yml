@@ -59,3 +59,68 @@ jobs:
 
       - name: Run CI checks
         run: mise run ci
+
+  # Separate from `ci` because the e2e suite needs a container runtime (it
+  # drives stakk against a Forgejo instance), which `mise run ci` must not.
+  # Docker is preinstalled on ubuntu-latest and the lifecycle script detects it.
+  # No secrets are involved, so the job runs on fork pull requests too.
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    env:
+      # Debug info is the bulk of the cached target directory. Line tables keep
+      # file:line in panic backtraces at a fraction of the size.
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
+      CARGO_PROFILE_TEST_DEBUG: line-tables-only
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry and build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          # Only the default branch writes cache entries: branch-scoped caches
+          # are invisible to other branches, so saving from a PR costs quota
+          # and helps nothing.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Cache mise
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.local/bin/mise
+            ~/.local/share/mise
+          key: ${{ runner.os }}-mise-${{ hashFiles('mise.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-mise-
+
+      - name: Install mise
+        run: |
+          if [ ! -f ~/.local/bin/mise ]; then
+            curl https://mise.run | sh
+          fi
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+      - name: Install tools
+        run: mise install
+
+      - name: Run e2e suite
+        run: mise run e2e
+
+      # `mise exec` puts uv (the script's interpreter) on PATH; a bare `run:`
+      # line does not activate mise tools the way `mise run` does.
+      - name: Collect Forgejo logs
+        if: failure()
+        run: mise exec -- scripts/e2e-forgejo.py logs > forgejo.log
+
+      - name: Upload Forgejo logs
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: forgejo-log
+          path: forgejo.log

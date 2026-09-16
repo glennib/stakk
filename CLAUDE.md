@@ -2,8 +2,8 @@
 
 ## Project Overview
 
-**stakk** is a Rust CLI tool that bridges Jujutsu (`jj`) bookmarks to GitHub stacked pull requests.
-It complements jj by turning local bookmark state into coherent GitHub PRs with correct stacking order.
+**stakk** is a Rust CLI tool that bridges Jujutsu (`jj`) bookmarks to GitHub or Forgejo stacked pull requests.
+It complements jj by turning local bookmark state into coherent PRs with correct stacking order.
 
 ## Current Status
 
@@ -29,6 +29,29 @@ Never edit `CHANGELOG.md` or the `version` field by hand, and do not pin a versi
 - **Unit/integration tests**: `cargo nextest run --all-targets`.
 - **Final pre-commit check**: `mise run ci` — run this after implementing plans
   and before committing.
+- **End-to-end suite** (`tests/e2e/`, nextest binary `e2e`):
+  black-box runs of the `stakk` binary against real jj and a real forge — a throwaway Forgejo container —
+  covering forge-agnostic submission (`--keep`/`--new*`, stack comments and body fences, placement migration,
+  content sync, dry run, `--native-stacks auto`), forge detection
+  (the harness names no forge, so every default run reaches the instance through the network probe;
+  `STAKK_HOSTS` and `STAKK_FORGE` each get a scenario that proves they skip it) and `stakk graph` on real jj output
+  (schema, sparse-subset, stack order, `remote_state`).
+  Not covered: the TUI, failure and rollback paths, anything GitHub-specific.
+  - Needs podman or docker; not part of `mise run ci`.
+    `mise run e2e` starts the instance if needed and runs the suite; `mise run e2e -- -E 'test(/s01/)'` runs one;
+    `eval "$(scripts/e2e-forgejo.py env)"` then `cargo nextest run --profile e2e` iterates without the script;
+    `mise run e2e:down` discards the instance.
+    `.config/nextest.toml` keeps the default profile from running the `e2e` binary
+    and the `e2e` profile from running anything else.
+  - The crate imports nothing from `src/`: its Forgejo client and serde structs are an independent second
+    implementation, so the assertions cannot share a bug with the forge under test.
+  - Every `stakk` run gets `STAKK_CONFIG` pointing at a harness-written file containing `inherit = false` —
+    the only way to keep the developer's user config out, since `--config` alone still merges it —
+    and an environment scrubbed of `STAKK_*`, `GH_*`, `GITHUB_*` and `FORGEJO_TOKEN` before the harness's own go in.
+    jj gets a harness-written `JJ_CONFIG` and `GIT_TERMINAL_PROMPT=0`; `HOME` is untouched.
+  - After the first push into a fresh repository Forgejo keeps reporting it `empty` for a while,
+    so `JjRepo::new` polls `GET /repos/{o}/{r}` until `empty == false` (60 s timeout) before returning.
+    Later pushes of new branches are visible immediately.
 
 ## Development Principles
 
@@ -83,9 +106,13 @@ When adding, renaming, or changing the default of one, update all of them in the
    via `set_default(...)`, and add tests mirroring the `sync_pr_content_*` set: `default`, `config_*`,
    `cli_overrides_config`.
    Extend `toml_deserialize_full`.
-   A `global = true` arg on `Cli` (like `--config` and `--github-host`) is defined on the *root* command only,
+   A `global = true` arg on `Cli` (like `--config`, `--forge` and `--host`) is defined on the *root* command only,
    so its default goes through `apply_global_defaults`, not `apply_submit_defaults` —
    `mut_arg` on a subcommand would panic with "Argument is undefined".
+   `hosts` is the one config key that bypasses `set_default` altogether:
+   a clap default is replaced wholesale by the first typed `--host`,
+   so `main::run` layers the config table under the parsed `--host` list per host instead (`HostRules::layered`),
+   and there is no `hosts_from_config` clap test to mirror.
 4. **`docs/config.md`** — two places:
    - the annotated `stakk.toml` example block (the exhaustive one; document the default in the comment),
    - the **Environment variables** table.
@@ -93,7 +120,7 @@ When adding, renaming, or changing the default of one, update all of them in the
    `README.md` deliberately carries *no* flag or env-var reference tables — `stakk --help`,
    `stakk <subcommand> --help` and `docs/config.md` are the reference.
    Only touch the README when the option changes something it describes in prose: the four-key `stakk.toml` sample,
-   the **GitHub native stacks** and **Stack info placement** summaries, **GitHub Enterprise Server**,
+   the **GitHub native stacks** and **Stack info placement** summaries, **GitHub Enterprise Server**, **Forgejo**,
    **Non-interactive selection**, **PR titles and bodies**, **Custom bookmark names**, or **Immutable commits**.
    Deeper reference material for those lives in `docs/template.md`, `docs/agents.md` and `docs/graph.md`,
    which each README section links to alongside its `stakk docs <topic>` command.
@@ -111,7 +138,7 @@ and non-interactive submission is spelled with the `--keep`/`--new*` selection f
 build.rs             # Generates DocTopic + docs::source from the docs/ directory
 src/
 ├── main.rs          # CLI entry point (clap)
-├── auth.rs          # Per-host GitHub token resolution (gh CLI, env vars)
+├── auth.rs          # Per-host token resolution: GitHub (gh CLI, env vars), Forgejo (FORGEJO_TOKEN)
 ├── cli/             # clap subcommand definitions (Cli, SubmitArgs, GraphArgs, RevsetArgs)
 ├── config/          # TOML config discovery, merging, and clap-default injection
 ├── docs/            # `stakk docs` — includes the generated topics, renders them, generates the index
@@ -122,15 +149,21 @@ src/
 │   ├── mod.rs       # Jj<R: JjRunner> — every jj invocation
 │   ├── runner.rs    # JjRunner trait + real/mock runners
 │   ├── types.rs     # serde structs for jj template output
-│   ├── remote.rs    # Remote URL parsing + GitHub host gate (GitHubRepo, api_base_uri)
+│   ├── remote.rs    # Remote URL parsing (RemoteRepo, parse_remote_url, the two API base URIs)
 │   └── version.rs   # jj version parsing + minimum supported version
-├── forge/           # Forge trait + GitHub implementation (octocrab)
-│   ├── mod.rs       # Forge trait, forge-agnostic types, ForgeError
+├── forge/           # Forge trait + GitHub (octocrab) and Forgejo (reqwest) implementations
+│   ├── mod.rs       # Forge trait, ForgeKind, forge-agnostic types, ForgeError
+│   ├── detect.rs    # Which forge a host runs: HostRules (--host/hosts/GH_HOST), classify, DetectError
 │   ├── github/
 │   │   ├── mod.rs   # GitHubForge implementation
 │   │   └── stacks.rs # Hand-rolled transport for the native-stacks preview
 │   │                # endpoints — exists to be deleted once octocrab ships
 │   │                # typed support (XAMPPRocky/octocrab#934)
+│   ├── forgejo/
+│   │   ├── mod.rs   # ForgejoForge<T: Transport> against the Gitea REST API (/api/v1)
+│   │   ├── transport.rs # Transport trait (the JjRunner-style seam) + ReqwestTransport
+│   │   ├── types.rs # Non-serde-defaulted wire structs for the fields stakk reads
+│   │   └── fixtures/ # Byte-identical captures from a real Forgejo instance
 │   ├── comment.rs   # Stack comment formatting, parsing, and template context
 │   └── default_comment.md.jinja  # Default minijinja template for stack comments
 ├── graph/           # Change graph construction (ChangeGraph, BookmarkSegment, BranchStack)
@@ -439,7 +472,7 @@ If you change any of the following, update `scripts/record-demo.py` in the same 
   That clap parse is what makes `STAKK_*` env vars and config-injected defaults apply to the bare form —
   `SubmitArgs` deliberately has no `Default` impl, because hand-building one silently drops both
   (the bug 90718ef5cf97 fixed; `bare_stakk_submit_args_come_from_a_config_applied_clap_parse` pins the mechanism).
-  Only `global = true` args (`--config`, `--github-host`) are accepted on either side of the subcommand.
+  Only `global = true` args (`--config`, `--forge`, `--host`) are accepted on either side of the subcommand.
 - Subcommand aliases are part of the stable contract (`docs/stability.md`),
   so they are added deliberately and removed only in a major.
   `submit`, `graph` and `docs` carry their initial letter as a visible alias; `completions` deliberately does not.
@@ -451,23 +484,67 @@ If you change any of the following, update `scripts/record-demo.py` in the same 
   an alias resolves to the same command, so config defaults follow it,
   but renaming a subcommand without updating that string silently drops config-file defaults with no compile error.
   `show_alias_is_graph_and_still_gets_revset_defaults` is the guard.
-- Remote host handling: `jj::remote::parse_remote_url` parses `<host>/<owner>/<repo>` for *any* host;
-  `parse_github_url` layers the gate on top, accepting `GITHUB_COM` plus one configured host
-  (`--github-host` / `STAKK_GITHUB_HOST` / `github_host` / `GH_HOST`, resolved once in `run()`).
-  The URL is the source of truth for the host — the setting only says which hosts are allowed,
+- Remote host handling: `jj::remote::parse_remote_url` parses `<host>/<owner>/<repo>` for *any* host
+  and records the URL's scheme (SSH remotes record `https`); there is no per-forge URL gate.
+  Which forge a host runs is `forge::detect::classify`'s answer, in this order: an explicit `--forge`
+  (`STAKK_FORGE`, `forge` in `stakk.toml`);
+  then the built-in hosts — `GITHUB_COM`, `CODEBERG_ORG`,
+  and `bitbucket.org`/`gitlab.com` as recognised-but-unsupported — which no rule can override,
+  so a typo in `hosts` cannot re-label github.com; then the host table `HostRules`, layered lowest-first from `GH_HOST`
+  (an implicit GitHub entry),
+  `hosts` in the config file, and `--host`/`STAKK_HOSTS`
+  (`HostRules::layered`, built once in `run()`; later layers and later entries win per host, keys are lowercased).
+  A host none of that names is `Classification::Unknown`,
+  and `submit_bookmark` then runs `detect::probe` through `ReqwestTransport::probing()`
+  (no redirect following, `PROBE_TIMEOUT`):
+  three concurrent unauthenticated `GET`s,
+  judged by `evaluate` with tells verified against the live services and pinned by the test matrix —
+  any `3xx` is negative first; GitHub is an `X-GitHub-Request-Id` header on `https://<host>/api/v3/meta` at any status
+  (github.com 404s there and still sends it; a private-mode GHES 401s and still sends it);
+  Forgejo/Gitea is `<scheme>://<host>/api/v1/version` answering `200` `application/json` with a string `version`,
+  or `403` with the fixed body `Only signed in user is allowed to call APIs.` (`REQUIRE_SIGNIN_VIEW`);
+  GitLab is an `X-Gitlab-Meta` header on `/api/v4/version` and yields `Unsupported`.
+  One supported positive decides, two are `Ambiguous`, none is `Unknown`,
+  each carrying a `ProbeReport` the error prints; a transport failure is a negative with its message as the summary.
+  After a successful probe the hint naming the `hosts` entry is printed with `pb.suspend(|| eprintln!(..))`,
+  not `pb.println`: indicatif drops `println` output while the draw target is hidden
+  (stderr not a TTY), which is exactly when a scripted run would want it.
+  `graph` never probes.
+  The URL is the source of truth for the host — a rule only says what a host runs,
   so a repo with both a github.com and an Enterprise remote still works.
+  `stakk graph` never classifies: it reports hosts, not forges.
   SSH ports are dropped (they say nothing about the API) and HTTP(S) ports are kept (they are the API port).
-  `GitHubRepo::api_base_uri()` returns `None` for github.com,
+  `RemoteRepo::github_api_base_uri()` returns `None` for github.com,
   so octocrab keeps its own `https://api.github.com` default, and `https://<host>/api/v3` otherwise —
   the two are not one template.
   Always `https`, even for an `http://` remote.
-- The remote must be resolved *before* the token:
+  `RemoteRepo::forgejo_api_base_uri()` is always a value, `{scheme}://{host}/api/v1`,
+  and keeps the recorded scheme and port: a plain-`http` instance on `localhost:3000` is a supported setup,
+  and no client default exists to fall back on, not even for codeberg.org.
+- The remote must be resolved *before* the forge, and the forge before the token:
   `auth::resolve_token(host)` picks `GH_TOKEN`/`GITHUB_TOKEN` for github.com
   and `GH_ENTERPRISE_TOKEN`/`GITHUB_ENTERPRISE_TOKEN` otherwise, and passes `--hostname` to `gh auth token`.
   Both pairs are in the order `gh help environment` documents,
   so stakk's fallback and gh's own answer agree on which variable wins.
   Without `--hostname`, gh answers for whatever `GH_HOST` names, which need not be this repo's host.
-  `env_sources`/`token_from_env` take the lookup as a closure so tests never mutate the process environment.
+  `auth::resolve_forgejo_token(host)` reads `FORGEJO_TOKEN` and nothing else — no `gh`, none of the GitHub variables,
+  no per-host split; `host` only names the instance in `AuthError::NoForgejoToken`.
+  `env_sources`/`token_from_env`/`resolve_forgejo_token_with` take the lookup as a closure
+  so tests never mutate the process environment.
+- `ForgejoForge`'s four stack methods answer `ForgeError::StacksUnavailable` without sending a request, by design:
+  Forgejo has no native stacked PRs, and the reconcile's own outcome is stakk's availability probe
+  (see the native-stacks gotcha below),
+  so that one answer makes `--native-stacks auto` resolve the auto placements to writing, `none` stay silent,
+  and `on` fail naming the cause instead of a 404 that never happened.
+  `SubmitError::StacksUnavailable`'s help names Forgejo alongside GHES for the same reason.
+- `rustls` is a direct dependency for one call, `forge::forgejo::transport::install_crypto_provider`.
+  The `reqwest` dependency is built with `rustls-no-provider` so `ring`
+  (which octocrab already links)
+  stays the only provider and `aws-lc-rs`/`openssl-sys` stay out of the tree —
+  but that feature makes `reqwest::Client::build()` panic unless a process-level `CryptoProvider` is installed,
+  and octocrab installs one only when it first builds a client, which a Forgejo-only run never does.
+  `ReqwestTransport::new()` therefore installs `ring` when nothing is installed yet;
+  keep `cargo tree -i aws-lc-rs` and `cargo tree -i openssl-sys` empty.
 - jj JSON output uses NDJSON (one JSON object per line).
   Parse with `lines()` plus a per-line `serde_json::from_str`.
 - `jj git remote list` outputs plain text, not JSON.
@@ -670,7 +747,11 @@ If you change any of the following, update `scripts/record-demo.py` in the same 
   `graph::output::json_projection` maps `--format` to the projection
   so the wiring is testable rather than inline in `main`.
   `title` is the first line of `description`; `description` stays the full message.
-  Both projections report the same `SCHEMA_VERSION`.
+  Both projections report the same `SCHEMA_VERSION` (currently 3).
+  `remotes[].host` and `remotes[].repo` come from the forge-agnostic `parse_remote_url`
+  (`parsed_remote`, shared with the pretty `Remote:` line),
+  so every `<host>/<owner>/<repo>` URL is reported whichever forge it is on;
+  the document has no `forge` field because the graph never selects one — that is `stakk submit`'s decision.
   `committer_timestamp` is in *both* projections on purpose: stack order is derived from the committer timestamp
   (`group_segments_into_stacks`), not the author one, so without it in sparse a consumer cannot reproduce or override
   the order it is being handed.

@@ -11,6 +11,9 @@ cargo-insta = "latest"
 # Pinned: `md:check` gates CI, so a new rumdl release must not fail the build
 # out of nowhere.
 rumdl = "0.2.73"
+# Pinned exact so Renovate bumps it. CI has no jj otherwise, and the e2e suite
+# drives the real binary; this tests the latest jj, not MIN_SUPPORTED_JJ_VERSION.
+jj = "0.45.1"
 
 [tasks.fmt]
 description = "Format code"
@@ -59,3 +62,15 @@ depends = ["fmt:check", "md:check", "clippy", "test", "build:debug"]
 [tasks.record-demo]
 description = "Re-record the README demo gif (resets the playground repo!)"
 run = "scripts/record-demo.py"
+
+[tasks."e2e:up"]
+description = "Start the Forgejo instance for the e2e suite (idempotent)"
+run = "scripts/e2e-forgejo.py up"
+
+[tasks."e2e:down"]
+description = "Remove the e2e Forgejo instance and its env file"
+run = "scripts/e2e-forgejo.py down"
+
+[tasks.e2e]
+description = "Run the e2e suite against Forgejo (starts the instance if needed)"
+run = "scripts/e2e-forgejo.py test"

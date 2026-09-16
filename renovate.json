@@ -18,5 +18,20 @@
       "matchUpdateTypes": ["patch", "pin", "digest"],
       "automerge": true
     }
+  ],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "Forgejo image pinned in the e2e lifecycle script",
+      "managerFilePatterns": [
+        "/^scripts/e2e-forgejo\\.py$/"
+      ],
+      "matchStrings": [
+        "FORGEJO_IMAGE = \"codeberg\\.org/forgejo/forgejo:(?<currentValue>[^\"]+)\""
+      ],
+      "datasourceTemplate": "docker",
+      "depNameTemplate": "codeberg.org/forgejo/forgejo",
+      "versioningTemplate": "regex:^(?<major>\\d+)\\.(?<minor>\\d+)\\.(?<patch>\\d+)(?<compatibility>-rootless)$"
+    }
   ]
 }
