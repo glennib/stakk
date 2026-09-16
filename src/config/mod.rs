@@ -59,13 +59,13 @@ pub struct RemovedEnvVar {
 ///
 /// **Removal:** an entry may go once the population that set its variable has
 /// moved, at the second major after the one that retired it at the latest —
-/// the 2.x entries at v4.0.0 — and the table, [`removed_env_vars`] and its
-/// caller in `main.rs` go with the last entry. Advisory warnings are
+/// an entry retired at v3.0.0 by v5.0.0 — and the table, [`removed_env_vars`]
+/// and its caller in `main.rs` go with the last entry. Advisory warnings are
 /// explicitly not stable surface (see `docs/stability.md`), so deleting them
-/// is not a break; the 1.x entries (`STAKK_DRAFT`, `STAKK_TEMPLATE`) went at
-/// v3.0.0 under this rule.
+/// is not a break; `STAKK_DRAFT` and `STAKK_TEMPLATE`, retired at v2.0.0,
+/// went at v3.0.0 under this rule.
 static REMOVED_ENV_VARS: &[RemovedEnvVar] = &[
-    // Retired in 2.x, with the GitHub-only host setting.
+    // Retired at v3.0.0, with the GitHub-only host setting.
     RemovedEnvVar {
         name: "STAKK_GITHUB_HOST",
         advice: "use STAKK_HOSTS=<host>=github, --host <host>=github, or hosts in stakk.toml; \
