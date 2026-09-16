@@ -761,10 +761,12 @@ If you change any of the following, update `scripts/record-demo.py` in the same 
   Match the name exactly up to the `@` — a bare prefix test calls `feat` synced when `feat-2@origin` is on the commit —
   and skip jj's internal `name@git`, which is not a push target.
   The state is offline and says nothing about pull requests, only about what a push would do.
-- `excluded_bookmarks` (names) and `excluded_head_count` are separate
-  because the old single counter conflated bookmarks excluded by merge taint with unbookmarked *heads* excluded the same
-  way.
-  Heads have no name to report, so a consumer reading only a count could not say what it lost.
+- `excluded_bookmarks` (names) and `excluded_heads`
+  (change ids)
+  are separate lists because a single counter
+  once conflated bookmarks excluded by merge taint with unbookmarked *heads* excluded the same way.
+  A head has no bookmark to name it, so it is reported by `change_id` and `short_change_id`,
+  which is what `jj log -r` and the selection flags take.
 - Reserved bookmark names: `Jj::get_local_bookmark_names`
   (`jj bookmark list` with *no* `-r`) is the single source of truth for "this name is taken".
   The change graph is not — it cannot see trunk's own bookmark

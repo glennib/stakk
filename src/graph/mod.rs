@@ -17,6 +17,7 @@ use jiff::Timestamp;
 use self::types::BookmarkSegment;
 use self::types::BranchStack;
 use self::types::ChangeGraph;
+use self::types::ExcludedHead;
 use self::types::RemoteState;
 use self::types::SegmentCommit;
 use crate::error::StakkError;
@@ -56,7 +57,7 @@ pub async fn build_change_graph<R: JjRunner>(
     let mut segments: HashMap<String, BookmarkSegment> = HashMap::new();
     let mut tainted_change_ids: HashSet<String> = HashSet::new();
     let mut excluded_bookmarks: Vec<String> = Vec::new();
-    let mut excluded_head_count: usize = 0;
+    let mut excluded_heads: Vec<ExcludedHead> = Vec::new();
 
     for bookmark in &bookmarks {
         if fully_collected.contains(&bookmark.name) {
@@ -110,7 +111,10 @@ pub async fn build_change_graph<R: JjRunner>(
         .await?;
 
         if result.excluded {
-            excluded_head_count += 1;
+            excluded_heads.push(ExcludedHead {
+                change_id: head.change_id.clone(),
+                short_change_id: head.short_change_id.clone(),
+            });
             continue;
         }
 
@@ -152,7 +156,7 @@ pub async fn build_change_graph<R: JjRunner>(
         tainted_change_ids,
         bookmark_remote_states,
         excluded_bookmarks,
-        excluded_head_count,
+        excluded_heads,
         stacks,
     })
 }
@@ -914,7 +918,7 @@ mod tests {
         assert!(graph.stacks.is_empty());
         assert!(graph.stack_leaves.is_empty());
         assert!(graph.excluded_bookmarks.is_empty());
-        assert_eq!(graph.excluded_head_count, 0);
+        assert!(graph.excluded_heads.is_empty());
     }
 
     /// Multi-commit segment: unbookmarked commits between bookmarks are

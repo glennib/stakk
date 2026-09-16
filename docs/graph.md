@@ -29,7 +29,8 @@ Sparse is a strict subset of full (same names, types, values), and both report t
   which is why there is no `forge` field
 - `excluded_bookmarks[]` — bookmarks left out because their history contains a merge, which the stacking model
   does not represent; stakk cannot manage these
-- `excluded_head_count` — unbookmarked heads left out for the same reason, counted because they have no name
+- `excluded_heads[]` — unbookmarked heads left out for the same reason, each as `change_id` and `short_change_id`;
+  a head has no bookmark to name it
 - `stacks[]` — one per leaf
 
 ## Stacks
@@ -96,3 +97,5 @@ The order of `stacks[]` and the pretty format are not.
   not only GitHub ones.
 - `remotes[].host` is added.
 - There is no top-level `forge` field: the graph is offline and does not select a forge.
+- `excluded_head_count` is replaced by `excluded_heads[]`, listing each head's `change_id` and `short_change_id`
+  instead of counting them.

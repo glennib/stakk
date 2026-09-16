@@ -81,7 +81,7 @@ mod tests {
             tainted_change_ids: HashSet::new(),
             bookmark_remote_states: HashMap::new(),
             excluded_bookmarks: Vec::new(),
-            excluded_head_count: 0,
+            excluded_heads: Vec::new(),
             stacks: vec![],
         }
     }

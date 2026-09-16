@@ -3,6 +3,8 @@
 use std::collections::HashMap;
 use std::collections::HashSet;
 
+use serde::Serialize;
+
 use crate::jj::types::Signature;
 
 /// A commit within a bookmark segment, carrying metadata needed for display
@@ -100,6 +102,16 @@ impl BranchStack {
     }
 }
 
+/// An unbookmarked head left out of the graph because its history contains a
+/// merge commit. It has no bookmark to name it, so the change id is how a
+/// consumer finds it in `jj log`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ExcludedHead {
+    pub change_id: String,
+    /// jj's shortest unique prefix, as shown by `stakk graph`.
+    pub short_change_id: String,
+}
+
 /// The complete change graph: all bookmarked segments, their relationships,
 /// and the resulting stacks.
 #[derive(Debug)]
@@ -158,9 +170,10 @@ pub struct ChangeGraph {
     /// Names of bookmarks excluded due to merge commits in their history.
     pub excluded_bookmarks: Vec<String>,
 
-    /// Unbookmarked heads excluded for the same reason. Counted separately
-    /// because they have no name to report.
-    pub excluded_head_count: usize,
+    /// Unbookmarked heads excluded for the same reason. Listed separately
+    /// from `excluded_bookmarks` because a head has no name, only its change
+    /// id.
+    pub excluded_heads: Vec<ExcludedHead>,
 
     /// Complete stacks, one per leaf bookmark, ordered trunk-to-leaf.
     pub stacks: Vec<BranchStack>,

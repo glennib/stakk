@@ -22,7 +22,12 @@ expression: "render_json(&data, JsonProjection::Sparse)"
   "excluded_bookmarks": [
     "merged-work"
   ],
-  "excluded_head_count": 1,
+  "excluded_heads": [
+    {
+      "change_id": "yqosqzytrlpu",
+      "short_change_id": "yqos"
+    }
+  ],
   "stacks": [
     {
       "segments": [

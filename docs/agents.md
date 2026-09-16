@@ -107,7 +107,8 @@ for reading commit messages or naming a bookmark from the work itself.
 Sparse is a strict subset of full, so paths never change between them.
 
 ```text
-schema_version, default_branch, excluded_bookmarks[], excluded_head_count
+schema_version, default_branch, excluded_bookmarks[],
+excluded_heads[] {change_id, short_change_id}
 remotes[]        name, url, host, repo ("owner/repo"; host and repo are
                  null when the URL is not <host>/<owner>/<repo>)
 stacks[]

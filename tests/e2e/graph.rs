@@ -113,7 +113,7 @@ async fn g01_json_shape_on_real_jj_output() {
         remotes[0]["url"]
     );
     assert_eq!(doc["excluded_bookmarks"], Value::Array(vec![]));
-    assert_eq!(doc["excluded_head_count"], 0);
+    assert_eq!(doc["excluded_heads"], Value::Array(vec![]));
 
     let stacks = doc["stacks"].as_array().expect("stacks");
     assert_eq!(stacks.len(), 2, "{doc:#}");
