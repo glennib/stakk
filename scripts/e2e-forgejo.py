@@ -36,7 +36,7 @@ import typer
 # The rootless variant is used deliberately: on it a plain
 # `<runtime> exec <container> forgejo admin ...` works, with no user or
 # config-path flags to keep in step with the image.
-FORGEJO_IMAGE = "codeberg.org/forgejo/forgejo:16.0.4-rootless"
+FORGEJO_IMAGE = "codeberg.org/forgejo/forgejo:16.0.5-rootless"
 
 CONTAINER = "stakk-e2e-forgejo"
 CONTAINER_PORT = 3000
