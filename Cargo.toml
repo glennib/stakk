@@ -1,6 +1,6 @@
 [package]
 name = "stakk"
-version = "3.0.0"
+version = "3.0.1"
 edition = "2024"
 repository = "https://github.com/glennib/stakk"
 description = "A CLI tool that bridges Jujutsu (jj) bookmarks to GitHub or Forgejo stacked pull requests"
