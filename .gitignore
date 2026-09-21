@@ -1,2 +1,5 @@
 **/target/
 .e2e-forgejo.env
+# `nix build` output symlinks.
+result
+result-*

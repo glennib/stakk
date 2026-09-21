@@ -21,6 +21,8 @@ mise use -g 'github:glennib/stakk'   # recommended
 mise use -g 'cargo:stakk'            # from crates.io
 cargo binstall stakk
 cargo install stakk
+nix run github:glennib/stakk         # nix, without installing
+nix profile install github:glennib/stakk
 ```
 
 Or download a binary from the [latest release](https://github.com/glennib/stakk/releases/latest).
