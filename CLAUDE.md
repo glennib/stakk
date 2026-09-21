@@ -65,6 +65,14 @@ because a single-crate build gains nothing from them and every input is another 
   The job passes `--no-update-lock-file`, so a missing or stale `flake.lock` fails instead of being locked for the run —
   CI must not prove a lock the repository does not have.
   Renovate keeps the committed lock current, and a *new* input needs its lock generated and committed with it.
+- **The nix job is the slow one** — around five minutes, against one for `ci` and `e2e`,
+  because `buildRustPackage` compiles the dependencies and stakk in a single derivation keyed on the source,
+  so every `src/` change is a full rebuild with no equivalent of `Swatinem/rust-cache`'s incremental target directory.
+  `cache-nix-action` caches the store,
+  which removes the nixpkgs fetch and makes a change that does not touch the derivation a complete hit,
+  but it cannot shorten the compile.
+  Splitting dependencies into their own derivation (crane) is what would,
+  at the cost of an input and a second way to build the same crate.
 - **The version comes from `Cargo.toml`** (`lib.importTOML`) because release-plz owns it.
   Never write a version into the derivation.
 - **`cargoLock.lockFile`, not `cargoHash`.**
