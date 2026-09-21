@@ -9,6 +9,9 @@
   "ignorePaths": [
     ".github/workflows/release.yml"
   ],
+  "nix": {
+    "enabled": true
+  },
   "lockFileMaintenance": {
     "enabled": true,
     "automerge": true
