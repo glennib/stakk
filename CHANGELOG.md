@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.1](https://github.com/glennib/stakk/compare/v3.0.0...v3.0.1) - 2026-09-21
+
+### Other
+
+- *(nix)* package stakk as a flake, built in CI
+- *(deps)* lock file maintenance ([#288](https://github.com/glennib/stakk/pull/288))
+- *(deps)* update dependency rumdl to v0.2.75 ([#287](https://github.com/glennib/stakk/pull/287))
+- *(deps)* update dependency cargo:release-plz to v0.3.169 ([#286](https://github.com/glennib/stakk/pull/286))
+- *(deps)* update dependency uv to v0.12.17 ([#285](https://github.com/glennib/stakk/pull/285))
+- *(deps)* update dependency rumdl to v0.2.74 ([#284](https://github.com/glennib/stakk/pull/284))
+- *(deps)* update dependency uv to v0.12.16 ([#283](https://github.com/glennib/stakk/pull/283))
+- *(deps)* update dependency cargo:release-plz to v0.3.168 ([#282](https://github.com/glennib/stakk/pull/282))
+- *(deps)* update dependency cargo:cargo-nextest to v0.9.145 ([#280](https://github.com/glennib/stakk/pull/280))
+- *(config)* date the `STAKK_GITHUB_HOST` entry to v3.0.0
+
 ## [3.0.0](https://github.com/glennib/stakk/compare/v2.6.0...v3.0.0) - 2026-09-16
 
 stakk submits to Forgejo — codeberg.org or a self-hosted instance — as well as to GitHub,
