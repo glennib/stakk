@@ -5,7 +5,7 @@ uv = "0.12.17"
 cargo-binstall = "1.23.0"
 "cargo:cargo-dist" = "0.32.0"
 "cargo:cargo-edit" = "0.13.13"
-"cargo:cargo-nextest" = "0.9.145"
+"cargo:cargo-nextest" = "0.9.146"
 "cargo:release-plz" = "0.3.169"
 cargo-insta = "latest"
 # Pinned: `md:check` gates CI, so a new rumdl release must not fail the build
