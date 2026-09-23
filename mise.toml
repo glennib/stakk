@@ -10,7 +10,7 @@ cargo-binstall = "1.23.0"
 cargo-insta = "latest"
 # Pinned: `md:check` gates CI, so a new rumdl release must not fail the build
 # out of nowhere.
-rumdl = "0.2.75"
+rumdl = "0.2.76"
 # Pinned exact so Renovate bumps it. CI has no jj otherwise, and the e2e suite
 # drives the real binary; this tests the latest jj, not MIN_SUPPORTED_JJ_VERSION.
 jj = "0.45.1"
