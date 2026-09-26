@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.2](https://github.com/glennib/stakk/compare/v3.0.1...v3.0.2) - 2026-09-26
+
+### Other
+
+- *(deps)* update dependency cargo-binstall to v1.24.0 ([#297](https://github.com/glennib/stakk/pull/297))
+- *(deps)* update dependency uv to v0.12.19 ([#296](https://github.com/glennib/stakk/pull/296))
+- *(deps)* update rust crate thiserror to v2.0.21 ([#295](https://github.com/glennib/stakk/pull/295))
+- *(deps)* update dependency rumdl to v0.2.77 ([#294](https://github.com/glennib/stakk/pull/294))
+- *(deps)* update dependency uv to v0.12.18 ([#293](https://github.com/glennib/stakk/pull/293))
+- *(deps)* update dependency rumdl to v0.2.76 ([#292](https://github.com/glennib/stakk/pull/292))
+- *(deps)* update dependency cargo:cargo-nextest to v0.9.146 ([#290](https://github.com/glennib/stakk/pull/290))
+
 ## [3.0.1](https://github.com/glennib/stakk/compare/v3.0.0...v3.0.1) - 2026-09-21
 
 ### Other
