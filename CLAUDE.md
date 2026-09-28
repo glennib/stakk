@@ -23,6 +23,8 @@ say so explicitly if you reword it, because the self-reference is the whole reas
 
 Versions are managed by release-plz from conventional-commit messages.
 Never edit `CHANGELOG.md` or the `version` field by hand, and do not pin a version number here — release-plz owns it.
+Breaking changes deferred to the next major are marked `NEXT-MAJOR:` where they apply;
+`grep -rn NEXT-MAJOR` before cutting one, and add a marker rather than a separate list when deferring another.
 
 ## Testing
 

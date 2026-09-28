@@ -93,6 +93,10 @@ struct RulesInput {
 }
 
 /// A commit in the segment, sent to the command on stdin.
+///
+/// NEXT-MAJOR: consider dropping `short_change_id` (schema 2), alongside the
+/// `stakk graph` schema 4 change noted on `graph::output::SCHEMA_VERSION`
+/// (#301).
 #[derive(Debug, Serialize)]
 struct CommitInput {
     commit_id: String,

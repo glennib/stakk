@@ -38,6 +38,11 @@ use crate::jj::types::GitRemote;
 /// Version 3 is defined by what this module emits today, `remotes[].host`
 /// included: it has not shipped in a release yet, so it was reshaped in
 /// place rather than bumped.
+///
+/// NEXT-MAJOR: drop `short_change_id` from `commits[]` and `excluded_heads[]`
+/// (schema 4). It is jj's shortest prefix, valid only right now, and machine
+/// consumers mistake it for a matchable id; `change_id` covers every use
+/// (#301). Decide the `--bookmark-command` schema in the same release.
 const SCHEMA_VERSION: u32 = 3;
 
 /// Everything `stakk graph` renders, gathered by the caller.
