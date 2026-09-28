@@ -141,6 +141,8 @@ replace the TUI with an explicit selection: every PR boundary is named on the co
 all marks lie on one trunk-to-tip path, unmarked commits fold into the PR above them,
 and anything above the topmost mark is not submitted.
 `rev` is any jj revset naming one commit: `@-`, a bookmark, or a change id from `stakk graph --format=json`.
+`--keep` takes a bookmark name or a `rev` whose commit carries exactly one bookmark,
+so `stakk submit --keep @-- --keep @-` keeps the two bookmarks below the working copy.
 
 Rules and diagnostic codes, written for coding agents: [docs/agents.md](docs/agents.md) or `stakk docs agents`
 (`stakk docs agents >> AGENTS.md` hands it to yours).

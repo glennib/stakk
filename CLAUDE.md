@@ -793,6 +793,15 @@ If you change any of the following, update `scripts/record-demo.py` in the same 
   unknown symbols and syntax errors are jj's verdict, surfaced as `stakk::selection::rev_unresolvable` with jj's stderr.
   An off-graph commit is `rev_not_on_stack`,
   whose help points at `@-` because the default heads revset excludes the empty `@` the usual jj workflow leaves on top.
+  `--keep` takes a bookmark name *or* a REV, name first (`resolve_keep`):
+  an exact bookmark name on the graph never reaches jj,
+  so every existing name keeps its meaning even where jj would parse it differently as a revset
+  (`a+b`, `foo@origin`) — that ordering is what keeps the widening semver-compatible.
+  A local bookmark in the reserved set but off the graph is `keep_not_found` rather than a revset,
+  because its commit may carry some other bookmark `--keep` would silently use.
+  Otherwise the REV's commit must carry exactly one graph bookmark (`keep_no_bookmark` / `keep_ambiguous`).
+  `--keep` deliberately skips `rev_immutable`: an already-bookmarked boundary stays visible to later runs.
+  Marks keeping the same bookmark dedupe silently however they are spelled.
   `--new REV=NAME` splits at the first `=` outside parentheses and quotes (`split_rev_name`),
   so keyword arguments like `remote_bookmarks(main, remote=origin)` stay in the REV.
   Colinearity is validated by intersecting per-mark containing-stack sets; the topmost mark is the tip.
