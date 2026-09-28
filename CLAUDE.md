@@ -241,7 +241,6 @@ There is intentionally no `git/` module.
 
 - Edition 2024.
 - Use `cargo nextest run` for testing, not `cargo test`.
-- Prefer `cargo run --bin stakk` and `cargo build --bin stakk` over `-p stakk`.
 - Find built binaries with:
   `cargo build --release --message-format json | jq -r 'select(.executable | . == null | not) | .executable'`
 - **Never use `#[allow(...)]`**.
@@ -278,13 +277,6 @@ There is intentionally no `git/` module.
 
 ### Version Control
 
-- This repo uses `jj` (Jujutsu) for version control.
-  Prefer `jj` over `git`.
-- Before starting a new logical piece of work, verify a clean slate with `jj status`.
-  If the current change is not empty, prompt the user or run `jj new`.
-- Use `jj commit -m "message"` to finalize a change.
-- Use `jj tug` to move the main bookmark forward to `@-` after committing.
-- Push with `jj git push --bookmark main`.
 - Commit types drive release-plz versioning, so `feat` is reserved for changes in what stakk can do.
   A purely presentational change — help-output layout, display formatting, wording — is `style`
   (or `docs` when it only touches documentation), not `feat`.
