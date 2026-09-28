@@ -822,6 +822,53 @@ pub async fn execute_submission_plan<R: JjRunner, F: Forge>(
         }
     }
 
+    // GitHub refuses to change the base of a PR while it is a member of a
+    // server-side stack, so the stacks holding a PR the loop below retargets
+    // are dissolved before the loop rather than in the reconcile after it.
+    // `none` retires every stack holding a submitted PR here, for the same
+    // reason. `on`/`auto` dissolve only the stacks in the way, and the
+    // reconcile re-creates the desired stack once the bases are right. PRs
+    // created in this run cannot be in a stack yet, so only existing ones
+    // are looked up.
+    let existing_prs: Vec<u64> = plan
+        .bookmark_plans
+        .iter()
+        .filter_map(|bp| bp.existing_pr.as_ref().map(|pr| pr.number))
+        .collect();
+    match native {
+        NativeStacks::Ignore => {}
+        NativeStacks::None => {
+            pb.set_message("Retiring server-side stacks...");
+            dissolve_stacks_holding(forge, &existing_prs, &existing_prs, &pb, |n| {
+                format!("  Retired server-side stack #{n}.")
+            })
+            .await;
+        }
+        NativeStacks::On | NativeStacks::Auto => {
+            let retargeted: Vec<u64> = plan
+                .bookmark_plans
+                .iter()
+                .filter(|bp| bp.needs_base_update)
+                .filter_map(|bp| bp.existing_pr.as_ref().map(|pr| pr.number))
+                .collect();
+            if !retargeted.is_empty() {
+                // A single PR is not re-registered as a stack afterwards, so
+                // then every open member of a dissolved stack loses native
+                // stacking, the submitted one included.
+                let restacked: &[u64] = if plan.bookmark_plans.len() < 2 {
+                    &[]
+                } else {
+                    &existing_prs
+                };
+                pb.set_message("Dissolving server-side stacks before retargeting...");
+                dissolve_stacks_holding(forge, &retargeted, restacked, &pb, |n| {
+                    format!("  Dissolved server-side stack #{n} so its PRs can be retargeted.")
+                })
+                .await;
+            }
+        }
+    }
+
     // Bookmark creation and the push loop share one fallible scope so that
     // a failure anywhere in it rolls back the bookmarks this run created but
     // never pushed. Without that, a stray local bookmark is the only trace
@@ -956,20 +1003,13 @@ pub async fn execute_submission_plan<R: JjRunner, F: Forge>(
     // rather than on a prediction (there is no availability probe; the
     // reconcile's own outcome is the answer). A single PR is not a stack,
     // so single-bookmark submissions skip the registration entirely (a
-    // stale server-side stack containing that PR is left alone — except
-    // under `none`, whose retirement covers single-PR submissions too).
+    // stale server-side stack containing that PR is left alone, unless it
+    // was dissolved before the push loop — by `none`'s retirement, or
+    // because the PR's base changed).
     let (native_state, native_err) = match native {
-        // `ignore` never touches the stack API.
-        NativeStacks::Ignore => (NativeState::Inactive, None),
-        // `none` mirrors `--stack-placement none`: turning the feature off
-        // retires the server-side stacks that are standing rather than
-        // leaving them stale.
-        NativeStacks::None => {
-            pb.set_message("Retiring server-side stacks...");
-            let submitted: Vec<u64> = stack_entries.iter().map(|e| e.pr_number).collect();
-            retire_native_stacks(forge, &submitted, &pb).await;
-            (NativeState::Inactive, None)
-        }
+        // `ignore` never touches the stack API, and `none` retired the
+        // standing stacks before the push loop.
+        NativeStacks::Ignore | NativeStacks::None => (NativeState::Inactive, None),
         NativeStacks::On | NativeStacks::Auto if stack_entries.len() < 2 => {
             (NativeState::Inactive, None)
         }
@@ -1423,15 +1463,30 @@ async fn reconcile_native_stack<F: Forge>(
     Ok(())
 }
 
-/// Dissolve every server-side stack containing a submitted PR.
+/// Dissolve every server-side stack containing a PR in `holding`.
 ///
-/// `--native-stacks none` mirrors `--stack-placement none`: turning the
-/// feature off retires what is standing rather than leaving it stale.
+/// Serves two callers, both before the push loop: `--native-stacks none`,
+/// which retires every stack holding a submitted PR (mirroring
+/// `--stack-placement none`: turning the feature off retires what is
+/// standing rather than leaving it stale), and `on`/`auto`, which dissolve
+/// the stacks holding a PR whose base is about to change, because GitHub
+/// refuses to retarget a stack member. `restacked` are the PRs that end up
+/// natively stacked again after the reconcile; every other open member of
+/// a dissolved stack is named in the eviction warning. `describe` renders
+/// the line printed for each dissolved stack.
+///
 /// Unlike the reconcile this covers single-PR submissions too, and it never
-/// fails the submit: `StacksUnavailable` means there is nothing to retire,
-/// and any other failure is an advisory warning — a re-run retries.
-async fn retire_native_stacks<F: Forge>(forge: &F, submitted: &[u64], pb: &indicatif::ProgressBar) {
-    let lookups = futures::future::join_all(submitted.iter().map(|&n| forge.get_stacks_for_pr(n)));
+/// fails the submit: `StacksUnavailable` means there is nothing to dissolve,
+/// and any other failure is an advisory warning — a re-run retries, and a
+/// base update that still hits a standing stack fails with its own error.
+async fn dissolve_stacks_holding<F: Forge>(
+    forge: &F,
+    holding: &[u64],
+    restacked: &[u64],
+    pb: &indicatif::ProgressBar,
+    describe: impl Fn(u64) -> String,
+) {
+    let lookups = futures::future::join_all(holding.iter().map(|&n| forge.get_stacks_for_pr(n)));
     let mut stacks: Vec<ForgeStack> = Vec::new();
     for result in lookups.await {
         match result {
@@ -1446,8 +1501,8 @@ async fn retire_native_stacks<F: Forge>(forge: &F, submitted: &[u64], pb: &indic
             Err(ForgeError::StacksUnavailable { .. }) => return,
             Err(e) => {
                 pb.println(format!(
-                    "  Warning: could not check for server-side stacks to retire: {e}. Re-running \
-                     `stakk submit` retries."
+                    "  Warning: could not check for server-side stacks to dissolve: {e}. \
+                     Re-running `stakk submit` retries."
                 ));
                 return;
             }
@@ -1457,17 +1512,17 @@ async fn retire_native_stacks<F: Forge>(forge: &F, submitted: &[u64], pb: &indic
         return;
     }
     // Dissolving a stack unstacks *all* its unmerged members, so open PRs
-    // beyond the submitted ones lose native stacking too — name them, like
-    // the reconcile's rebuild path does.
-    let evicted = evicted_pr_numbers(&stacks, submitted);
+    // that are not restacked lose native stacking — name them, like the
+    // reconcile's rebuild path does.
+    let evicted = evicted_pr_numbers(&stacks, restacked);
     for stack in &stacks {
         match forge.unstack(stack.number).await {
             Ok(()) => {
-                pb.println(format!("  Retired server-side stack #{}.", stack.number));
+                pb.println(describe(stack.number));
             }
             Err(e) => {
                 pb.println(format!(
-                    "  Warning: failed to retire server-side stack #{}: {e}. Re-running `stakk \
+                    "  Warning: failed to dissolve server-side stack #{}: {e}. Re-running `stakk \
                      submit` retries.",
                     stack.number
                 ));
@@ -1632,6 +1687,20 @@ mod tests {
 
     // -- Mock Forge --
 
+    /// What GitHub answers when asked to change the base of a PR that is a
+    /// member of a stack, shaped like `map_octocrab_error`'s output: the
+    /// reason sits in the source chain, not in the outer message.
+    fn stack_member_base_error() -> ForgeError {
+        ForgeError::Api {
+            message: "GitHub".to_string(),
+            source: "Validation Failed\nErrors:\n- \
+                     {\"code\":\"invalid\",\"field\":\"base\",\"message\":\"Cannot change the \
+                     base branch because the pull request is part of a \
+                     stack.\",\"resource\":\"PullRequest\"}"
+                .into(),
+        }
+    }
+
     struct MockForge {
         existing_prs: HashMap<String, PullRequest>,
         created_prs: Mutex<Vec<CreatePrParams>>,
@@ -1733,6 +1802,15 @@ mod tests {
             self
         }
 
+        /// Whether `pr_number` is in a pre-existing stack this run has not
+        /// dissolved.
+        fn in_standing_stack(&self, pr_number: u64) -> bool {
+            let unstacked = self.unstacked.lock().unwrap();
+            self.existing_stacks
+                .iter()
+                .any(|s| s.open_pr_numbers.contains(&pr_number) && !unstacked.contains(&s.number))
+        }
+
         /// The configured failure for stack calls, if any.
         fn stack_failure(&self) -> Option<ForgeError> {
             if self.stacks_unavailable {
@@ -1798,11 +1876,17 @@ mod tests {
             if let Some(ops) = &self.ops {
                 ops.lock().unwrap().push(Op::BaseUpdate(pr_number));
             }
-            self.updated_bases
-                .lock()
-                .unwrap()
-                .push((pr_number, new_base.to_string()));
-            async { Ok(()) }
+            // The forge refuses to retarget a member of a standing stack.
+            let result = if self.in_standing_stack(pr_number) {
+                Err(stack_member_base_error())
+            } else {
+                self.updated_bases
+                    .lock()
+                    .unwrap()
+                    .push((pr_number, new_base.to_string()));
+                Ok(())
+            };
+            async move { result }
         }
 
         fn update_pr_title(
@@ -1886,10 +1970,12 @@ mod tests {
             let result = if let Some(e) = self.stack_failure() {
                 Err(e)
             } else {
+                let unstacked = self.unstacked.lock().unwrap();
                 Ok(self
                     .existing_stacks
                     .iter()
                     .filter(|s| s.open_pr_numbers.contains(&pr_number))
+                    .filter(|s| !unstacked.contains(&s.number))
                     .cloned()
                     .collect())
             };
@@ -5297,6 +5383,110 @@ mod tests {
 
         assert!(forge.stack_lookups.lock().unwrap().is_empty());
         assert!(forge.created_stacks.lock().unwrap().is_empty());
+        assert!(forge.unstacked.lock().unwrap().is_empty());
+    }
+
+    /// The #299 shape: native stack #7 holds [#41, #42, #43, #44], and the
+    /// restructured submission keeps only #42 (now based on `main`) and #44
+    /// (now based on `feat-b`), so both need a base update while stacked.
+    fn restructured_stack_plan() -> (SubmissionPlan, MockForge) {
+        let keep = |bookmark: &str, number: u64, old_base: &str, base: &str| BookmarkPlan {
+            bookmark_name: bookmark.to_string(),
+            base: base.to_string(),
+            title: bookmark.to_string(),
+            body: None,
+            existing_pr: Some(make_pr(number, bookmark, old_base)),
+            needs_push: true,
+            needs_create: false,
+            needs_base_update: true,
+            needs_title_sync: false,
+            needs_body_sync: false,
+        };
+        let plan = SubmissionPlan {
+            bookmark_plans: vec![
+                keep("feat-b", 42, "feat-a", "main"),
+                keep("feat-d", 44, "feat-c", "feat-b"),
+            ],
+            bookmark_creations: vec![],
+            remote: "origin".to_string(),
+            pr_mode: PrMode::Regular,
+            default_branch: "main".to_string(),
+        };
+        let forge = MockForge::new().with_existing_stack(7, &[41, 42, 43, 44]);
+        (plan, forge)
+    }
+
+    #[tokio::test]
+    async fn native_on_dissolves_the_stack_before_retargeting_its_members() {
+        let (plan, forge) = restructured_stack_plan();
+        run_plan(&plan, &forge, StackPlacement::Comment, NativeStacks::On)
+            .await
+            .unwrap();
+
+        // The mock refuses to retarget a member of a standing stack, so the
+        // base updates landing at all pins the dissolve as coming first.
+        assert_eq!(*forge.unstacked.lock().unwrap(), vec![7]);
+        assert_eq!(
+            *forge.updated_bases.lock().unwrap(),
+            vec![(42, "main".to_string()), (44, "feat-b".to_string())]
+        );
+        assert_eq!(*forge.created_stacks.lock().unwrap(), vec![vec![42, 44]]);
+    }
+
+    #[tokio::test]
+    async fn native_auto_dissolves_the_stack_before_retargeting_its_members() {
+        let (plan, forge) = restructured_stack_plan();
+        run_plan(
+            &plan,
+            &forge,
+            StackPlacement::AutoComment,
+            NativeStacks::Auto,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(*forge.unstacked.lock().unwrap(), vec![7]);
+        assert_eq!(forge.updated_bases.lock().unwrap().len(), 2);
+        assert_eq!(*forge.created_stacks.lock().unwrap(), vec![vec![42, 44]]);
+    }
+
+    #[tokio::test]
+    async fn native_none_retires_the_stack_before_retargeting_its_members() {
+        let (plan, forge) = restructured_stack_plan();
+        run_plan(&plan, &forge, StackPlacement::Comment, NativeStacks::None)
+            .await
+            .unwrap();
+
+        assert_eq!(*forge.unstacked.lock().unwrap(), vec![7]);
+        assert_eq!(forge.updated_bases.lock().unwrap().len(), 2);
+        assert!(forge.created_stacks.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn native_on_leaves_stacks_alone_when_no_member_is_retargeted() {
+        let mut plan = two_existing_pr_plan();
+        plan.bookmark_plans[1].needs_base_update = true;
+        // #41's stack stands in no base update's way: only #42 is retargeted.
+        let forge = MockForge::new().with_existing_stack(7, &[41]);
+        run_plan(&plan, &forge, StackPlacement::Comment, NativeStacks::On)
+            .await
+            .unwrap();
+
+        assert!(forge.unstacked.lock().unwrap().is_empty());
+        assert_eq!(*forge.added_to_stacks.lock().unwrap(), vec![(7, vec![42])]);
+    }
+
+    #[tokio::test]
+    async fn native_ignore_cannot_retarget_a_stack_member() {
+        let (plan, forge) = restructured_stack_plan();
+        let err = run_plan(&plan, &forge, StackPlacement::Comment, NativeStacks::Ignore)
+            .await
+            .unwrap_err();
+
+        assert!(
+            matches!(&err, SubmitError::BaseUpdateFailed { bookmark, .. } if bookmark == "feat-b"),
+            "got {err:?}"
+        );
         assert!(forge.unstacked.lock().unwrap().is_empty());
     }
 

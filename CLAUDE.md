@@ -885,7 +885,7 @@ If you change any of the following, update `scripts/record-demo.py` in the same 
 - **`--native-stacks` reuses the placement vocabulary** — its members are `on`/`auto`/`none`/`ignore`,
   where `none` and `ignore` follow the same rule as their `--stack-placement` namesakes:
   `none` registers nothing *and* dissolves the server-side stacks containing submitted PRs
-  (`retire_native_stacks` — covers single-PR submissions too, and never fails the submit:
+  (`dissolve_stacks_holding`, before the push loop — covers single-PR submissions too, and never fails the submit:
   `StacksUnavailable` means nothing is standing, anything else is an advisory warning),
   while `ignore` never touches the stack API.
   There is deliberately no `off`: next to `none` it would invite "what's the difference?".
@@ -893,6 +893,13 @@ If you change any of the following, update `scripts/record-demo.py` in the same 
   (`POST /stacks` rejects PR lists that do not chain base→head),
   so the execute phase (interleaved push → base update → create) runs unchanged and remains the thing
   that produces what the stack API requires.
+  The one thing that runs ahead of it is a dissolve: GitHub refuses to change the base of a stack member
+  (`Cannot change the base branch because the pull request is part of a stack`),
+  so under `on`/`auto` every stack holding a PR with `needs_base_update` is unstacked (`dissolve_stacks_holding`)
+  before the loop, and the reconcile after it builds the desired stack from scratch.
+  Stacks holding no retargeted PR are left for the reconcile to judge.
+  `ignore` skips the dissolve, so there a restructured native stack fails with `base_update_failed`.
+  The mock forge refuses base updates on members of an undissolved stack, which is what pins the ordering.
   GitHub takes over *merge-time* sequencing
   (retarget + cascade rebase);
   stakk keeps *submit-time* sequencing, since auto-retargeting fires on merge, not on force-push.
