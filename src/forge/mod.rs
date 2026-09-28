@@ -114,6 +114,19 @@ pub enum ForgeError {
         #[source]
         source: Box<dyn std::error::Error + Send + Sync>,
     },
+
+    /// The forge refused to change a PR's base because the PR is a member
+    /// of a native stack (GitHub's 422 on `PATCH /pulls/{n}`). No `help`,
+    /// for the reason given on [`ForgeError::StacksUnavailable`]: it only
+    /// ever surfaces as the source of `SubmitError::BaseUpdateFailed`, whose
+    /// help is derived from it.
+    #[error("the pull request is part of a native stack: {message}")]
+    #[diagnostic(code(stakk::forge::base_locked_by_stack))]
+    BaseLockedByStack {
+        message: String,
+        #[source]
+        source: Box<dyn std::error::Error + Send + Sync>,
+    },
 }
 
 /// A pull request, forge-agnostic.

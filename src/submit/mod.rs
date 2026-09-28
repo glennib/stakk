@@ -170,17 +170,17 @@ pub enum SubmitError {
     },
 
     /// Failed to update the base branch of an existing PR.
+    ///
+    /// The help depends on why the forge refused, so it is a field: build
+    /// the variant with [`SubmitError::base_update_failed`].
     #[error("failed to update PR base for '{bookmark}'")]
-    #[diagnostic(
-        code(stakk::submit::base_update_failed),
-        help(
-            "the PR exists but its base branch could not be changed — check your token permissions"
-        )
-    )]
+    #[diagnostic(code(stakk::submit::base_update_failed))]
     BaseUpdateFailed {
         bookmark: String,
         #[source]
         source: ForgeError,
+        #[help]
+        help: &'static str,
     },
 
     /// Failed to create a new PR.
@@ -284,6 +284,36 @@ pub enum SubmitError {
         #[source]
         source: ForgeError,
     },
+}
+
+impl SubmitError {
+    /// A [`SubmitError::BaseUpdateFailed`] whose help names the cause the
+    /// forge gave. Only a rejected token points at the token: a validation
+    /// failure says why in the forge's message, which renders above the help.
+    fn base_update_failed(bookmark: String, source: ForgeError) -> Self {
+        let help = match source {
+            ForgeError::AuthFailed { .. } => {
+                "the PR exists, but the forge rejected the token when changing its base — check \
+                 that the token for this host may write pull requests; see `stakk docs auth`"
+            }
+            ForgeError::BaseLockedByStack { .. } => {
+                "the PR is a member of a native stack, and GitHub will not change the base of a \
+                 stack member. `--native-stacks on`, `auto` and `none` dissolve such stacks before \
+                 retargeting, `ignore` (the default) does not: re-run with one of those (env: \
+                 STAKK_NATIVE_STACKS). If one was already set, the warning above says why the \
+                 dissolve failed; re-running retries it"
+            }
+            _ => {
+                "the PR exists, but the forge refused to change its base — its message above says \
+                 why"
+            }
+        };
+        Self::BaseUpdateFailed {
+            bookmark,
+            source,
+            help,
+        }
+    }
 }
 
 /// Wrap a stack-API error, routing the not-available case to its dedicated
@@ -927,9 +957,8 @@ pub async fn execute_submission_plan<R: JjRunner, F: Forge>(
                 forge
                     .update_pr_base(pr.number, &bp.base)
                     .await
-                    .map_err(|source| SubmitError::BaseUpdateFailed {
-                        bookmark: bp.bookmark_name.clone(),
-                        source,
+                    .map_err(|source| {
+                        SubmitError::base_update_failed(bp.bookmark_name.clone(), source)
                     })?;
             }
 
@@ -1687,17 +1716,13 @@ mod tests {
 
     // -- Mock Forge --
 
-    /// What GitHub answers when asked to change the base of a PR that is a
-    /// member of a stack, shaped like `map_octocrab_error`'s output: the
-    /// reason sits in the source chain, not in the outer message.
+    /// What the GitHub forge answers when asked to change the base of a PR
+    /// that is a member of a stack.
     fn stack_member_base_error() -> ForgeError {
-        ForgeError::Api {
-            message: "GitHub".to_string(),
-            source: "Validation Failed\nErrors:\n- \
-                     {\"code\":\"invalid\",\"field\":\"base\",\"message\":\"Cannot change the \
-                     base branch because the pull request is part of a \
-                     stack.\",\"resource\":\"PullRequest\"}"
-                .into(),
+        ForgeError::BaseLockedByStack {
+            message: "Cannot change the base branch because the pull request is part of a stack."
+                .to_string(),
+            source: "Validation Failed".into(),
         }
     }
 
@@ -5488,6 +5513,37 @@ mod tests {
             "got {err:?}"
         );
         assert!(forge.unstacked.lock().unwrap().is_empty());
+        // The help names the stack, not the token (#300).
+        let help = err.help().unwrap().to_string();
+        assert!(help.contains("native stack"), "{help}");
+        assert!(help.contains("--native-stacks"), "{help}");
+    }
+
+    #[test]
+    fn base_update_help_blames_the_token_only_when_the_forge_rejected_it() {
+        let help = |source: ForgeError| {
+            SubmitError::base_update_failed("feat-a".to_string(), source)
+                .help()
+                .unwrap()
+                .to_string()
+        };
+
+        let auth = help(ForgeError::AuthFailed {
+            message: "Bad credentials".to_string(),
+            source: "401".into(),
+        });
+        assert!(auth.contains("token"), "{auth}");
+
+        let validation = help(ForgeError::Api {
+            message: "GitHub".to_string(),
+            source: "Validation Failed".into(),
+        });
+        assert!(!validation.contains("token"), "{validation}");
+        assert!(validation.contains("message above"), "{validation}");
+
+        let stacked = help(stack_member_base_error());
+        assert!(!stacked.contains("token"), "{stacked}");
+        assert!(stacked.contains("native stack"), "{stacked}");
     }
 
     /// `none` mirrors `--stack-placement none`: it registers nothing and

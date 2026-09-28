@@ -639,7 +639,14 @@ If you change any of the following, update `scripts/record-demo.py` in the same 
   every stack call is wrapped by `submit::wrap_stack_err` into a `SubmitError`,
   and miette renders only the outermost diagnostic's help
   (`#[source]` chains messages, not diagnostics) — a help there would be dead prose drifting from the copy that renders.
+  `ForgeError::BaseLockedByStack` follows the same rule: it is only ever the source of `SubmitError::BaseUpdateFailed`.
   This is the one sanctioned exception to the "help on all variants" rule.
+- `SubmitError::BaseUpdateFailed` carries its help as a `#[help]` field,
+  built by `SubmitError::base_update_failed` from the `ForgeError`: only `AuthFailed` points at the token,
+  `BaseLockedByStack` points at `--native-stacks`, and anything else points at the forge's own message,
+  which renders above the help.
+  The GitHub forge maps a 422 on the base update whose `errors` say "part of a stack" to `BaseLockedByStack`
+  (`map_base_update_error`), so `submit/` classifies on a variant rather than on GitHub's wording.
 - A 404 from the stacks API is route-dependent (`NotFound` in `stacks.rs`): on the collection
   routes it means the feature is not offered (`StacksUnavailable`), on `/stacks/{n}/add` it means
   the stack vanished since the lookup (`StackConflict`, converged by rebuilding), and on

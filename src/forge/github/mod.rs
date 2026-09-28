@@ -99,7 +99,7 @@ impl Forge for GitHubForge {
             .base(new_base)
             .send()
             .await
-            .map_err(map_octocrab_error)?;
+            .map_err(map_base_update_error)?;
         Ok(())
     }
 
@@ -240,5 +240,64 @@ fn map_octocrab_error(e: octocrab::Error) -> ForgeError {
     ForgeError::Api {
         message,
         source: Box::new(e),
+    }
+}
+
+/// Map a failed base update, telling apart the one refusal whose cause
+/// stakk can name: GitHub will not change the base of a PR that is a member
+/// of a native stack, and answers 422 with the reason in `errors`.
+fn map_base_update_error(e: octocrab::Error) -> ForgeError {
+    if let octocrab::Error::GitHub { source, .. } = &e
+        && source.status_code == http::StatusCode::UNPROCESSABLE_ENTITY
+        && let Some(message) = stack_membership_refusal(source.errors.as_deref())
+    {
+        return ForgeError::BaseLockedByStack {
+            message,
+            source: Box::new(e),
+        };
+    }
+    map_octocrab_error(e)
+}
+
+/// The message of the validation error saying the PR is part of a stack,
+/// if `errors` carries one.
+fn stack_membership_refusal(errors: Option<&[serde_json::Value]>) -> Option<String> {
+    errors?
+        .iter()
+        .filter_map(|error| error.get("message")?.as_str())
+        .find(|message| message.contains("part of a stack"))
+        .map(str::to_string)
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    #[test]
+    fn stack_membership_refusal_finds_the_stack_message() {
+        // The body GitHub sent for a base change on a stacked PR (#299).
+        let errors = vec![json!({
+            "code": "invalid",
+            "field": "base",
+            "message": "Cannot change the base branch because the pull request is part of a stack.",
+            "resource": "PullRequest",
+        })];
+        assert_eq!(
+            stack_membership_refusal(Some(&errors)).as_deref(),
+            Some("Cannot change the base branch because the pull request is part of a stack.")
+        );
+    }
+
+    #[test]
+    fn stack_membership_refusal_ignores_other_validation_errors() {
+        let errors = vec![
+            json!({"code": "invalid", "field": "base", "resource": "PullRequest"}),
+            json!({"code": "custom", "message": "There are no new commits between base and head."}),
+            json!("a bare string"),
+        ];
+        assert_eq!(stack_membership_refusal(Some(&errors)), None);
+        assert_eq!(stack_membership_refusal(None), None);
     }
 }
