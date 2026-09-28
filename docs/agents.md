@@ -34,7 +34,7 @@ All are repeatable and CLI-only: no environment variables, no config keys.
 
 `rev` is a jj revset that resolves to exactly one commit, handed to `jj log -r` verbatim:
 a `change_id` or `short_change_id` from `stakk graph`, `@-`, a bookmark name, any revset expression.
-Use `change_id` for anything stored — a short id is unique only against the repository right now.
+Use `change_id` for anything stored or compared; `short_change_id` is a trap (below).
 In `--new <rev>=<name>` the name starts at the first `=` outside parentheses and quotes,
 so `remote_bookmarks(main, remote=origin)=<name>` works.
 
@@ -110,8 +110,12 @@ stacks[]
                  is_boundary, is_leaf
 ```
 
-Three traps:
+Four traps:
 
+- **`short_change_id` is jj's *shortest* unique prefix**, often one or two characters
+  (`q`, `vv`), and valid only against the repository as it is right now.
+  Pass it back to stakk as-is; never prefix-match it against ids from `jj log`, commit messages or the user.
+  Match and store `change_id`.
 - **`stacks[]` has no stable order**, and a stack has no name.
   "The most recently modified stack" is the one with the highest `committer_timestamp` over its commits.
 - **`committer_timestamp` is offset-aware** (`2026-02-19T19:47:54+01:00`), so compare instants, not strings.
