@@ -162,8 +162,10 @@ pub struct SubmitArgs {
     ///
     /// REV as for --new. The name is derived with TF-IDF from the descriptions
     /// and files of the commits folded into the boundary, honoring
-    /// --auto-prefix. Falls back to stakk-<change_id> when nothing can be
-    /// derived or the derived name is already taken.
+    /// --auto-prefix. When the name is already taken, the next TF-IDF
+    /// variation is tried (as r does in the TUI); falls back to
+    /// stakk-<change_id> when nothing can be derived or every variation is
+    /// taken.
     #[arg(
         short = 'a',
         long,

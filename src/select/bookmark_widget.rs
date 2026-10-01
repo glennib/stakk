@@ -528,9 +528,8 @@ impl BookmarkAssignmentState {
             }
             RowState::UseTfidf(ts) => {
                 let old_variation = ts.variation;
-                // Try up to 6 variations.
-                for delta in 1..=6 {
-                    let new_variation = (old_variation + delta) % 6;
+                for delta in 1..=bookmark_gen::TFIDF_VARIATIONS {
+                    let new_variation = (old_variation + delta) % bookmark_gen::TFIDF_VARIATIONS;
                     if let Some(tfidf_state) = self.try_make_tfidf(cursor, new_variation) {
                         self.rows[cursor].state = RowState::UseTfidf(tfidf_state);
                         return VaryResult::TfidfCycled;
@@ -572,9 +571,9 @@ impl BookmarkAssignmentState {
             }
             RowState::UseTfidf(ts) => {
                 let old_variation = ts.variation;
-                // Try up to 6 variations in reverse.
-                for delta in 1..=6 {
-                    let new_variation = (old_variation + 6 - delta) % 6;
+                for delta in 1..=bookmark_gen::TFIDF_VARIATIONS {
+                    let new_variation = (old_variation + bookmark_gen::TFIDF_VARIATIONS - delta)
+                        % bookmark_gen::TFIDF_VARIATIONS;
                     if let Some(tfidf_state) = self.try_make_tfidf(cursor, new_variation) {
                         self.rows[cursor].state = RowState::UseTfidf(tfidf_state);
                         return VaryResult::TfidfCycled;

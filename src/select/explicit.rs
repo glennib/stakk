@@ -549,10 +549,11 @@ pub async fn resolve_bookmarks_explicitly<R: JjRunner>(
     Ok(SelectionResult { assignments, path })
 }
 
-/// TF-IDF name for a dynamic segment, honoring the auto prefix; falls back
-/// to the `stakk-<change_id>` default when nothing can be derived or the
-/// derived name is already taken (mirroring the TUI, which skips states
-/// that would produce a duplicate).
+/// TF-IDF name for a dynamic segment, honoring the auto prefix: the first
+/// of the TUI's `r`/`R` variations, in order, whose name is not taken. Two
+/// adjacent segments often share their top terms, so the first variation
+/// alone would regularly collide with the mark below. Falls back to the
+/// `stakk-<change_id>` default when no variation yields a free name.
 fn auto_name(
     segment: &[&SegmentCommit],
     change_id: &str,
@@ -566,10 +567,10 @@ fn auto_name(
             files: &c.files,
         })
         .collect();
-    match bookmark_gen::tfidf_prefixed_name(&data, 0, auto_prefix) {
-        Some(name) if !taken(&name) => name,
-        _ => bookmark_gen::default_bookmark_name(change_id),
-    }
+    (0..bookmark_gen::TFIDF_VARIATIONS)
+        .filter_map(|variation| bookmark_gen::tfidf_prefixed_name(&data, variation, auto_prefix))
+        .find(|name| !taken(name))
+        .unwrap_or_else(|| bookmark_gen::default_bookmark_name(change_id))
 }
 
 /// Resolve a rev (a jj revset) to one mutable commit on the stacks and the
@@ -1207,9 +1208,44 @@ mod tests {
         );
     }
 
+    /// Adjacent auto marks whose segments share their top terms derive the
+    /// same first variation; the upper mark moves on to the next free
+    /// variation instead of the `stakk-<change_id>` default.
+    #[tokio::test]
+    async fn second_auto_mark_sharing_top_terms_takes_next_variation() {
+        let mut graph = single_stack_graph();
+        graph.stacks[0].segments[0].commits[0].description =
+            "chore(aiven): lift termination protection on the legacy amber Kafka clusters".into();
+        graph.stacks[0].segments[0].commits[0].files = vec![];
+        graph.stacks[0].segments[1].commits[0].description =
+            "chore(aiven): remove the legacy amber Kafka clusters".into();
+        graph.stacks[0].segments[1].commits[0].files = vec![];
+        let s = spec(|s| s.new_auto = vec!["aaaa".into(), "bbbb".into()]);
+        let result = resolve(&graph, &s).await.unwrap();
+
+        let base = &result.assignments[0].bookmark_name;
+        let mid = &result.assignments[1].bookmark_name;
+        let mid_data = [tfidf::CommitData {
+            description: &graph.stacks[0].segments[1].commits[0].description,
+            files: &[],
+        }];
+        assert_eq!(
+            bookmark_gen::tfidf_prefixed_name(&mid_data, 0, None).as_ref(),
+            Some(base),
+            "precondition: both marks derive the same first variation",
+        );
+        assert_ne!(mid, base);
+        assert_ne!(mid, &bookmark_gen::default_bookmark_name("bbbb2222"));
+        assert_eq!(
+            bookmark_gen::tfidf_prefixed_name(&mid_data, 1, None).as_ref(),
+            Some(mid),
+            "the next variation in order is taken",
+        );
+    }
+
     /// Two auto marks deriving the same TF-IDF name do not collide: the
-    /// second falls back to its `stakk-<change_id>` default, mirroring the
-    /// TUI's skip-on-duplicate semantics.
+    /// second falls back to its `stakk-<change_id>` default once no
+    /// variation is free. Three terms make every variation the same name.
     #[tokio::test]
     async fn second_auto_mark_with_identical_input_falls_back() {
         let mut graph = single_stack_graph();
@@ -1261,11 +1297,14 @@ mod tests {
         assert!(matches!(err, ExplicitSelectionError::NewNameExists { .. }));
     }
 
-    /// An auto mark whose TF-IDF name collides with an existing bookmark
-    /// falls back to the default name instead of erroring.
+    /// An auto mark whose TF-IDF names all collide with an existing
+    /// bookmark falls back to the default name instead of erroring. The
+    /// segment's three terms make every variation the same name.
     #[tokio::test]
     async fn auto_mark_colliding_with_existing_bookmark_falls_back() {
         let mut graph = single_stack_graph();
+        graph.stacks[0].segments[0].commits[0].description = String::new();
+        graph.stacks[0].segments[0].commits[0].files = vec![];
         graph.stacks[0].segments[1].commits[0].description = "database caching layer".into();
         graph.stacks[0].segments[1].commits[0].files = vec![];
         // Discover what TF-IDF derives for the segment, then plant an
@@ -1336,11 +1375,14 @@ mod tests {
         assert!(matches!(err, ExplicitSelectionError::NewNameExists { .. }));
     }
 
-    /// An auto mark falls back to its default name when the TF-IDF name is
-    /// taken by a bookmark the graph cannot see.
+    /// An auto mark falls back to its default name when its TF-IDF names
+    /// are taken by a bookmark the graph cannot see. The segment's three
+    /// terms make every variation the same name.
     #[tokio::test]
     async fn auto_mark_colliding_outside_the_graph_falls_back() {
         let mut graph = single_stack_graph();
+        graph.stacks[0].segments[0].commits[0].description = String::new();
+        graph.stacks[0].segments[0].commits[0].files = vec![];
         graph.stacks[0].segments[1].commits[0].description = "database caching layer".into();
         graph.stacks[0].segments[1].commits[0].files = vec![];
         let s = spec(|s| s.new_auto = vec!["bbbb".into()]);

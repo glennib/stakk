@@ -121,6 +121,11 @@ pub(super) const MAX_BOOKMARK_LENGTH: usize = 255;
 /// Characters disallowed in bookmark names.
 pub(super) const DISALLOWED_CHARS: &str = " ~^:?*[\\";
 
+/// Number of TF-IDF name variations: the ones `r`/`R` cycle through in the
+/// TUI, and the ones `--new-auto` tries in order before falling back to the
+/// `stakk-<change_id>` default.
+pub(super) const TFIDF_VARIATIONS: usize = 6;
+
 /// Timeout for in-flight cache entries before they can be retried.
 pub const COMPUTING_TIMEOUT: Duration = Duration::from_mins(1);
 
