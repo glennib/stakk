@@ -19,6 +19,7 @@ pedantic = { level = "warn", priority = -1 }
 too_many_lines = "allow"
 doc_markdown = "allow"
 doc_link_with_quotes = "allow"
+assert_is_empty = "allow"
 
 [[bin]]
 name = "stakk"
