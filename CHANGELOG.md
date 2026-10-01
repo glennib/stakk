@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.3](https://github.com/glennib/stakk/compare/v3.0.2...v3.0.3) - 2026-10-01
+
+### Fixed
+
+- *(select)* try every TF-IDF variation before `--new-auto` falls back
+
+### Other
+
+- *(deps)* update dependency uv to v0.12.21 ([#305](https://github.com/glennib/stakk/pull/305))
+- *(deps)* update dependency rumdl to v0.2.78 ([#304](https://github.com/glennib/stakk/pull/304))
+- *(deps)* update dependency uv to v0.12.20 ([#302](https://github.com/glennib/stakk/pull/302))
+
 ## [3.0.2](https://github.com/glennib/stakk/compare/v3.0.1...v3.0.2) - 2026-09-28
 
 ### Fixed
