@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.4](https://github.com/glennib/stakk/compare/v3.0.3...v3.0.4) - 2026-10-03
+
+### Other
+
+- *(deps)* update dependency cargo-binstall to v1.25.1 ([#311](https://github.com/glennib/stakk/pull/311))
+- *(deps)* update rust crate tokio to v1.53.2 ([#310](https://github.com/glennib/stakk/pull/310))
+- *(deps)* update rust crate insta to v1.49.0 ([#309](https://github.com/glennib/stakk/pull/309))
+- *(deps)* update dependency cargo-binstall to v1.25.0 ([#308](https://github.com/glennib/stakk/pull/308))
+- *(deps)* update dependency uv to v0.12.22 ([#307](https://github.com/glennib/stakk/pull/307))
+- *(clippy)* allow `assert_is_empty`
+
 ## [3.0.3](https://github.com/glennib/stakk/compare/v3.0.2...v3.0.3) - 2026-10-01
 
 ### Fixed
