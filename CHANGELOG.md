@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.4](https://github.com/glennib/stakk/compare/v3.0.3...v3.0.4) - 2026-10-08
+
+### Other
+
+- *(deps)* update dependency cargo:cargo-nextest to v0.9.148 ([#320](https://github.com/glennib/stakk/pull/320))
+- *(deps)* update rust crate toml to v1.1.7 ([#319](https://github.com/glennib/stakk/pull/319))
+- *(deps)* update dependency cargo:release-plz to v0.3.170 ([#317](https://github.com/glennib/stakk/pull/317))
+- *(deps)* update dependency jj to v0.46.0 ([#318](https://github.com/glennib/stakk/pull/318))
+- *(deps)* update rust crate jiff to v0.2.38 ([#316](https://github.com/glennib/stakk/pull/316))
+- *(deps)* update dependency cargo-binstall to v1.25.2 ([#315](https://github.com/glennib/stakk/pull/315))
+- *(deps)* lock file maintenance ([#313](https://github.com/glennib/stakk/pull/313))
+- *(deps)* update dependency uv to v0.12.23 ([#312](https://github.com/glennib/stakk/pull/312))
+- *(deps)* update dependency cargo-binstall to v1.25.1 ([#311](https://github.com/glennib/stakk/pull/311))
+- *(deps)* update rust crate tokio to v1.53.2 ([#310](https://github.com/glennib/stakk/pull/310))
+- *(deps)* update rust crate insta to v1.49.0 ([#309](https://github.com/glennib/stakk/pull/309))
+- *(deps)* update dependency cargo-binstall to v1.25.0 ([#308](https://github.com/glennib/stakk/pull/308))
+- *(deps)* update dependency uv to v0.12.22 ([#307](https://github.com/glennib/stakk/pull/307))
+- *(clippy)* allow `assert_is_empty`
+
 ## [3.0.3](https://github.com/glennib/stakk/compare/v3.0.2...v3.0.3) - 2026-10-01
 
 ### Fixed
