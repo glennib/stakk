@@ -39,6 +39,12 @@ Breaking changes deferred to the next major are marked `NEXT-MAJOR:` where they 
   That job installs only the tools in its `install_args` and sets `MISE_TASK_RUN_AUTO_INSTALL=false`,
   because the cargo-backend tools without a prebuilt binary compile from source on each job;
   a tool `ci:target` starts using goes into `install_args` too.
+  It also sets `NEXTEST_PROFILE=ci`, the default test set with `fail-fast = false`,
+  so one run reports every test that fails on a platform.
+- **Line endings are LF everywhere**: `.gitattributes` sets `* text=auto eol=lf`.
+  Git for Windows checks text out as CRLF by default, and the Windows release is built from such a checkout,
+  so without it `include_str!`ed payload — the default stack-comment template, `docs/` — ships with CRLF
+  (v3.0.4's Windows binary posted stack comments with `\r\n` line endings).
 - **`mise install` works on every release target.**
   A tool with no build for some platform carries an `os` list in `mise.toml`
   (asciinema: `unix`),
@@ -59,7 +65,7 @@ Breaking changes deferred to the next major are marked `NEXT-MAJOR:` where they 
     `mise run e2e` starts the instance if needed and runs the suite; `mise run e2e -- -E 'test(/s01/)'` runs one;
     `eval "$(scripts/e2e-forgejo.py env)"` then `cargo nextest run --profile e2e` iterates without the script;
     `mise run e2e:down` discards the instance.
-    `.config/nextest.toml` keeps the default profile from running the `e2e` binary
+    `.config/nextest.toml` keeps the default and `ci` profiles from running the `e2e` binary
     and the `e2e` profile from running anything else.
   - The crate imports nothing from `src/`: its Forgejo client and serde structs are an independent second
     implementation, so the assertions cannot share a bug with the forge under test.

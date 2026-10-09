@@ -1,6 +1,13 @@
 [profile.default]
 default-filter = "not binary(e2e)"
 
+# The `ci-target` job's profile (NEXTEST_PROFILE in ci.yml): the default set,
+# run to the end, so one pass reports every failure on a platform nobody
+# runs locally.
+[profile.ci]
+default-filter = "not binary(e2e)"
+fail-fast = false
+
 [profile.e2e]
 default-filter = "binary(e2e)"
 fail-fast = false

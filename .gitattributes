@@ -1,0 +1,5 @@
+# Check text files out with LF on every platform, whatever `core.autocrlf`
+# says. Files under src/ and docs/ are compiled into the binary (`include_str!`,
+# build.rs), so a CRLF checkout changes what stakk writes: the Windows release
+# is built from a checkout on a Windows runner, where Git defaults to CRLF.
+* text=auto eol=lf

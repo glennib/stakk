@@ -90,6 +90,8 @@ jobs:
       # prebuilt binary for some of these platforms and compile from source,
       # which cost a quarter of an hour on aarch64-apple-darwin.
       MISE_TASK_RUN_AUTO_INSTALL: "false"
+      # Report every failing test, not just the first (.config/nextest.toml).
+      NEXTEST_PROFILE: ci
 
     steps:
       - name: Checkout code
