@@ -600,7 +600,7 @@ mod tests {
     #[cfg(unix)]
     #[tokio::test]
     async fn empty_output_returns_error() {
-        let err = run_command("echo -n ''", "{}", COMPUTING_TIMEOUT)
+        let err = run_command("printf ''", "{}", COMPUTING_TIMEOUT)
             .await
             .unwrap_err();
         assert!(matches!(err, BookmarkGenError::EmptyOutput { .. }));
