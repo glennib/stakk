@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.6](https://github.com/glennib/stakk/compare/v3.0.5...v3.0.6) - 2026-10-09
+
+3.0.5 was published to crates.io, but its release failed before building any binaries,
+so this is the first release with prebuilt binaries since 3.0.4.
+If you install those, the [3.0.5 notes](https://github.com/glennib/stakk/releases/tag/v3.0.5) apply to this upgrade too:
+stack comments are rendered with minijinja 3, which can change how a custom `--template-path` template renders.
+
+On Windows, stakk now writes stack comments with LF line endings, like on every other platform.
+Earlier Windows binaries were built from a CRLF checkout and wrote `\r\n` into them.
+
+### Fixed
+
+- check text files out with LF on every platform
+- *(deps)* drop octocrab's aws-lc-rs JWT backend to fix the Windows release
+
+### Other
+
+- make `mise install` work on every release target
+- print empty output with `printf`, not `echo -n`
+- run lints, tests and build on every release target
+
 ## [3.0.5](https://github.com/glennib/stakk/compare/v3.0.4...v3.0.5) - 2026-10-09
 
 Stack comments are now rendered with minijinja 3.
