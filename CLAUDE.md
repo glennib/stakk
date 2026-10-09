@@ -31,6 +31,11 @@ Breaking changes deferred to the next major are marked `NEXT-MAJOR:` where they 
 - **Unit/integration tests**: `cargo nextest run --all-targets`.
 - **Final pre-commit check**: `mise run ci` — run this after implementing plans
   and before committing.
+- **Per-target CI**: `ci` is `fmt:check`, `md:check`, `deps:check` and `ci:target` (clippy, tests, debug build).
+  GitHub CI runs all of `ci` on x86_64 Linux and only `ci:target` on the other release targets,
+  in the `ci-target` matrix in [`ci.yml`](.github/workflows/ci.yml), on the same runners `dist` builds them on.
+  The matrix mirrors `targets` in `dist-workspace.toml`: change one, change the other.
+  Keep `ci:target`'s tasks plain commands — on Windows mise runs them through `cmd`, not `sh`.
 - **End-to-end suite** (`tests/e2e/`, nextest binary `e2e`):
   black-box runs of the `stakk` binary against real jj and a real forge — a throwaway Forgejo container —
   covering forge-agnostic submission (`--keep`/`--new*`, stack comments and body fences, placement migration,

@@ -73,7 +73,14 @@ fi
 
 [tasks.ci]
 description = "Run all CI checks"
-depends = ["fmt:check", "md:check", "deps:check", "clippy", "test", "build:debug"]
+depends = ["fmt:check", "md:check", "deps:check", "ci:target"]
+
+# The part of `ci` whose outcome depends on the host target. CI runs it on every
+# target `dist-workspace.toml` releases for; the rest of `ci` runs on Linux only.
+# Plain commands only: on Windows mise runs tasks through `cmd`, not `sh`.
+[tasks."ci:target"]
+description = "Run the target-dependent CI checks (lints, tests, build)"
+depends = ["clippy", "test", "build:debug"]
 
 [tasks.record-demo]
 description = "Re-record the README demo gif (resets the playground repo!)"

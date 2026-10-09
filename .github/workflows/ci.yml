@@ -60,6 +60,61 @@ jobs:
       - name: Run CI checks
         run: mise run ci
 
+  # `mise run ci:target` on the release targets `ci` does not cover, on the
+  # runners `dist` builds them on (see the `plan` job's matrix in release.yml),
+  # so a target-specific build failure shows up on the pull request instead of
+  # in the tag-triggered release. `ci` above covers x86_64-unknown-linux-gnu.
+  ci-target:
+    name: ci-target (${{ matrix.target }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-22.04-arm
+          - target: aarch64-apple-darwin
+            runner: macos-14
+          - target: x86_64-apple-darwin
+            runner: macos-15-intel
+          - target: x86_64-pc-windows-msvc
+            runner: windows-2022
+
+    env:
+      # Debug info is the bulk of the cached target directory. Line tables keep
+      # file:line in panic backtraces at a fraction of the size.
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
+      CARGO_PROFILE_TEST_DEBUG: line-tables-only
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Cache cargo registry and build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          # Only the default branch writes cache entries: branch-scoped caches
+          # are invisible to other branches, so saving from a PR costs quota
+          # and helps nothing.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      # The action rather than the `mise.run` script, which has no Windows
+      # install. Only the tools `ci:target` runs: the rest of mise.toml
+      # (asciinema, agg, jj, ...) is unused here and not offered on every
+      # platform.
+      - name: Install mise and tools
+        uses: jdx/mise-action@v5
+        with:
+          install_args: cargo-binstall cargo:cargo-nextest
+
+      - name: Run target-dependent CI checks
+        run: mise run ci:target
+
   # Separate from `ci` because the e2e suite needs a container runtime (it
   # drives stakk against a Forgejo instance), which `mise run ci` must not.
   # Docker is preinstalled on ubuntu-latest and the lifecycle script detects it.
