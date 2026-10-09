@@ -85,6 +85,10 @@ jobs:
       # file:line in panic backtraces at a fraction of the size.
       CARGO_PROFILE_DEV_DEBUG: line-tables-only
       CARGO_PROFILE_TEST_DEBUG: line-tables-only
+      # `mise run` otherwise installs every tool in mise.toml before running a
+      # task, undoing the narrow `install_args` below — and some of those tools
+      # have no build for some of these platforms.
+      MISE_TASK_RUN_AUTO_INSTALL: "false"
 
     steps:
       - name: Checkout code

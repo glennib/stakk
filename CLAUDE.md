@@ -36,6 +36,9 @@ Breaking changes deferred to the next major are marked `NEXT-MAJOR:` where they 
   in the `ci-target` matrix in [`ci.yml`](.github/workflows/ci.yml), on the same runners `dist` builds them on.
   The matrix mirrors `targets` in `dist-workspace.toml`: change one, change the other.
   Keep `ci:target`'s tasks plain commands — on Windows mise runs them through `cmd`, not `sh`.
+  That job installs only the tools in its `install_args` and sets `MISE_TASK_RUN_AUTO_INSTALL=false`,
+  because several `mise.toml` tools have no build for some of those platforms;
+  a tool `ci:target` starts using goes into `install_args` too.
 - **End-to-end suite** (`tests/e2e/`, nextest binary `e2e`):
   black-box runs of the `stakk` binary against real jj and a real forge — a throwaway Forgejo container —
   covering forge-agnostic submission (`--keep`/`--new*`, stack comments and body fences, placement migration,
