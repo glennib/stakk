@@ -53,7 +53,9 @@ Each entry carries `bookmark_name`, `pr_url`, `pr_number`, `title`, `base`, `is_
 `is_current` and `is_leaf`.
 `stakk submit --help` prints the same list with a worked example.
 The context is stable surface — names are only added, never renamed or removed, short of a major release
-(`stakk docs stability`); the built-in template's text is not.
+(`stakk docs stability`);
+the built-in template's text is not, and neither is the template language,
+which follows the minijinja version stakk is built with.
 
 `title` is the *commit-derived* title,
 which can differ from the PR's live title when `--sync-pr-content` excludes titles.

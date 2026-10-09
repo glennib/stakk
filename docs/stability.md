@@ -49,6 +49,10 @@ These may change in any release.
   Only the `stakk docs <topic>` invocation shape is stable.
 - **The built-in stack comment template.**
   What it renders may change in any release; the context it renders from is stable (above).
+- **The template language.**
+  `--template-path` templates are rendered by minijinja, so what its filters,
+  tests and operators do follows the minijinja version stakk is built with.
+  A release that updates minijinja may change how the same template renders a given context.
 - **The order of `stacks[]` in the `stakk graph` JSON.**
   Choose a stack by its bookmarks or contents, never by index.
 - **The `pretty` output of `stakk graph`.**

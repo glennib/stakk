@@ -7,6 +7,7 @@ use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use clap::ValueEnum;
 use minijinja::Environment;
+use minijinja::value::Serde;
 use serde::Serialize;
 
 use super::Comment;
@@ -137,11 +138,12 @@ pub fn format_stack_comment(
     let encoded = BASE64.encode(serde_json::to_string(data).expect("serialization cannot fail"));
     let metadata_line = format!("{COMMENT_DATA_PREFIX}{encoded}{COMMENT_DATA_POSTFIX}");
 
-    let rendered = template
-        .render(context)
-        .map_err(|e| SubmitError::TemplateRenderFailed {
-            message: e.to_string(),
-        })?;
+    let rendered =
+        template
+            .render(Serde(context))
+            .map_err(|e| SubmitError::TemplateRenderFailed {
+                message: e.to_string(),
+            })?;
 
     Ok(format!("{metadata_line}\n{rendered}"))
 }
