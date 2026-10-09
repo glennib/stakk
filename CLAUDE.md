@@ -37,8 +37,16 @@ Breaking changes deferred to the next major are marked `NEXT-MAJOR:` where they 
   The matrix mirrors `targets` in `dist-workspace.toml`: change one, change the other.
   Keep `ci:target`'s tasks plain commands — on Windows mise runs them through `cmd`, not `sh`.
   That job installs only the tools in its `install_args` and sets `MISE_TASK_RUN_AUTO_INSTALL=false`,
-  because several `mise.toml` tools have no build for some of those platforms;
+  because the cargo-backend tools without a prebuilt binary compile from source on each job;
   a tool `ci:target` starts using goes into `install_args` too.
+- **`mise install` works on every release target.**
+  A tool with no build for some platform carries an `os` list in `mise.toml`
+  (asciinema: `unix`),
+  and a tool whose default registry entry is missing a platform its releases cover uses the `github:` backend instead
+  (`github:mitsuhiko/insta`).
+  Check a new or bumped tool with `mise lock --platform linux-x64,linux-arm64,macos-x64,macos-arm64,windows-x64` in a
+  scratch copy of `mise.toml`: a platform missing from a tool's entries in the resulting `mise.lock` is one it cannot
+  install on.
 - **End-to-end suite** (`tests/e2e/`, nextest binary `e2e`):
   black-box runs of the `stakk` binary against real jj and a real forge — a throwaway Forgejo container —
   covering forge-agnostic submission (`--keep`/`--new*`, stack comments and body fences, placement migration,

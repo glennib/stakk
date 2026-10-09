@@ -1,13 +1,16 @@
 [tools]
 uv = "0.12.24"
-"github:asciinema/asciinema" = "3.2.1"
+# No Windows build. Only `record-demo` uses it, which needs tmux anyway.
+"github:asciinema/asciinema" = { version = "3.2.1", os = ["unix"] }
 "github:asciinema/agg" = "1.9.0"
 cargo-binstall = "1.25.2"
 "cargo:cargo-dist" = "0.32.0"
 "cargo:cargo-edit" = "0.13.13"
 "cargo:cargo-nextest" = "0.9.148"
 "cargo:release-plz" = "0.3.170"
-cargo-insta = "latest"
+# From the GitHub releases rather than the default aqua registry entry, which
+# lists no linux/arm64 build although the releases carry one.
+"github:mitsuhiko/insta" = "latest"
 # Pinned: `md:check` gates CI, so a new rumdl release must not fail the build
 # out of nowhere.
 rumdl = "0.2.78"

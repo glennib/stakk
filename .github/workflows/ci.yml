@@ -86,8 +86,9 @@ jobs:
       CARGO_PROFILE_DEV_DEBUG: line-tables-only
       CARGO_PROFILE_TEST_DEBUG: line-tables-only
       # `mise run` otherwise installs every tool in mise.toml before running a
-      # task, undoing the narrow `install_args` below — and some of those tools
-      # have no build for some of these platforms.
+      # task, undoing the narrow `install_args` below. Several of them have no
+      # prebuilt binary for some of these platforms and compile from source,
+      # which cost a quarter of an hour on aarch64-apple-darwin.
       MISE_TASK_RUN_AUTO_INSTALL: "false"
 
     steps:
@@ -109,8 +110,7 @@ jobs:
 
       # The action rather than the `mise.run` script, which has no Windows
       # install. Only the tools `ci:target` runs: the rest of mise.toml
-      # (asciinema, agg, jj, ...) is unused here and not offered on every
-      # platform.
+      # (asciinema, agg, jj, ...) is unused here.
       - name: Install mise and tools
         uses: jdx/mise-action@v5
         with:
