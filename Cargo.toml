@@ -35,7 +35,7 @@ futures = "0.3"
 http = "1.4.0"
 indicatif = "0.18"
 miette = { version = "7", features = ["fancy"] }
-minijinja = { version = "2", default-features = false, features = ["builtins", "serde"] }
+minijinja = { version = "3", default-features = false, features = ["builtins", "serde"] }
 octocrab = "0.54.1"
 reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "json"] }
 # Direct edge onto the rustls octocrab already links, so `forge::forgejo::transport`
