@@ -581,8 +581,14 @@ If you change any of the following, update `scripts/record-demo.py` in the same 
   stays the only provider and `aws-lc-rs`/`openssl-sys` stay out of the tree —
   but that feature makes `reqwest::Client::build()` panic unless a process-level `CryptoProvider` is installed,
   and octocrab installs one only when it first builds a client, which a Forgejo-only run never does.
-  `ReqwestTransport::new()` therefore installs `ring` when nothing is installed yet;
-  keep `cargo tree -i aws-lc-rs` and `cargo tree -i openssl-sys` empty.
+  `ReqwestTransport::new()` therefore installs `ring` when nothing is installed yet.
+  `mise run deps:check` (part of `ci`) fails if `aws-lc-rs`,
+  `aws-lc-sys` or `openssl-sys` enters the tree for any target. octocrab is built with `default-features = false`
+  for this reason: its default `jwt-aws-lc-rs` feature
+  (GitHub App auth, which stakk never uses)
+  links `aws-lc-sys`, which needs NASM on Windows —
+  a failure only the release workflow's Windows build would otherwise show.
+  A dependency bump that turns on a new default feature has to keep passing that check.
 - jj JSON output uses NDJSON (one JSON object per line).
   Parse with `lines()` plus a per-line `serde_json::from_str`.
 - `jj git remote list` outputs plain text, not JSON.

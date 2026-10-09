@@ -55,9 +55,25 @@ run = "cargo build --release"
 description = "Check that the project compiles"
 run = "cargo build"
 
+# `ring` is the only crypto provider (see `forge::forgejo::transport`). Checked
+# for every target: `aws-lc-sys` builds on Linux CI but needs NASM on Windows,
+# which only the release workflow builds for.
+[tasks."deps:check"]
+description = "Check that no second crypto/TLS provider is in the dependency tree"
+run = """
+set -e
+tree=$(cargo tree --locked --target all --edges normal,build --prefix none --format '{p}')
+banned=$(printf '%s\n' "$tree" | grep -E '^(aws-lc-rs|aws-lc-sys|openssl-sys) ' | sort -u || true)
+if [ -n "$banned" ]; then
+  printf 'error: banned crates in the dependency tree:\n%s\n' "$banned" >&2
+  echo "see what pulls them in with: cargo tree --target all -e features -i <crate>" >&2
+  exit 1
+fi
+"""
+
 [tasks.ci]
 description = "Run all CI checks"
-depends = ["fmt:check", "md:check", "clippy", "test", "build:debug"]
+depends = ["fmt:check", "md:check", "deps:check", "clippy", "test", "build:debug"]
 
 [tasks.record-demo]
 description = "Re-record the README demo gif (resets the playground repo!)"

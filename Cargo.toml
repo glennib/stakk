@@ -36,7 +36,18 @@ http = "1.4.0"
 indicatif = "0.18"
 miette = { version = "7", features = ["fancy"] }
 minijinja = { version = "3", default-features = false, features = ["builtins", "serde"] }
-octocrab = "0.54.1"
+# Octocrab's defaults minus the `jwt*` features: stakk never authenticates as a
+# GitHub App, and `jwt-aws-lc-rs` (the default since 0.54.3) links `aws-lc-sys`,
+# whose Windows build needs NASM.
+octocrab = { version = "0.54.3", default-features = false, features = [
+  "default-client",
+  "follow-redirect",
+  "retry",
+  "rustls",
+  "rustls-ring",
+  "timeout",
+  "tracing",
+] }
 reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "json"] }
 # Direct edge onto the rustls octocrab already links, so `forge::forgejo::transport`
 # can install `ring` as the process-level provider — reqwest's `rustls-no-provider`
