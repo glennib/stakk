@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.5](https://github.com/glennib/stakk/compare/v3.0.4...v3.0.5) - 2026-10-09
+
+Stack comments are now rendered with minijinja 3.
+The built-in template renders exactly as before,
+but a custom `--template-path` template may not, because minijinja 3 brings several operators and filters closer to Jinja2:
+
+- printing a whole object (`{{ entry }}`, `{{ stack }}`) uses Python-style single quotes;
+- `tojson` puts a space after commas and colons;
+- `title` only starts a word after whitespace or one of `-([{<`, so `"don't" | title` is `Don't`, not `Don'T`;
+- booleans count as numbers, `round` rounds half to even, `//` and `%` floor like Python,
+  and division by zero is an error.
+
+The full list is in minijinja's [3.0.0 changelog](https://github.com/mitsuhiko/minijinja/blob/main/CHANGELOG.md#300).
+`docs/stability.md` now lists the template language as not stable:
+it follows the minijinja version stakk is built with, so a release that updates minijinja may change how a template renders.
+The render context stays under the contract.
+
+### Fixed
+
+- *(deps)* update minijinja to v3
+
+### Other
+
+- *(deps)* update rust crate toml to v1.1.8 ([#325](https://github.com/glennib/stakk/pull/325))
+- *(deps)* update dependency uv to v0.12.24 ([#324](https://github.com/glennib/stakk/pull/324))
+
 ## [3.0.4](https://github.com/glennib/stakk/compare/v3.0.3...v3.0.4) - 2026-10-08
 
 ### Other
