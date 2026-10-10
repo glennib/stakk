@@ -1,5 +1,5 @@
 [tools]
-uv = "0.12.24"
+uv = "0.13.0"
 # No Windows build. Only `record-demo` uses it, which needs tmux anyway.
 "github:asciinema/asciinema" = { version = "3.2.1", os = ["unix"] }
 "github:asciinema/agg" = "1.9.0"
