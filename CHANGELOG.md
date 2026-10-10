@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.7](https://github.com/glennib/stakk/compare/v3.0.6...v3.0.7) - 2026-10-10
+
+### Other
+
+- *(deps)* update rust crate serde_json to v1.0.152 ([#332](https://github.com/glennib/stakk/pull/332))
+- *(deps)* update dependency cargo-binstall to v1.25.3 ([#331](https://github.com/glennib/stakk/pull/331))
+- *(deps)* update dependency cargo:release-plz to v0.3.171 ([#330](https://github.com/glennib/stakk/pull/330))
+- *(deps)* update dependency uv to v0.13.0 ([#329](https://github.com/glennib/stakk/pull/329))
+- *(deps)* update dependency rumdl to v0.2.79 ([#327](https://github.com/glennib/stakk/pull/327))
+
 ## [3.0.6](https://github.com/glennib/stakk/compare/v3.0.5...v3.0.6) - 2026-10-09
 
 3.0.5 was published to crates.io, but its release failed before building any binaries,
