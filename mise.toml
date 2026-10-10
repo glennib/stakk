@@ -7,7 +7,7 @@ cargo-binstall = "1.25.2"
 "cargo:cargo-dist" = "0.32.0"
 "cargo:cargo-edit" = "0.13.13"
 "cargo:cargo-nextest" = "0.9.148"
-"cargo:release-plz" = "0.3.170"
+"cargo:release-plz" = "0.3.171"
 # From the GitHub releases rather than the default aqua registry entry, which
 # lists no linux/arm64 build although the releases carry one.
 "github:mitsuhiko/insta" = "latest"
