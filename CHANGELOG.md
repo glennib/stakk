@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.7](https://github.com/glennib/stakk/compare/v3.0.6...v3.0.7) - 2026-10-17
+
+### Other
+
+- *(deps)* update dependency cargo-binstall to v1.26.0 ([#346](https://github.com/glennib/stakk/pull/346))
+- *(deps)* update dependency rumdl to v0.3.0 ([#345](https://github.com/glennib/stakk/pull/345))
+- *(deps)* update rust crate octocrab to v0.54.5 ([#344](https://github.com/glennib/stakk/pull/344))
+- *(deps)* update rust crate minijinja to v3.0.1 ([#342](https://github.com/glennib/stakk/pull/342))
+- *(deps)* update rust crate rustls to v0.23.46 ([#341](https://github.com/glennib/stakk/pull/341))
+- *(deps)* update dependency uv to v0.13.1 ([#340](https://github.com/glennib/stakk/pull/340))
+- *(deps)* update rust crate tokio to v1.53.3 ([#339](https://github.com/glennib/stakk/pull/339))
+- *(deps)* update rust crate octocrab to v0.54.4 ([#338](https://github.com/glennib/stakk/pull/338))
+- *(deps)* update dependency cargo:release-plz to v0.3.172 ([#337](https://github.com/glennib/stakk/pull/337))
+- *(deps)* lock file maintenance ([#334](https://github.com/glennib/stakk/pull/334))
+- *(deps)* update rust crate serde_json to v1.0.154 ([#333](https://github.com/glennib/stakk/pull/333))
+- *(deps)* update rust crate serde_json to v1.0.152 ([#332](https://github.com/glennib/stakk/pull/332))
+- *(deps)* update dependency cargo-binstall to v1.25.3 ([#331](https://github.com/glennib/stakk/pull/331))
+- *(deps)* update dependency cargo:release-plz to v0.3.171 ([#330](https://github.com/glennib/stakk/pull/330))
+- *(deps)* update dependency uv to v0.13.0 ([#329](https://github.com/glennib/stakk/pull/329))
+- *(deps)* update dependency rumdl to v0.2.79 ([#327](https://github.com/glennib/stakk/pull/327))
+
 ## [3.0.6](https://github.com/glennib/stakk/compare/v3.0.5...v3.0.6) - 2026-10-09
 
 3.0.5 was published to crates.io, but its release failed before building any binaries,
