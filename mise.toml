@@ -5,7 +5,7 @@ uv = "0.13.4"
 "github:asciinema/agg" = "1.9.0"
 cargo-binstall = "1.26.0"
 "cargo:cargo-dist" = "0.32.0"
-"cargo:cargo-edit" = "0.13.13"
+"cargo:cargo-edit" = "0.13.14"
 "cargo:cargo-nextest" = "0.9.149"
 "cargo:release-plz" = "0.3.174"
 # From the GitHub releases rather than the default aqua registry entry, which
