@@ -19,6 +19,11 @@
 //! exactly as they do for jj. That lookup is the resolver's only repository
 //! access: it produces a [`SelectionResult`], and all bookmark creation
 //! happens later, in the execute phase.
+//!
+//! `--keep` takes a bookmark name or a `REV`. An exact bookmark name on the
+//! graph is taken as that bookmark without asking jj; anything else is a
+//! `REV` whose commit must carry exactly one bookmark on the graph, which
+//! becomes the kept name.
 
 use std::collections::BTreeSet;
 use std::collections::HashSet;
@@ -125,16 +130,39 @@ pub enum ExplicitSelectionError {
     )]
     RevImmutable { rev: String },
 
-    /// A `--keep` name matched no bookmark on any stack.
-    #[error("bookmark {name:?} not found on any stack")]
+    /// A `--keep` value names a local bookmark that is on no stack.
+    #[error("bookmark {name:?} is not on any stack")]
     #[diagnostic(
         code(stakk::selection::keep_not_found),
         help(
-            "run `stakk graph` to list bookmarks; only bookmarks matched by --bookmarks-revset \
-             appear"
+            "the bookmark exists but --bookmarks-revset or --heads-revset leaves it out; run \
+             `stakk graph` to list the bookmarks that can be kept"
         )
     )]
     KeepNotFound { name: String },
+
+    /// A `--keep` revset resolved to a commit that carries no bookmark on
+    /// the graph.
+    #[error(
+        "revision {rev:?} carries no bookmark to keep{}",
+        excluded_note(excluded)
+    )]
+    #[diagnostic(
+        code(stakk::selection::keep_no_bookmark),
+        help(
+            "--keep reuses an existing bookmark; to make this commit a PR boundary with a new \
+             one, pass --new REV[=NAME] or --new-auto REV"
+        )
+    )]
+    KeepNoBookmark { rev: String, excluded: Vec<String> },
+
+    /// A `--keep` revset resolved to a commit that carries several bookmarks.
+    #[error("revision {rev:?} carries {} bookmarks: {}", names.len(), names.join(", "))]
+    #[diagnostic(
+        code(stakk::selection::keep_ambiguous),
+        help("pass --keep with one of the bookmark names to choose which one the PR uses")
+    )]
+    KeepAmbiguous { rev: String, names: Vec<String> },
 
     /// The marks do not all lie on one trunk-to-tip path.
     #[error("marks do not lie on a single trunk-to-tip path: {}", marks.join(", "))]
@@ -197,6 +225,16 @@ pub enum ExplicitSelectionError {
     Jj(#[from] JjError),
 }
 
+/// The parenthetical naming a commit's bookmarks that the bookmarks revset
+/// filtered out, or nothing when there are none.
+fn excluded_note(excluded: &[String]) -> String {
+    if excluded.is_empty() {
+        String::new()
+    } else {
+        format!(" (excluded by --bookmarks-revset: {})", excluded.join(", "))
+    }
+}
+
 /// A `--new REV[=NAME]` value, split.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NewBookmarkSpec {
@@ -248,6 +286,7 @@ impl SelectionSpec {
         // An empty rev would reach jj as `-r ""` and fail with an opaque
         // parse error; reject it here (clap accepts "" as a value).
         for (revs, flag) in [
+            (&args.keep, "--keep"),
             (&args.new_auto, "--new-auto"),
             (&args.new_command, "--new-command"),
         ] {
@@ -405,16 +444,17 @@ pub async fn resolve_bookmarks_explicitly<R: JjRunner>(
         });
     }
 
-    // Resolve --keep names; identical repeats dedupe silently.
-    let mut kept_names: HashSet<&str> = HashSet::new();
-    for name in &spec.keep {
-        if !kept_names.insert(name.as_str()) {
+    // Resolve --keep values. Marks that keep the same bookmark dedupe
+    // silently, whether they spell it the same way or not.
+    let mut kept_names: HashSet<String> = HashSet::new();
+    for arg in &spec.keep {
+        let (name, commit, stacks) = resolve_keep(jj, &linearized, graph, reserved, arg).await?;
+        if !kept_names.insert(name.clone()) {
             continue;
         }
-        let (commit, stacks) = resolve_keep(&linearized, graph, name)?;
         marks.push(Mark {
-            kind: MarkKind::Keep { name: name.clone() },
-            display: format!("--keep {name}"),
+            kind: MarkKind::Keep { name },
+            display: format!("--keep {arg}"),
             commit_id: commit.commit_id.clone(),
             stacks,
         });
@@ -580,6 +620,22 @@ async fn resolve_rev<'a, R: JjRunner>(
     linearized: &[Vec<&'a SegmentCommit>],
     rev: &str,
 ) -> Result<(&'a SegmentCommit, BTreeSet<usize>), ExplicitSelectionError> {
+    let (commit, stacks) = resolve_rev_on_stacks(jj, linearized, rev).await?;
+    if commit.is_immutable {
+        return Err(ExplicitSelectionError::RevImmutable {
+            rev: rev.to_string(),
+        });
+    }
+    Ok((commit, stacks))
+}
+
+/// Resolve a rev (a jj revset) to one commit on the stacks, mutable or not,
+/// and the set of stacks containing it.
+async fn resolve_rev_on_stacks<'a, R: JjRunner>(
+    jj: &Jj<R>,
+    linearized: &[Vec<&'a SegmentCommit>],
+    rev: &str,
+) -> Result<(&'a SegmentCommit, BTreeSet<usize>), ExplicitSelectionError> {
     let commit_ids = match jj.resolve_revset(rev).await {
         Ok(ids) => ids,
         Err(JjError::CommandFailed { stderr, .. }) => {
@@ -620,21 +676,75 @@ async fn resolve_rev<'a, R: JjRunner>(
             commit_id: commit_id.chars().take(12).collect(),
         });
     };
-    if commit.is_immutable {
-        return Err(ExplicitSelectionError::RevImmutable {
-            rev: rev.to_string(),
-        });
-    }
     Ok((commit, stacks))
 }
 
-/// Resolve a `--keep` name to its segment's boundary commit and the set of
-/// stacks containing it.
-fn resolve_keep<'a>(
+/// Resolve a `--keep` value to the bookmark it keeps, that bookmark's
+/// boundary commit, and the set of stacks containing it.
+///
+/// An exact bookmark name on the graph wins, so a bookmark name keeps
+/// meaning that bookmark even where jj would parse it differently as a
+/// revset (`a+b`, or `foo@origin`, which jj reads as a remote bookmark). A
+/// local bookmark that is not on the graph is reported as such rather than
+/// resolved, since its commit may carry another bookmark that `--keep`
+/// would then silently use. Anything else is a revset whose one commit must
+/// carry exactly one bookmark on the graph.
+///
+/// Immutable commits are not rejected: a boundary that already has a
+/// bookmark stays visible to later runs, and that visibility is what
+/// `--new` refuses immutable commits over.
+async fn resolve_keep<'a, R: JjRunner>(
+    jj: &Jj<R>,
+    linearized: &[Vec<&'a SegmentCommit>],
+    graph: &ChangeGraph,
+    reserved: &HashSet<String>,
+    arg: &str,
+) -> Result<(String, &'a SegmentCommit, BTreeSet<usize>), ExplicitSelectionError> {
+    if let Some((commit, stacks)) = find_bookmark(linearized, graph, arg) {
+        return Ok((arg.to_string(), commit, stacks));
+    }
+    if reserved.contains(arg) {
+        return Err(ExplicitSelectionError::KeepNotFound {
+            name: arg.to_string(),
+        });
+    }
+    let (commit, stacks) = resolve_rev_on_stacks(jj, linearized, arg).await?;
+    // Shared segments are cloned into every containing stack, so the same
+    // names can turn up once per stack.
+    let mut names: Vec<String> = Vec::new();
+    for segment in graph.stacks.iter().flat_map(|s| &s.segments) {
+        if segment
+            .commits
+            .first()
+            .is_some_and(|c| c.commit_id == commit.commit_id)
+        {
+            for name in &segment.bookmark_names {
+                if !names.contains(name) {
+                    names.push(name.clone());
+                }
+            }
+        }
+    }
+    match names.as_slice() {
+        [name] => Ok((name.clone(), commit, stacks)),
+        [] => Err(ExplicitSelectionError::KeepNoBookmark {
+            rev: arg.to_string(),
+            excluded: commit.local_bookmark_names.clone(),
+        }),
+        _ => Err(ExplicitSelectionError::KeepAmbiguous {
+            rev: arg.to_string(),
+            names,
+        }),
+    }
+}
+
+/// Find a bookmark by exact name on the graph: its segment's boundary commit
+/// and the set of stacks containing it.
+fn find_bookmark<'a>(
     linearized: &[Vec<&'a SegmentCommit>],
     graph: &ChangeGraph,
     name: &str,
-) -> Result<(&'a SegmentCommit, BTreeSet<usize>), ExplicitSelectionError> {
+) -> Option<(&'a SegmentCommit, BTreeSet<usize>)> {
     let mut found: Option<(&SegmentCommit, BTreeSet<usize>)> = None;
     for (stack_idx, stack) in graph.stacks.iter().enumerate() {
         for segment in &stack.segments {
@@ -665,9 +775,7 @@ fn resolve_keep<'a>(
             }
         }
     }
-    found.ok_or_else(|| ExplicitSelectionError::KeepNotFound {
-        name: name.to_string(),
-    })
+    found
 }
 
 // ---------------------------------------------------------------------------
@@ -912,12 +1020,136 @@ mod tests {
         assert_eq!(names(&result), vec![("mid", false)]);
     }
 
+    /// A value that is neither a bookmark nor a revset jj accepts surfaces
+    /// with jj's own message.
     #[tokio::test]
-    async fn keep_not_found() {
+    async fn keep_unknown_value_is_unresolvable() {
         let graph = single_stack_graph();
         let s = spec(|s| s.keep = vec!["nope".into()]);
         let err = resolve(&graph, &s).await.unwrap_err();
-        assert!(matches!(err, ExplicitSelectionError::KeepNotFound { name } if name == "nope"));
+        assert!(matches!(
+            &err,
+            ExplicitSelectionError::RevUnresolvable { rev, stderr }
+                if rev == "nope" && stderr.contains("doesn't exist")
+        ));
+    }
+
+    /// A local bookmark the graph does not show is reported by name, not
+    /// resolved through jj to whatever other bookmark its commit carries.
+    #[tokio::test]
+    async fn keep_local_bookmark_off_the_graph_is_not_found() {
+        let graph = single_stack_graph();
+        let mut reserved = reserved_from_graph(&graph);
+        reserved.insert("elsewhere".into());
+        let s = spec(|s| s.keep = vec!["elsewhere".into()]);
+        let err = resolve_with_reserved(&graph, &s, &reserved)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, ExplicitSelectionError::KeepNotFound { name } if name == "elsewhere")
+        );
+    }
+
+    #[tokio::test]
+    async fn keep_revset_resolves_to_the_commits_bookmark() {
+        let graph = single_stack_graph();
+        let s = spec(|s| s.keep = vec!["@-".into(), "cccc".into()]);
+        let result = resolve_with_jj(&graph, &s, &[("@-", &["c_bbbb2222"])])
+            .await
+            .unwrap();
+        assert_eq!(names(&result), vec![("mid", false), ("leaf", false)]);
+    }
+
+    /// A bookmark name wins over the revset jj would read it as: `cccc` is
+    /// also a change id prefix of the leaf, but names the base's bookmark.
+    #[tokio::test]
+    async fn keep_bookmark_name_wins_over_revset() {
+        let graph = make_graph(vec![BranchStack {
+            segments: vec![
+                make_segment(&["cccc"], "aaaa1111", "base work"),
+                make_segment(&["leaf"], "cccc3333", "leaf work"),
+            ],
+        }]);
+        let s = spec(|s| s.keep = vec!["cccc".into()]);
+        let result = resolve(&graph, &s).await.unwrap();
+        assert_eq!(names(&result), vec![("cccc", false)]);
+        assert_eq!(result.assignments[0].change_id, "aaaa1111");
+    }
+
+    /// Two spellings of one kept bookmark are one mark, like a repeated name.
+    #[tokio::test]
+    async fn keep_name_and_revset_for_one_bookmark_dedupe() {
+        let graph = single_stack_graph();
+        let s = spec(|s| s.keep = vec!["mid".into(), "@-".into()]);
+        let result = resolve_with_jj(&graph, &s, &[("@-", &["c_bbbb2222"])])
+            .await
+            .unwrap();
+        assert_eq!(names(&result), vec![("mid", false)]);
+    }
+
+    /// A commit that is on the stack but is not a segment boundary has no
+    /// bookmark to keep; bookmarks the revset filtered out are named.
+    #[tokio::test]
+    async fn keep_revset_to_unbookmarked_commit_errors() {
+        let mut segment = make_segment(&["leaf"], "cccc3333", "leaf work");
+        let mut inner = make_commit("bbbb2222", "inner work");
+        inner.local_bookmark_names = vec!["theirs".into()];
+        segment.commits.push(inner);
+        let graph = make_graph(vec![BranchStack {
+            segments: vec![segment],
+        }]);
+        let s = spec(|s| s.keep = vec!["bbbb".into()]);
+        let err = resolve(&graph, &s).await.unwrap_err();
+        assert!(matches!(
+            &err,
+            ExplicitSelectionError::KeepNoBookmark { rev, excluded }
+                if rev == "bbbb" && excluded == &["theirs"]
+        ));
+        assert!(
+            err.to_string()
+                .contains("excluded by --bookmarks-revset: theirs")
+        );
+    }
+
+    #[tokio::test]
+    async fn keep_revset_to_commit_with_two_bookmarks_is_ambiguous() {
+        let graph = make_graph(vec![BranchStack {
+            segments: vec![make_segment(&["one", "two"], "aaaa1111", "base work")],
+        }]);
+        let s = spec(|s| s.keep = vec!["aaaa".into()]);
+        let err = resolve(&graph, &s).await.unwrap_err();
+        assert!(matches!(
+            &err,
+            ExplicitSelectionError::KeepAmbiguous { names, .. } if names == &["one", "two"]
+        ));
+
+        // Naming one of them picks it.
+        let s = spec(|s| s.keep = vec!["two".into()]);
+        let result = resolve(&graph, &s).await.unwrap();
+        assert_eq!(names(&result), vec![("two", false)]);
+    }
+
+    /// A shared segment is cloned into every stack containing it; its
+    /// bookmark still counts once.
+    #[tokio::test]
+    async fn keep_revset_on_shared_segment_is_not_ambiguous() {
+        let graph = forked_graph();
+        let s = spec(|s| s.keep = vec!["aaaa".into()]);
+        let result = resolve(&graph, &s).await.unwrap();
+        assert_eq!(names(&result), vec![("base", false)]);
+    }
+
+    /// Unlike `--new`, `--keep` accepts an immutable boundary: its bookmark
+    /// already exists and stays visible to later runs.
+    #[tokio::test]
+    async fn keep_accepts_an_immutable_boundary() {
+        let mut graph = single_stack_graph();
+        graph.stacks[0].segments[0].commits[0].is_immutable = true;
+        for keep in ["base", "aaaa"] {
+            let s = spec(|s| s.keep = vec![keep.into()]);
+            let result = resolve(&graph, &s).await.unwrap();
+            assert_eq!(names(&result), vec![("base", false)], "--keep {keep}");
+        }
     }
 
     // -- rev resolution --
@@ -1268,8 +1500,8 @@ mod tests {
     /// An empty rev must be rejected at parse time, before it reaches jj as
     /// `-r ""`.
     #[test]
-    fn empty_rev_for_auto_and_command_flags_errors() {
-        for flag in ["--new-auto", "--new-command"] {
+    fn empty_rev_for_keep_auto_and_command_flags_errors() {
+        for flag in ["--keep", "--new-auto", "--new-command"] {
             let args = parse_submit(&["stakk", "submit", flag, ""]);
             let err = SelectionSpec::from_args(&args).unwrap_err();
             assert!(
