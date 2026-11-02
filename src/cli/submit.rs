@@ -120,6 +120,10 @@ pub struct SubmitArgs {
 
     /// Keep an existing bookmark as a PR boundary (repeatable).
     ///
+    /// Takes a bookmark name, or a REV as for --new whose commit carries
+    /// exactly one bookmark (`--keep @-`). A bookmark name always means that
+    /// bookmark, even where jj would read it differently as a revset.
+    ///
     /// Non-interactive selection: the --keep/--new/--new-auto/--new-command
     /// marks fully determine the PR set — nothing is implicit. All marks
     /// must lie on one trunk-to-tip path; the topmost is the tip of the
@@ -135,7 +139,7 @@ pub struct SubmitArgs {
     #[arg(
         short = 'k',
         long,
-        value_name = "BOOKMARK",
+        value_name = "BOOKMARK|REV",
         help_heading = "Selection (non-interactive)",
         verbatim_doc_comment
     )]

@@ -25,7 +25,7 @@ stakk submit --keep base --new qzvs=my-feature --new-auto wmtk --dry-run
 
 | Flag | Meaning |
 |------|---------|
-| `--keep <bookmark>` | An existing bookmark stays a PR boundary |
+| `--keep <bookmark or rev>` | An existing bookmark stays a PR boundary |
 | `--new <rev>[=<name>]` | New bookmark at `rev`, named `name` or `stakk-<change_id>` |
 | `--new-auto <rev>` | New TF-IDF-named bookmark at `rev`, honoring `--auto-prefix` |
 | `--new-command <rev>` | New bookmark at `rev`, named by `--bookmark-command` |
@@ -37,6 +37,13 @@ a `change_id` or `short_change_id` from `stakk graph`, `@-`, a bookmark name, an
 Use `change_id` for anything stored or compared; `short_change_id` is a trap (below).
 In `--new <rev>=<name>` the name starts at the first `=` outside parentheses and quotes,
 so `remote_bookmarks(main, remote=origin)=<name>` works.
+
+`--keep` takes a bookmark name or a `rev`.
+A bookmark name on the graph is taken as that bookmark without asking jj,
+even where jj would read it differently as a revset (`foo@origin` is a remote bookmark to jj).
+Anything else is a `rev` whose commit must carry exactly one bookmark, which becomes the kept one.
+A commit with several bookmarks takes `--keep <bookmark>` to choose among them.
+Keeping the same bookmark twice, by name or by `rev`, is one mark.
 
 Submit flags go after the subcommand: `stakk submit --dry-run`, not `stakk --dry-run submit`.
 Only `--config`, `--forge` and `--host` are accepted on either side.
@@ -74,7 +81,9 @@ Selection failures carry machine-readable codes and leave the repository untouch
 | `stakk::selection::empty_rev` | A selection flag got an empty `REV`, e.g. from a shell expansion |
 | `stakk::selection::invalid_new_spec` | A `--new` value is neither `REV` nor `REV=NAME` |
 | `stakk::selection::not_colinear` | The marks are not on one trunk-to-tip path; each entry in `stacks[]` is one |
-| `stakk::selection::keep_not_found` | No such bookmark on the selected path |
+| `stakk::selection::keep_not_found` | The `--keep` bookmark exists but is on no stack (`--bookmarks-revset` or `--heads-revset` leaves it out) |
+| `stakk::selection::keep_no_bookmark` | The `--keep` rev's commit carries no bookmark; use `--new` or `--new-auto` |
+| `stakk::selection::keep_ambiguous` | The `--keep` rev's commit carries several bookmarks; pass one by name |
 | `stakk::selection::no_stacks` | The repository has no stacks to select from |
 | `stakk::selection::duplicate_mark` | The same revision was marked twice; one boundary takes one mark, however many bookmarks it carries |
 | `stakk::selection::duplicate_name` | Two marks would create the same bookmark name |

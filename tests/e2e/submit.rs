@@ -1,4 +1,4 @@
-//! Forge-agnostic submission scenarios, S1–S13 in the plan. Each test creates
+//! Forge-agnostic submission scenarios, S1–S14 in the plan. Each test creates
 //! its own Forgejo repository and jj repository, runs the `stakk` binary
 //! with selection flags, and asserts through the Forgejo API and jj.
 //!
@@ -452,5 +452,17 @@ async fn s13_explicit_forge_skips_the_probe() {
         "{}",
         output.stderr
     );
+    assert_two_pr_stack(&s).await;
+}
+
+/// `--keep` takes a revset as well as a bookmark name: a change id and `@-`
+/// (the empty head sits on `feat-b`) keep the two bookmarks they point at.
+#[tokio::test]
+async fn s14_keep_by_revset() {
+    let s = Scenario::new("s14").await;
+    let (a, _) = s.seed_feat_a_feat_b();
+
+    s.stakk.submit(&["--keep", &a, "--keep", "@-"]);
+
     assert_two_pr_stack(&s).await;
 }
