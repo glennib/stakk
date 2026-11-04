@@ -495,7 +495,7 @@ mod tests {
 
         let short = &change_id[..4.min(change_id.len())];
         format!(
-            r#"{{"commit":{{"commit_id":"{commit_id}","parents":[{parents_str}],"change_id":"{change_id}","description":"desc {commit_id}","author":{{"name":"T","email":"t@t.t","timestamp":"T"}},"committer":{{"name":"T","email":"t@t.t","timestamp":"T"}}}},"local_bookmarks":[{bookmarks_str}],"remote_bookmarks":[],"immutable":{immutable},"short_change_id":"{short}"}}"#,
+            r#"{{"commit":{{"commit_id":"{commit_id}","parents":[{parents_str}],"change_id":"{change_id}","description":"desc {commit_id}","author":{{"name":"T","email":"t@t.t","timestamp":"T"}},"committer":{{"name":"T","email":"t@t.t","timestamp":"T"}}}},"local_bookmarks":[{bookmarks_str}],"immutable":{immutable},"short_change_id":"{short}"}}"#,
         )
     }
 

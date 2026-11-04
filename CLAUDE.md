@@ -616,6 +616,12 @@ If you change any of the following, update `scripts/record-demo.py` in the same 
 - `jj git remote list` outputs plain text, not JSON.
   Parse with string splitting.
 - `trunk()` remote bookmarks include an internal `@git` entry — filter it out.
+- The default branch is the bookmark `trunk()` *names*, not just any bookmark on its commit:
+  other remote bookmarks can share that commit, and jj lists them by name.
+  `Jj::get_default_branch` reads the alias with `jj config get 'revset-aliases."trunk()"'`,
+  and `pick_default_branch` takes a lone `<name>@<remote>` alias first
+  (what `jj git clone` writes when the remote's HEAD is known),
+  then jj's built-in `main`/`master`/`trunk` × `origin`/`upstream` order, then the first candidate.
 - Unsynced bookmarks produce duplicate entries in `jj bookmark list` —
   deduplicate by keeping only the first entry per name.
 - Graph traversal uses `"trunk()"` as the revset base, not a branch name.

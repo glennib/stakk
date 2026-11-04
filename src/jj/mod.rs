@@ -17,6 +17,7 @@ use thiserror::Error;
 use crate::jj::runner::JjRunner;
 use crate::jj::types::Bookmark;
 use crate::jj::types::BookmarkEntryRaw;
+use crate::jj::types::CommitRefData;
 use crate::jj::types::GitRemote;
 use crate::jj::types::LogEntry;
 use crate::jj::types::LogEntryRaw;
@@ -75,7 +76,25 @@ pub(crate) const COMMIT_ID_TEMPLATE: &str = r#"json(commit_id) ++ "\n""#;
 
 // Template for `jj log`: produces one JSON object per line with commit +
 // bookmarks + shortest unique change ID prefix.
-const LOG_TEMPLATE: &str = r#""{\"commit\":" ++ json(self) ++ ",\"local_bookmarks\":" ++ json(local_bookmarks) ++ ",\"remote_bookmarks\":" ++ json(remote_bookmarks) ++ ",\"immutable\":" ++ immutable ++ ",\"short_change_id\":\"" ++ change_id.shortest() ++ "\"}\n""#;
+const LOG_TEMPLATE: &str = r#""{\"commit\":" ++ json(self) ++ ",\"local_bookmarks\":" ++ json(local_bookmarks) ++ ",\"immutable\":" ++ immutable ++ ",\"short_change_id\":\"" ++ change_id.shortest() ++ "\"}\n""#;
+
+// Template for `jj log` when only a commit's remote bookmarks matter: one JSON
+// array of `CommitRef`s per line.
+const REMOTE_BOOKMARKS_TEMPLATE: &str = r#"json(remote_bookmarks) ++ "\n""#;
+
+// Config key holding the definition of the `trunk()` revset alias.
+const TRUNK_ALIAS_KEY: &str = r#"revset-aliases."trunk()""#;
+
+/// jj's built-in `trunk()` candidates as `(bookmark, remote)`, in the order its
+/// default `revset-aliases."trunk()"` lists them.
+const BUILTIN_TRUNK_CANDIDATES: [(&str, &str); 6] = [
+    ("main", "origin"),
+    ("master", "origin"),
+    ("trunk", "origin"),
+    ("main", "upstream"),
+    ("master", "upstream"),
+    ("trunk", "upstream"),
+];
 
 /// Main interface for interacting with `jj`.
 pub struct Jj<R: JjRunner> {
@@ -159,7 +178,11 @@ impl<R: JjRunner> Jj<R> {
         Ok(parse_git_remote_list(&output))
     }
 
-    /// Detect the default branch name from `trunk()`.
+    /// Detect the default branch: the remote bookmark that `trunk()` names.
+    ///
+    /// `trunk()` evaluates to a commit, and other remote bookmarks can point
+    /// at the same one, so the commit alone does not say which bookmark is
+    /// meant. The alias definition does; see [`pick_default_branch`].
     pub async fn get_default_branch(&self) -> Result<String, JjError> {
         let output = self
             .runner
@@ -171,38 +194,45 @@ impl<R: JjRunner> Jj<R> {
                 "--limit",
                 "1",
                 "-T",
-                LOG_TEMPLATE,
+                REMOTE_BOOKMARKS_TEMPLATE,
             ])
             .await?;
 
-        let entries = parse_log_entries(&output)?;
-        let entry = entries
-            .first()
-            .ok_or_else(|| JjError::NoDefaultBranch { candidates: vec![] })?;
+        let refs: Vec<CommitRefData> = match output.lines().map(str::trim).find(|l| !l.is_empty()) {
+            Some(line) => serde_json::from_str(line).map_err(|e| JjError::ParseError {
+                context: "trunk() remote bookmarks".to_string(),
+                source: e,
+            })?,
+            None => return Err(JjError::NoDefaultBranch { candidates: vec![] }),
+        };
 
-        // Filter out the internal "git" remote — we want the real remote name
-        // like "origin".
-        let candidates: Vec<&str> = entry
-            .remote_bookmark_names
+        // `@git` entries mirror the backing git repository's refs; they are
+        // not a remote stakk can open a PR against.
+        let candidates: Vec<(&str, &str)> = refs
             .iter()
-            .filter(|name| {
-                // Remote bookmark names from jj include entries like
-                // "main@origin" and "main@git". Filter for non-"git" remotes.
-                !name.ends_with("@git")
-            })
-            .map(String::as_str)
+            .filter_map(|r| Some((r.name.as_str(), r.remote.as_deref()?)))
+            .filter(|&(_, remote)| remote != "git")
             .collect();
-
-        match candidates.first() {
-            Some(name) => {
-                // Strip the "@remote" suffix to get just the branch name.
-                let branch = name.split('@').next().unwrap_or(name);
-                Ok(branch.to_string())
-            }
-            None => Err(JjError::NoDefaultBranch {
-                candidates: entry.remote_bookmark_names.clone(),
-            }),
+        let no_default_branch = || JjError::NoDefaultBranch {
+            candidates: refs
+                .iter()
+                .map(|r| match &r.remote {
+                    Some(remote) => format!("{}@{remote}", r.name),
+                    None => r.name.clone(),
+                })
+                .collect(),
+        };
+        if candidates.is_empty() {
+            return Err(no_default_branch());
         }
+
+        let trunk_alias = self
+            .runner
+            .run_jj(&["config", "get", TRUNK_ALIAS_KEY])
+            .await?;
+        pick_default_branch(&trunk_alias, &candidates)
+            .map(str::to_string)
+            .ok_or_else(no_default_branch)
     }
 
     /// Push a bookmark to a remote.
@@ -370,14 +400,6 @@ fn parse_log_entries(output: &str) -> Result<Vec<LogEntry>, JjError> {
             author: raw.commit.author,
             committer: raw.commit.committer,
             local_bookmark_names: raw.local_bookmarks.iter().map(|b| b.name.clone()).collect(),
-            remote_bookmark_names: raw
-                .remote_bookmarks
-                .iter()
-                .map(|b| match &b.remote {
-                    Some(remote) => format!("{}@{}", b.name, remote),
-                    None => b.name.clone(),
-                })
-                .collect(),
             immutable: raw.immutable,
             short_change_id: raw.short_change_id,
         });
@@ -401,6 +423,54 @@ fn parse_git_remote_list(output: &str) -> Vec<GitRemote> {
             })
         })
         .collect()
+}
+
+/// Choose which remote bookmark on the `trunk()` commit is the default branch.
+///
+/// `candidates` are the commit's remote bookmarks as `(name, remote)`, without
+/// `@git`, in jj's listing order (by name). `trunk_alias` is the definition of
+/// `revset-aliases."trunk()"`.
+///
+/// 1. An alias that is a single `<name>@<remote>` symbol names the bookmark
+///    outright. `jj git clone` writes one when the remote's HEAD is known, and
+///    it is how jj tells users to override `trunk()`. It comes first because
+///    other bookmarks, built-in trunk names among them, can share the commit.
+/// 2. Otherwise, the first candidate in jj's built-in `trunk()` order.
+/// 3. Otherwise — a custom expression stakk cannot attribute to one bookmark —
+///    the first candidate.
+///
+/// Returns `None` only when `candidates` is empty.
+fn pick_default_branch<'a>(
+    trunk_alias: &str,
+    candidates: &[(&'a str, &'a str)],
+) -> Option<&'a str> {
+    // `rsplit_once`: a quoted bookmark name may itself contain `@`. Anything
+    // that is not a lone symbol splits into pieces that match no candidate.
+    if let Some((name, remote)) = trunk_alias.trim().rsplit_once('@') {
+        let named = (unquote(name.trim()), unquote(remote.trim()));
+        if let Some(&(name, _)) = candidates.iter().find(|&&c| c == named) {
+            return Some(name);
+        }
+    }
+    BUILTIN_TRUNK_CANDIDATES
+        .iter()
+        .find_map(|builtin| candidates.iter().find(|&c| c == builtin))
+        .or_else(|| candidates.first())
+        .map(|&(name, _)| name)
+}
+
+/// Strip one pair of matching quotes from a revset string literal.
+///
+/// Escape sequences inside a double-quoted literal are not interpreted; a name
+/// that needs them matches no candidate, and `pick_default_branch` falls
+/// through to its next rule.
+fn unquote(s: &str) -> &str {
+    for quote in ['"', '\''] {
+        if let Some(inner) = s.strip_prefix(quote).and_then(|s| s.strip_suffix(quote)) {
+            return inner;
+        }
+    }
+    s
 }
 
 #[cfg(test)]
@@ -523,27 +593,25 @@ mod tests {
 
     #[test]
     fn parse_log_entries_single() {
-        let input = r#"{"commit":{"commit_id":"abc","parents":["def"],"change_id":"xyz","description":"desc\n","author":{"name":"A","email":"a@b.c","timestamp":"T"},"committer":{"name":"A","email":"a@b.c","timestamp":"T"}},"local_bookmarks":[{"name":"feat","target":["abc"]}],"remote_bookmarks":[{"name":"feat","remote":"origin","target":["abc"],"tracking_target":["abc"]}],"immutable":false,"short_change_id":"xyz"}"#;
+        let input = r#"{"commit":{"commit_id":"abc","parents":["def"],"change_id":"xyz","description":"desc\n","author":{"name":"A","email":"a@b.c","timestamp":"T"},"committer":{"name":"A","email":"a@b.c","timestamp":"T"}},"local_bookmarks":[{"name":"feat","target":["abc"]}],"immutable":false,"short_change_id":"xyz"}"#;
         let entries = parse_log_entries(input).unwrap();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].commit_id, "abc");
         assert_eq!(entries[0].local_bookmark_names, vec!["feat"]);
-        assert_eq!(entries[0].remote_bookmark_names, vec!["feat@origin"]);
     }
 
     #[test]
     fn parse_log_entries_no_bookmarks() {
-        let input = r#"{"commit":{"commit_id":"abc","parents":[],"change_id":"xyz","description":"","author":{"name":"A","email":"a@b.c","timestamp":"T"},"committer":{"name":"A","email":"a@b.c","timestamp":"T"}},"local_bookmarks":[],"remote_bookmarks":[],"immutable":false,"short_change_id":"xyz"}"#;
+        let input = r#"{"commit":{"commit_id":"abc","parents":[],"change_id":"xyz","description":"","author":{"name":"A","email":"a@b.c","timestamp":"T"},"committer":{"name":"A","email":"a@b.c","timestamp":"T"}},"local_bookmarks":[],"immutable":false,"short_change_id":"xyz"}"#;
         let entries = parse_log_entries(input).unwrap();
         assert_eq!(entries.len(), 1);
         assert!(entries[0].local_bookmark_names.is_empty());
-        assert!(entries[0].remote_bookmark_names.is_empty());
     }
 
     #[test]
     fn parse_log_entries_multiple() {
-        let line1 = r#"{"commit":{"commit_id":"aaa","parents":[],"change_id":"x1","description":"first","author":{"name":"A","email":"a@b.c","timestamp":"T"},"committer":{"name":"A","email":"a@b.c","timestamp":"T"}},"local_bookmarks":[],"remote_bookmarks":[],"immutable":false,"short_change_id":"x1"}"#;
-        let line2 = r#"{"commit":{"commit_id":"bbb","parents":["aaa"],"change_id":"x2","description":"second","author":{"name":"A","email":"a@b.c","timestamp":"T"},"committer":{"name":"A","email":"a@b.c","timestamp":"T"}},"local_bookmarks":[],"remote_bookmarks":[],"immutable":false,"short_change_id":"x2"}"#;
+        let line1 = r#"{"commit":{"commit_id":"aaa","parents":[],"change_id":"x1","description":"first","author":{"name":"A","email":"a@b.c","timestamp":"T"},"committer":{"name":"A","email":"a@b.c","timestamp":"T"}},"local_bookmarks":[],"immutable":false,"short_change_id":"x1"}"#;
+        let line2 = r#"{"commit":{"commit_id":"bbb","parents":["aaa"],"change_id":"x2","description":"second","author":{"name":"A","email":"a@b.c","timestamp":"T"},"committer":{"name":"A","email":"a@b.c","timestamp":"T"}},"local_bookmarks":[],"immutable":false,"short_change_id":"x2"}"#;
         let input = format!("{line1}\n{line2}");
         let entries = parse_log_entries(&input).unwrap();
         assert_eq!(entries.len(), 2);
@@ -553,7 +621,7 @@ mod tests {
 
     #[test]
     fn parse_log_entries_immutable_true() {
-        let input = r#"{"commit":{"commit_id":"abc","parents":[],"change_id":"xyz","description":"","author":{"name":"A","email":"a@b.c","timestamp":"T"},"committer":{"name":"A","email":"a@b.c","timestamp":"T"}},"local_bookmarks":[{"name":"pinned","target":["abc"]}],"remote_bookmarks":[],"immutable":true,"short_change_id":"xyz"}"#;
+        let input = r#"{"commit":{"commit_id":"abc","parents":[],"change_id":"xyz","description":"","author":{"name":"A","email":"a@b.c","timestamp":"T"},"committer":{"name":"A","email":"a@b.c","timestamp":"T"}},"local_bookmarks":[{"name":"pinned","target":["abc"]}],"immutable":true,"short_change_id":"xyz"}"#;
         let entries = parse_log_entries(input).unwrap();
         assert_eq!(entries.len(), 1);
         assert!(entries[0].immutable);
@@ -564,7 +632,7 @@ mod tests {
     /// a template that doesn't emit it must fail loudly, not parse as false.
     #[test]
     fn parse_log_entries_missing_immutable_is_error() {
-        let input = r#"{"commit":{"commit_id":"abc","parents":[],"change_id":"xyz","description":"","author":{"name":"A","email":"a@b.c","timestamp":"T"},"committer":{"name":"A","email":"a@b.c","timestamp":"T"}},"local_bookmarks":[],"remote_bookmarks":[],"short_change_id":"xyz"}"#;
+        let input = r#"{"commit":{"commit_id":"abc","parents":[],"change_id":"xyz","description":"","author":{"name":"A","email":"a@b.c","timestamp":"T"},"committer":{"name":"A","email":"a@b.c","timestamp":"T"}},"local_bookmarks":[],"short_change_id":"xyz"}"#;
         let result = parse_log_entries(input);
         assert!(matches!(result, Err(JjError::ParseError { .. })));
     }
@@ -678,28 +746,137 @@ mod tests {
         assert_eq!(remotes[0].name, "origin");
     }
 
-    #[tokio::test]
-    async fn get_default_branch_integration() {
-        let runner = MockJjRunner {
-            handler: |_args: &[&str]| {
-                Ok(r#"{"commit":{"commit_id":"abc","parents":[],"change_id":"xyz","description":"","author":{"name":"A","email":"a@b.c","timestamp":"T"},"committer":{"name":"A","email":"a@b.c","timestamp":"T"}},"local_bookmarks":[{"name":"main","target":["abc"]}],"remote_bookmarks":[{"name":"main","remote":"git","target":["abc"],"tracking_target":["abc"]},{"name":"main","remote":"origin","target":["abc"],"tracking_target":["abc"]}],"immutable":false,"short_change_id":"xyz"}"#.to_string())
+    // -- default branch tests --
+
+    /// jj 0.46's built-in `revset-aliases."trunk()"`, as `jj config get`
+    /// prints it.
+    const BUILTIN_TRUNK_ALIAS: &str = r#"latest(
+  remote_bookmarks(exact:"main", exact:"origin") |
+  remote_bookmarks(exact:"master", exact:"origin") |
+  remote_bookmarks(exact:"trunk", exact:"origin") |
+  remote_bookmarks(exact:"main", exact:"upstream") |
+  remote_bookmarks(exact:"master", exact:"upstream") |
+  remote_bookmarks(exact:"trunk", exact:"upstream") |
+  root()
+)
+"#;
+
+    /// `REMOTE_BOOKMARKS_TEMPLATE` on a `trunk()` commit that carries `aaa`
+    /// and `master`, both pushed to `origin` — captured from jj 0.46.
+    const AAA_AND_MASTER_ON_TRUNK: &str = r#"[{"name":"aaa","remote":"git","target":["de1f8c71835f98a2ffadebcb26170d4a7cb825de"],"tracking_target":["de1f8c71835f98a2ffadebcb26170d4a7cb825de"]},{"name":"aaa","remote":"origin","target":["de1f8c71835f98a2ffadebcb26170d4a7cb825de"],"tracking_target":["de1f8c71835f98a2ffadebcb26170d4a7cb825de"]},{"name":"master","remote":"git","target":["de1f8c71835f98a2ffadebcb26170d4a7cb825de"],"tracking_target":["de1f8c71835f98a2ffadebcb26170d4a7cb825de"]},{"name":"master","remote":"origin","target":["de1f8c71835f98a2ffadebcb26170d4a7cb825de"],"tracking_target":["de1f8c71835f98a2ffadebcb26170d4a7cb825de"]}]
+"#;
+
+    fn default_branch_runner(
+        remote_bookmarks: &'static str,
+        trunk_alias: &'static str,
+    ) -> MockJjRunner<impl Fn(&[&str]) -> Result<String, JjError> + Send + Sync> {
+        MockJjRunner {
+            handler: move |args: &[&str]| match args {
+                [
+                    "log",
+                    "-r",
+                    "trunk()",
+                    "--no-graph",
+                    "--limit",
+                    "1",
+                    "-T",
+                    REMOTE_BOOKMARKS_TEMPLATE,
+                ] => Ok(remote_bookmarks.to_string()),
+                ["config", "get", TRUNK_ALIAS_KEY] => Ok(trunk_alias.to_string()),
+                other => panic!("unexpected jj invocation: {other:?}"),
             },
-        };
-        let jj = Jj::new(runner);
-        let branch = jj.get_default_branch().await.unwrap();
-        assert_eq!(branch, "main");
+        }
+    }
+
+    #[tokio::test]
+    async fn get_default_branch_follows_the_clone_written_trunk_alias() {
+        let jj = Jj::new(default_branch_runner(
+            AAA_AND_MASTER_ON_TRUNK,
+            "master@origin\n",
+        ));
+        assert_eq!(jj.get_default_branch().await.unwrap(), "master");
+    }
+
+    #[tokio::test]
+    async fn get_default_branch_prefers_builtin_trunk_names_over_name_order() {
+        let jj = Jj::new(default_branch_runner(
+            AAA_AND_MASTER_ON_TRUNK,
+            BUILTIN_TRUNK_ALIAS,
+        ));
+        assert_eq!(jj.get_default_branch().await.unwrap(), "master");
     }
 
     #[tokio::test]
     async fn get_default_branch_no_remote_bookmarks() {
-        let runner = MockJjRunner {
-            handler: |_args: &[&str]| {
-                Ok(r#"{"commit":{"commit_id":"abc","parents":[],"change_id":"xyz","description":"","author":{"name":"A","email":"a@b.c","timestamp":"T"},"committer":{"name":"A","email":"a@b.c","timestamp":"T"}},"local_bookmarks":[],"remote_bookmarks":[],"immutable":false,"short_change_id":"xyz"}"#.to_string())
-            },
-        };
-        let jj = Jj::new(runner);
+        let jj = Jj::new(default_branch_runner("[]\n", "unreachable"));
         let result = jj.get_default_branch().await;
-        assert!(result.is_err());
+        assert!(matches!(
+            result,
+            Err(JjError::NoDefaultBranch { candidates }) if candidates.is_empty()
+        ));
+    }
+
+    #[tokio::test]
+    async fn get_default_branch_ignores_git_only_bookmarks() {
+        let jj = Jj::new(default_branch_runner(
+            r#"[{"name":"main","remote":"git","target":["abc"],"tracking_target":["abc"]}]"#,
+            "unreachable",
+        ));
+        let result = jj.get_default_branch().await;
+        assert!(matches!(
+            result,
+            Err(JjError::NoDefaultBranch { candidates }) if candidates == ["main@git"]
+        ));
+    }
+
+    #[test]
+    fn pick_default_branch_alias_wins_over_builtin_names_on_the_same_commit() {
+        let candidates = [("develop", "origin"), ("main", "origin")];
+        assert_eq!(
+            pick_default_branch("develop@origin", &candidates),
+            Some("develop")
+        );
+    }
+
+    #[test]
+    fn pick_default_branch_alias_must_match_the_remote_too() {
+        let candidates = [("aaa", "origin"), ("main", "upstream")];
+        assert_eq!(
+            pick_default_branch("aaa@upstream", &candidates),
+            Some("main")
+        );
+    }
+
+    #[test]
+    fn pick_default_branch_unquotes_alias_names() {
+        let candidates = [("aaa", "origin"), ("rel@2", "origin")];
+        assert_eq!(
+            pick_default_branch(r#""rel@2"@'origin'"#, &candidates),
+            Some("rel@2")
+        );
+    }
+
+    #[test]
+    fn pick_default_branch_builtin_order_puts_origin_before_upstream() {
+        let candidates = [("master", "upstream"), ("trunk", "origin")];
+        assert_eq!(
+            pick_default_branch(BUILTIN_TRUNK_ALIAS, &candidates),
+            Some("trunk")
+        );
+    }
+
+    #[test]
+    fn pick_default_branch_custom_expression_falls_back_to_the_first_candidate() {
+        let candidates = [("dev", "origin"), ("rel", "origin")];
+        assert_eq!(
+            pick_default_branch("latest(rel@origin | dev@origin)", &candidates),
+            Some("dev")
+        );
+    }
+
+    #[test]
+    fn pick_default_branch_without_candidates_is_none() {
+        assert_eq!(pick_default_branch("main@origin", &[]), None);
     }
 
     #[tokio::test]
@@ -710,7 +887,7 @@ mod tests {
                 // Check the revset is constructed correctly
                 let revset = args[2];
                 assert!(revset.contains(".."));
-                Ok(r#"{"commit":{"commit_id":"c1","parents":["c0"],"change_id":"ch1","description":"change 1","author":{"name":"A","email":"a@b.c","timestamp":"T"},"committer":{"name":"A","email":"a@b.c","timestamp":"T"}},"local_bookmarks":[],"remote_bookmarks":[],"immutable":false,"short_change_id":"ch1"}"#.to_string())
+                Ok(r#"{"commit":{"commit_id":"c1","parents":["c0"],"change_id":"ch1","description":"change 1","author":{"name":"A","email":"a@b.c","timestamp":"T"},"committer":{"name":"A","email":"a@b.c","timestamp":"T"}},"local_bookmarks":[],"immutable":false,"short_change_id":"ch1"}"#.to_string())
             },
         };
         let jj = Jj::new(runner);
@@ -748,7 +925,7 @@ mod tests {
             handler: |args: &[&str]| {
                 assert_eq!(args[0], "log");
                 assert_eq!(args[2], "custom-heads-revset");
-                Ok(r#"{"commit":{"commit_id":"h1","parents":["c_a"],"change_id":"ch_h1","description":"unbookmarked head","author":{"name":"A","email":"a@b.c","timestamp":"T"},"committer":{"name":"A","email":"a@b.c","timestamp":"T"}},"local_bookmarks":[],"remote_bookmarks":[],"immutable":false,"short_change_id":"ch_h"}"#.to_string())
+                Ok(r#"{"commit":{"commit_id":"h1","parents":["c_a"],"change_id":"ch_h1","description":"unbookmarked head","author":{"name":"A","email":"a@b.c","timestamp":"T"},"committer":{"name":"A","email":"a@b.c","timestamp":"T"}},"local_bookmarks":[],"immutable":false,"short_change_id":"ch_h"}"#.to_string())
             },
         };
         let jj = Jj::new(runner);
