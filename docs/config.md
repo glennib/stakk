@@ -11,8 +11,7 @@ Precedence, highest first:
 3. **Repository config** — `stakk.toml`, found by walking up from the current directory to the jj workspace root
    (the directory containing `.jj/`).
    `--config <path>` or `STAKK_CONFIG` replaces it, which is also how to share one file across repos.
-4. **User config** — `~/.config/stakk/config.toml` (Linux),
-   `~/Library/Application Support/stakk/config.toml` (macOS),
+4. **User config** — `~/.config/stakk/config.toml` (Linux), `~/Library/Application Support/stakk/config.toml` (macOS),
    `%APPDATA%\stakk\config\config.toml` (Windows)
 5. **Built-in defaults**
 
@@ -25,8 +24,8 @@ All fields are optional; unknown fields are a parse error.
 A `stakk.toml` is usually committed, so cloning a repository hands you its configuration with no trust step.
 Two keys act:
 
-- **`bookmark_command`** runs through `sh -c` (`cmd /C` on Windows) during selection —
-  before any GitHub call, under `--dry-run`, and with no valid token.
+- **`bookmark_command`** runs through `sh -c`
+  (`cmd /C` on Windows) during selection — before any GitHub call, under `--dry-run`, and with no valid token.
 - **`template_path`** reads any path, inside the repo or not, and renders it into a pull request.
 
 The rest only set preferences: closed value sets, revsets passed to `jj` as arguments, a remote that has to exist.
@@ -115,8 +114,8 @@ inherit = true
 `stakk submit` decides the forge from the remote's host, in this order:
 
 1. `--forge github|forgejo` (`STAKK_FORGE`, `forge` in `stakk.toml`) — explicit, and wins over everything below.
-2. The built-in hosts: github.com is GitHub and codeberg.org is Forgejo.
-   bitbucket.org and gitlab.com are recognised too, and refused by name — stakk does not submit to them.
+2. The built-in hosts: github.com is GitHub and codeberg.org is Forgejo. bitbucket.org
+   and gitlab.com are recognised too, and refused by name — stakk does not submit to them.
 3. The host table: `--host HOST=FORGE`
    (repeatable; `STAKK_HOSTS` takes a comma-separated list),
    then `hosts` in `stakk.toml`, then the GitHub CLI's `GH_HOST` as an implicit GitHub entry.

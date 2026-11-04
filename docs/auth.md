@@ -94,8 +94,8 @@ An SSH remote is taken to mean `https`.
 - **`stakk::detect::unknown_forge`** — the remote's host is neither built in nor in the host table,
   and the probe got no answer that looks like GitHub or Forgejo; the message lists what each URL returned.
   Name the host the way the help says, and it stays known.
-- **`stakk::detect::ambiguous_forge`** — the probe got answers that look like both, which a proxy answering
-  every path can cause; name the host the same way.
+- **`stakk::detect::ambiguous_forge`** — the probe got answers that look like both,
+  which a proxy answering every path can cause; name the host the same way.
 - **`stakk::detect::unsupported_forge`** — the host runs GitLab or Bitbucket Cloud, which stakk does not submit to.
 - **`stakk::auth::gh_cli_error`** — `gh` was found but could not be started; repair the installation.
   A missing `gh` is fine, a broken one is not.

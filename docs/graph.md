@@ -27,8 +27,8 @@ Sparse is a strict subset of full (same names, types, values), and both report t
   `repo` (`owner/repo`); `host` and `repo` are `null` when the URL is not `<host>/<owner>/<repo>`, such as a local path.
   The document does not say which forge a host runs — that is `stakk submit`'s decision,
   which is why there is no `forge` field
-- `excluded_bookmarks[]` — bookmarks left out because their history contains a merge, which the stacking model
-  does not represent; stakk cannot manage these
+- `excluded_bookmarks[]` — bookmarks left out because their history contains a merge,
+  which the stacking model does not represent; stakk cannot manage these
 - `excluded_heads[]` — unbookmarked heads left out for the same reason, each as `change_id` and `short_change_id`;
   a head has no bookmark to name it
 - `stacks[]` — one per leaf
@@ -90,5 +90,5 @@ The order of `stacks[]` and the pretty format are not.
 - `bookmarks[].remote_state` is removed.
   It was derived from jj alone and could not know which remote a submission pushes to,
   so `synced` meant "on some remote"; what a push would do is `stakk submit --dry-run`'s answer.
-- `excluded_head_count` is replaced by `excluded_heads[]`, listing each head's `change_id` and `short_change_id`
-  instead of counting them.
+- `excluded_head_count` is replaced by `excluded_heads[]`,
+  listing each head's `change_id` and `short_change_id` instead of counting them.
