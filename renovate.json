@@ -20,6 +20,12 @@
     {
       "matchUpdateTypes": ["patch", "pin", "digest"],
       "automerge": true
+    },
+    {
+      "description": "jj 0.47.0's static musl Linux binary panics on every revset parse (rust-lang/stacker#155); see mise.toml",
+      "matchManagers": ["mise"],
+      "matchDepNames": ["jj"],
+      "allowedVersions": "!/^0\\.47\\.0$/"
     }
   ],
   "customManagers": [
