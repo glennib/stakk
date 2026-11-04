@@ -53,7 +53,6 @@ pub struct CommitRefData {
 pub struct LogEntryRaw {
     pub commit: CommitData,
     pub local_bookmarks: Vec<CommitRefData>,
-    pub remote_bookmarks: Vec<CommitRefData>,
     /// Whether jj considers the commit immutable. Deliberately not
     /// serde-defaulted: a template/parser mismatch must fail loudly.
     pub immutable: bool,
@@ -103,7 +102,6 @@ pub struct LogEntry {
     pub author: Signature,
     pub committer: Signature,
     pub local_bookmark_names: Vec<String>,
-    pub remote_bookmark_names: Vec<String>,
     /// Whether jj considers the commit immutable.
     pub immutable: bool,
     /// Shortest unique change ID prefix (from jj).
@@ -182,9 +180,6 @@ mod tests {
             "local_bookmarks": [
                 {"name":"feature","target":["abc123"]}
             ],
-            "remote_bookmarks": [
-                {"name":"feature","remote":"origin","target":["abc123"],"tracking_target":["abc123"]}
-            ],
             "immutable": false,
             "short_change_id": "xyz7"
         }"#;
@@ -193,8 +188,6 @@ mod tests {
         assert!(!entry.immutable);
         assert_eq!(entry.local_bookmarks.len(), 1);
         assert_eq!(entry.local_bookmarks[0].name, "feature");
-        assert_eq!(entry.remote_bookmarks.len(), 1);
-        assert_eq!(entry.remote_bookmarks[0].remote.as_deref(), Some("origin"));
     }
 
     #[test]
