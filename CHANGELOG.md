@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.8](https://github.com/glennib/stakk/compare/v3.0.7...v3.0.8) - 2026-11-04
+
+### Fixed
+
+- *(jj)* take the default branch from the bookmark trunk() names
+
+### Other
+
+- *(deps)* hold jj at 0.46.0
+- *(deps)* update dependency jj to v0.47.0 ([#385](https://github.com/glennib/stakk/pull/385))
+- *(deps)* update rust crate toml to v1.2.0 ([#384](https://github.com/glennib/stakk/pull/384))
+- *(deps)* update dependency uv to v0.13.7 ([#383](https://github.com/glennib/stakk/pull/383))
+- *(deps)* update dependency cargo:cargo-nextest to v0.9.151 ([#381](https://github.com/glennib/stakk/pull/381))
+
 ## [3.0.7](https://github.com/glennib/stakk/compare/v3.0.6...v3.0.7) - 2026-11-02
 
 ### Other
