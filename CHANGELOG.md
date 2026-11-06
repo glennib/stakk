@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.9](https://github.com/glennib/stakk/compare/v3.0.8...v3.0.9) - 2026-11-06
+
+### Other
+
+- *(deps)* update rust crate toml to v1.2.1 ([#389](https://github.com/glennib/stakk/pull/389))
+- *(deps)* update dependency jj to v0.47.1 ([#388](https://github.com/glennib/stakk/pull/388))
+- upgrade rumdl and fmt docs
+
 ## [3.0.8](https://github.com/glennib/stakk/compare/v3.0.7...v3.0.8) - 2026-11-04
 
 ### Fixed
