@@ -6,7 +6,7 @@ uv = "0.13.7"
 cargo-binstall = "1.27.0"
 "cargo:cargo-dist" = "0.34.0"
 "cargo:cargo-edit" = "0.13.14"
-"cargo:cargo-nextest" = "0.9.151"
+"cargo:cargo-nextest" = "0.9.152"
 "cargo:release-plz" = "0.4.3"
 # From the GitHub releases rather than the default aqua registry entry, which
 # lists no linux/arm64 build although the releases carry one.
