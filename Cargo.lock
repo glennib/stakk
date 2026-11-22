@@ -2785,7 +2785,7 @@ dependencies = [
 
 [[package]]
 name = "stakk"
-version = "3.0.9"
+version = "3.0.10"
 dependencies = [
  "base64 0.23.1",
  "clap",
