@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.10](https://github.com/glennib/stakk/compare/v3.0.9...v3.0.10) - 2026-11-22
+
+### Fixed
+
+- *(deps)* update rust crate jiff to v1
+
+### Other
+
+- *(deps)* update dependency uv to v0.13.8 ([#398](https://github.com/glennib/stakk/pull/398))
+- *(deps)* update dependency cargo-binstall to v1.28.0 ([#408](https://github.com/glennib/stakk/pull/408))
+- *(deps)* update dependency cargo:cargo-nextest to v0.9.152 ([#400](https://github.com/glennib/stakk/pull/400))
+- rumdl upgrade
+- cargo update
+- fix clippy lints
+- *(deps)* update rust crate jiff to v0.2.43 ([#397](https://github.com/glennib/stakk/pull/397))
+- *(deps)* update dependency cargo-binstall to v1.27.0 ([#396](https://github.com/glennib/stakk/pull/396))
+- *(deps)* update dependency rumdl to v0.3.3 ([#369](https://github.com/glennib/stakk/pull/369))
+- *(deps)* update rust crate jiff to v0.2.42 ([#395](https://github.com/glennib/stakk/pull/395))
+- *(deps)* lock file maintenance ([#394](https://github.com/glennib/stakk/pull/394))
+
 ## [3.0.9](https://github.com/glennib/stakk/compare/v3.0.8...v3.0.9) - 2026-11-07
 
 ### Other
