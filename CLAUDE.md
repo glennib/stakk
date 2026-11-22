@@ -170,7 +170,9 @@ When adding, renaming, or changing the default of one, update all of them in the
 
 1. **`src/cli/submit.rs`** — the clap field with `#[arg(long, env = "STAKK_…", default_value = …)]`
    and a `verbatim_doc_comment` doc.
+
 2. **`src/config/mod.rs`** — add `Option<T>` field on `Config`, default to `None`, and merge in `Config::merge`.
+
 3. **`src/cli/mod.rs`** — wire it into `apply_submit_defaults`
    (or `apply_revset_defaults`)
    via `set_default(...)`, and add tests mirroring the `sync_pr_content_*` set: `default`, `config_*`,
@@ -183,6 +185,7 @@ When adding, renaming, or changing the default of one, update all of them in the
    a clap default is replaced wholesale by the first typed `--host`,
    so `main::run` layers the config table under the parsed `--host` list per host instead (`HostRules::layered`),
    and there is no `hosts_from_config` clap test to mirror.
+
 4. **`docs/config.md`** — two places:
    - the annotated `stakk.toml` example block (the exhaustive one; document the default in the comment),
    - the **Environment variables** table.
@@ -478,6 +481,7 @@ If you change any of the following, update `scripts/record-demo.py` in the same 
   (a parallel implementation of production logic, a parse for a value nothing writes) justifies nothing — delete both.
   `#[expect]` warns once a suppression becomes unnecessary, so `mise run ci` catches stale ones —
   find the current set with `grep -rn dead_code src/`.
+
 - **Every file in `docs/` is a `stakk docs` topic, and adding one is a single edit — the file.**
   A Markdown file there is not "documentation in the repo" — it is payload compiled into the binary,
   so a file that cannot become a topic would ship as a document nobody can print and nobody can find in the index.
@@ -504,6 +508,7 @@ If you change any of the following, update `scripts/record-demo.py` in the same 
   and `the_topics_are_the_docs_directory` re-reads the directory at test time to catch a stale `OUT_DIR` or a filter
   that quietly drops a document.
   Anything that genuinely is not a topic (a README for the directory, say) does not belong in `docs/`.
+
 - The generated variant doc comments are load-bearing:
   clap prints them as possible-value help *and* `docs::index` reads them back,
   which is why the summary lives in the preamble rather than being written twice.
@@ -514,6 +519,7 @@ If you change any of the following, update `scripts/record-demo.py` in the same 
   so README is the only other touchpoint.
   Add it to the `runs_jj` false-arm in `main.rs` alongside `Completions`,
   or the `_ => true` fallthrough makes it shell out to jj for a version check it does not need.
+
 - `stakk docs` output depends on where it goes: a TTY gets prose re-flowed to the terminal width,
   a redirect gets the source verbatim.
   The verbatim path is what makes `stakk docs agents >> AGENTS.md` reproduce the file byte for byte below its preamble,
@@ -523,6 +529,7 @@ If you change any of the following, update `scripts/record-demo.py` in the same 
   Fenced blocks pass through the wrapper unwrapped
   (a folded shell command is a broken one),
   so a test caps fenced lines in `docs/*.md` at 76 chars — rumdl formats at 120 and will not catch it.
+
 - `Cli` has no flattened `SubmitArgs`: every submit flag lives on the `submit` subcommand only,
   so flags before a subcommand fail with clap's stock "unexpected argument".
   Bare `stakk` still means `stakk submit`: the `None` arm calls `cli::default_submit_args`,
@@ -532,6 +539,7 @@ If you change any of the following, update `scripts/record-demo.py` in the same 
   `SubmitArgs` deliberately has no `Default` impl, because hand-building one silently drops both
   (the bug 90718ef5cf97 fixed; `bare_stakk_submit_args_come_from_a_config_applied_clap_parse` pins the mechanism).
   Only `global = true` args (`--config`, `--forge`, `--host`) are accepted on either side of the subcommand.
+
 - Subcommand aliases are part of the stable contract (`docs/stability.md`),
   so they are added deliberately and removed only in a major.
   `submit`, `graph` and `docs` carry their initial letter as a visible alias; `completions` deliberately does not.
@@ -541,6 +549,7 @@ If you change any of the following, update `scripts/record-demo.py` in the same 
   an alias resolves to the same command, so config defaults follow it,
   but renaming a subcommand without updating that string silently drops config-file defaults with no compile error.
   `one_letter_aliases_still_get_config_defaults` is the guard.
+
 - Remote host handling: `jj::remote::parse_remote_url` parses `<host>/<owner>/<repo>` for *any* host
   and records the URL's scheme (SSH remotes record `https`); there is no per-forge URL gate.
   Which forge a host runs is `forge::detect::classify`'s answer, in this order: an explicit `--forge`
@@ -578,6 +587,7 @@ If you change any of the following, update `scripts/record-demo.py` in the same 
   `RemoteRepo::forgejo_api_base_uri()` is always a value, `{scheme}://{host}/api/v1`,
   and keeps the recorded scheme and port: a plain-`http` instance on `localhost:3000` is a supported setup,
   and no client default exists to fall back on, not even for codeberg.org.
+
 - The remote must be resolved *before* the forge, and the forge before the token:
   `auth::resolve_token(host)` picks `GH_TOKEN`/`GITHUB_TOKEN` for github.com
   and `GH_ENTERPRISE_TOKEN`/`GITHUB_ENTERPRISE_TOKEN` otherwise, and passes `--hostname` to `gh auth token`.
@@ -588,12 +598,14 @@ If you change any of the following, update `scripts/record-demo.py` in the same 
   no per-host split; `host` only names the instance in `AuthError::NoForgejoToken`.
   `env_sources`/`token_from_env`/`resolve_forgejo_token_with` take the lookup as a closure
   so tests never mutate the process environment.
+
 - `ForgejoForge`'s four stack methods answer `ForgeError::StacksUnavailable` without sending a request, by design:
   Forgejo has no native stacked PRs, and the reconcile's own outcome is stakk's availability probe
   (see the native-stacks gotcha below),
   so that one answer makes `--native-stacks auto` resolve the auto placements to writing, `none` stay silent,
   and `on` fail naming the cause instead of a 404 that never happened.
   `SubmitError::StacksUnavailable`'s help names Forgejo alongside GHES for the same reason.
+
 - `rustls` is a direct dependency for one call, `forge::forgejo::transport::install_crypto_provider`.
   The `reqwest` dependency is built with `rustls-no-provider` so `ring`
   (which octocrab already links)
@@ -608,22 +620,31 @@ If you change any of the following, update `scripts/record-demo.py` in the same 
   links `aws-lc-sys`, which needs NASM on Windows —
   a failure only the release workflow's Windows build would otherwise show.
   A dependency bump that turns on a new default feature has to keep passing that check.
+
 - jj JSON output uses NDJSON (one JSON object per line).
   Parse with `lines()` plus a per-line `serde_json::from_str`.
+
 - `jj git remote list` outputs plain text, not JSON.
   Parse with string splitting.
+
 - `trunk()` remote bookmarks include an internal `@git` entry — filter it out.
+
 - The default branch is the bookmark `trunk()` *names*, not just any bookmark on its commit:
   other remote bookmarks can share that commit, and jj lists them by name.
   `Jj::get_default_branch` reads the alias with `jj config get 'revset-aliases."trunk()"'`,
   and `pick_default_branch` takes a lone `<name>@<remote>` alias first
   (what `jj git clone` writes when the remote's HEAD is known),
   then jj's built-in `main`/`master`/`trunk` × `origin`/`upstream` order, then the first candidate.
+
 - Unsynced bookmarks produce duplicate entries in `jj bookmark list` —
   deduplicate by keeping only the first entry per name.
+
 - Graph traversal uses `"trunk()"` as the revset base, not a branch name.
+
 - octocrab treats PR comments as issue comments — use `issues().list_comments()`.
+
 - octocrab `pulls().create()` borrows the handler — bind to a variable first.
+
 - The four stack methods on `Forge` go through `forge/github/stacks.rs`,
   which builds `http::Request`s by hand
   and sends them through the public `Octocrab::execute` instead of octocrab's typed helpers.
@@ -637,6 +658,7 @@ If you change any of the following, update `scripts/record-demo.py` in the same 
   because they run below `build_request`; only the header stamping is skipped.
   The module doc says all of this; the module is deleted wholesale
   when octocrab ships typed stacks support (XAMPPRocky/octocrab#934).
+
 - Native-stack availability is *not probed* — there is no `supports_native_stacks`.
   The reconcile step runs before the text-placement step, and its own outcome is the answer:
   success → a native stack is in effect, `ForgeError::StacksUnavailable`
@@ -646,46 +668,55 @@ If you change any of the following, update `scripts/record-demo.py` in the same 
   a redundant stack overview self-heals on the next successful run, while a skipped update leaves a stale one standing.
   Only a definitive native stack triggers the destructive direction (cleanup).
   On GitHub the unavailable case today means GHES — the preview rolled out to all github.com repositories.
+
 - Stacks reported closed (`"open": false` on the wire) still appear in list responses;
   `stacks.rs` filters them out before conversion so the reconcile never tries to unstack history.
   `StackDto` is deliberately not serde-defaulted (same rule as `LogEntryRaw`).
+
 - Body sync is one pass, not part of the interleaved per-bookmark loop:
   it runs after the native reconcile and `resolve_placement`, and is skipped only when the body-splice phase covers it
   (`EffectivePlacement::Body` with more than one PR folds each sync into its own body write).
   The interleaving rule (#35) covers pushes and base updates only, so batching bodies is safe.
   `single_pr_body_placement_still_syncs_the_body` pins the single-PR case,
   `deferred_body_sync_applies_when_auto_body_resolves_to_cleanup` the cleanup-resolved one.
+
 - A reconcile failure under `--native-stacks on` fails the submit,
   but the error is *held* and returned after body syncs and the text placement ran
   (which resolve as on an unknown native state)
   — the help text's promise that PRs were created/updated normally must be true by the time it renders.
   `native_on_reconcile_failure_still_syncs_bodies_and_writes_comments` pins this.
+
 - `ForgeError::StacksUnavailable` and `ForgeError::StackConflict` carry no `#[diagnostic(help)]` on purpose:
   every stack call is wrapped by `submit::wrap_stack_err` into a `SubmitError`,
   and miette renders only the outermost diagnostic's help
   (`#[source]` chains messages, not diagnostics) — a help there would be dead prose drifting from the copy that renders.
   `ForgeError::BaseLockedByStack` follows the same rule: it is only ever the source of `SubmitError::BaseUpdateFailed`.
   This is the one sanctioned exception to the "help on all variants" rule.
+
 - `SubmitError::BaseUpdateFailed` carries its help as a `#[help]` field,
   built by `SubmitError::base_update_failed` from the `ForgeError`: only `AuthFailed` points at the token,
   `BaseLockedByStack` points at `--native-stacks`, and anything else points at the forge's own message,
   which renders above the help.
   The GitHub forge maps a 422 on the base update whose `errors` say "part of a stack" to `BaseLockedByStack`
   (`map_base_update_error`), so `submit/` classifies on a variant rather than on GitHub's wording.
+
 - A 404 from the stacks API is route-dependent
   (`NotFound` in `stacks.rs`):
   on the collection routes it means the feature is not offered (`StacksUnavailable`),
   on `/stacks/{n}/add` it means the stack vanished since the lookup
   (`StackConflict`, converged by rebuilding),
   and on `/stacks/{n}/unstack` a vanished stack *is* the goal state, so the 404 counts as success.
+
 - The reconcile leaves a server stack standing
   when the submission is its *bottom prefix* (`open_pr_numbers.starts_with(desired)`):
   the chain above is intact and rebuilding would evict those PRs from merge-time retargeting.
   Only a bottom prefix is safe — a slice higher up means the bottom submitted PR was retargeted past open members
   and the stack is genuinely stale.
   Every catch-all dissolve warns with the PR numbers that lose native stacking (`evicted_pr_numbers`).
+
 - Commit-derived PR body is only set on creation, not on update — avoids overwriting manually-edited PR bodies.
   Body-mode stack placement updates only the fenced section.
+
 - `markdown::unwrap::unwrap_markdown` reflows hard-wrapped description prose into soft-wrapped paragraphs
   (structural Markdown passes through verbatim).
   It runs on *both* sides of the body-sync comparison — the generated body and the existing PR body —
@@ -694,12 +725,14 @@ If you change any of the following, update `scripts/record-demo.py` in the same 
   It is shared with `stakk docs`, which uses it as the join pass
   before `markdown::wrap::wrap_markdown` folds prose to the terminal width —
   so a change here moves rendered docs as well as PR bodies.
+
 - Stack comment metadata line (`<!--- STAKK_STACK: ... --->`) is always prepended programmatically —
   not part of the minijinja template.
   Warning/repo-URL preambles are added per-placement-mode: comment mode uses `with_comment_preamble()`,
   body mode adds `BODY_WARNING` inside the fence.
   `format_stack_comment` itself is placement-neutral (no warning lines).
   `STAKK_REPO_URL` is the single source of truth for the repo URL.
+
 - The base64 payload on that line is **write-only**: nothing reads it back.
   `find_stack_comment` locates stakk's comment with a substring test for `COMMENT_DATA_PREFIX`,
   and the comment is then regenerated from freshly computed state rather than diffed against what it said before —
@@ -708,13 +741,16 @@ If you change any of the following, update `scripts/record-demo.py` in the same 
   (detecting merged PRs, say)
   would need and cannot retrofit; writing that reader means deriving `Deserialize` again and parsing the line,
   not changing the format.
+
 - `format_stack_comment` returns `Result` because user templates can fail.
+
 - `StackCommentContext.stack` is ordered trunk-first
   (`position` is 1 nearest the trunk);
   the default template reverses it in jinja
   (`stack | reverse`) so the rendered graph reads leaf-at-top like `stakk graph` and the TUI.
   Reversing in Rust instead would silently flip iteration for every user template —
   keep the order change in the template.
+
 - The default template renders each stack entry as a **Markdown list item holding nothing but the bare PR URL**
   (`- <url>`), plus `👈 **this PR**` on the current one, and a final `` - `<default_branch>` `` row for the trunk.
   **The list is load-bearing, not styling.**
@@ -735,14 +771,17 @@ If you change any of the following, update `scripts/record-demo.py` in the same 
   Only the leaf-first *ordering* is shared with `stakk graph`.
   GitHub renders comments in a proportional font, so nothing may depend on horizontal alignment: no `│` gutter,
   no indentation, and no code fence (fenced links are dead).
+
 - Entry `title` is the *commit-derived* title,
   which can differ from the PR's live title on GitHub when `--sync-pr-content` does not include titles.
   The default template deliberately shows the bare `pr_url` and no link text of its own,
   so the comment cannot contradict the PR page: GitHub's reference carries the PR's live title and state,
   while a Markdown link with our own text would replace that with a caption stakk has to keep correct.
   The bookmark name is not written next to it either — the reference is the whole label.
+
 - Body-mode fences (`STAKK_BODY_START`/`STAKK_BODY_END`) are HTML comments, invisible on GitHub.
   Migration between placement modes is automatic.
+
 - `StackPlacement` (6 CLI modes) resolves to `EffectivePlacement`
   (4 behaviors)
   in `resolve_placement(placement, native_state)`: `comment` → `Comment`, `body` → `Body`, `none` → `Cleanup`,
@@ -750,6 +789,7 @@ If you change any of the following, update `scripts/record-demo.py` in the same 
   `Comment`/`Body` otherwise (including on an unknown native state — see the native-stacks gotcha above).
   Keep the two enums distinct — `Cleanup` is also reached by single-bookmark submissions,
   which have no CLI mode of their own.
+
 - `--stack-placement none` writes no stack info and instead runs `cleanup_stack_artifacts` on every PR,
   deleting the stack comment and stripping the body fence.
   Single-bookmark submissions take the same cleanup path
@@ -758,12 +798,15 @@ If you change any of the following, update `scripts/record-demo.py` in the same 
   PRs created in the same run are skipped — they cannot yet carry a stack comment.
   In `none` mode the custom `--template-path` is never read or compiled,
   so a broken template does not fail a submission that will not render it.
+
 - `--stack-placement ignore` writes nothing *and* cleans up nothing:
   the `EffectivePlacement::Ignore` arm short-circuits before the cleanup branch,
   so it also wins over the single-bookmark cleanup rule.
   Like `none`, it never reads or compiles `--template-path`.
   The auto placements *always* load the template — they may resolve to rendering.
+
 - ratatui inline viewport: `enable_raw_mode()` before, `disable_raw_mode()` after.
+
 - The inline viewport is sized per screen
   (graph vs bookmark rows).
   ratatui cannot resize an inline viewport in place,
@@ -771,15 +814,20 @@ If you change any of the following, update `scripts/record-demo.py` in the same 
   (`replace_viewport` in `select/app.rs`).
   On exit the viewport is collapsed (cursor to viewport top, erase down)
   and a one-line summary is printed in its place — no blank region is left behind.
+
 - Graph layout deduplicates shared segments by `commit_id` (not `change_id`).
+
 - Auto-generated bookmark names: `stakk-<first 12 chars of change_id>`.
+
 - `LOG_TEMPLATE` emits an `immutable` field;
   `LogEntryRaw` is deliberately *not* serde-defaulted so a template/parser mismatch fails loudly
   as a `ParseError` instead of silently parsing `immutable: false`.
+
 - `SegmentCommit::local_bookmark_names` carries the *unfiltered* local bookmark names from jj log —
   unlike `BookmarkSegment::bookmark_names`, it includes bookmarks the bookmarks revset excluded
   (e.g. on immutable commits).
   Feeds `excluded_bookmarks` in the graph layout, which labels locked TUI rows.
+
 - One phase-1 constructor: every submission — the TUI and the explicit flags via `select::explicit` alike —
   goes through `analysis_from_selection(path, assignments, ...)`.
   Boundaries are matched by change ID on the selected trunk→tip path,
@@ -788,6 +836,7 @@ If you change any of the following, update `scripts/record-demo.py` in the same 
   Marking every boundary reproduces the no-fold shape (issue #184): each segment keeps exactly its own commit.
   Commits *above* the topmost mark are dropped from the submission entirely:
   `pending` is never flushed past the last boundary, so an unbookmarked head is not submitted unless it is marked.
+
 - Explicit selection (`select/explicit.rs`):
   `--keep`/`--new REV[=NAME]`/`--new-auto REV`/`--new-command REV` marks fully determine the PR set —
   every PR boundary is named on the command line, nothing is implicit and there is no bulk flag.
@@ -809,6 +858,7 @@ If you change any of the following, update `scripts/record-demo.py` in the same 
   A commit can carry several bookmarks,
   and two `--keep`s on one commit are two marks on one boundary (`stakk::selection::duplicate_mark`).
   `docs/scripting.md` works this through in Python; the `jq` one-liner is there too, marked as the shortcut it is.
+
 - `stakk graph`'s JSON is one schema in two projections: `--format=json` is sparse, `--format=json-full` is everything.
   Sparse must stay a *strict subset* of full — same names, types, values and emitted order.
   That is enforced by construction: full-only fields
@@ -833,16 +883,19 @@ If you change any of the following, update `scripts/record-demo.py` in the same 
   `committer_timestamp` is in *both* projections on purpose: stack order is derived from the committer timestamp
   (`group_segments_into_stacks`), not the author one, so without it in sparse a consumer cannot reproduce or override
   the order it is being handed.
+
 - Each segment reports `bookmarks: [{name}]` — objects, not bare names,
   so a per-bookmark field can be added later without renaming the list.
   The document carries no push state: `stakk graph` takes no `--remote`, so it could only say "on *some* remote",
   and what a push would do is `stakk submit --dry-run`'s answer.
+
 - `excluded_bookmarks` (names) and `excluded_heads`
   (change ids)
   are separate lists because a single counter
   once conflated bookmarks excluded by merge taint with unbookmarked *heads* excluded the same way.
   A head has no bookmark to name it, so it is reported by `change_id` and `short_change_id`,
   which is what `jj log -r` and the selection flags take.
+
 - Reserved bookmark names: `Jj::get_local_bookmark_names`
   (`jj bookmark list` with *no* `-r`) is the single source of truth for "this name is taken".
   The change graph is not — it cannot see trunk's own bookmark
@@ -859,6 +912,7 @@ If you change any of the following, update `scripts/record-demo.py` in the same 
   Deleted-but-tracked bookmarks are included for the same reason: `jj bookmark create` rejects them too.
   Untracked remote-only bookmarks (`foo@origin`, no local `foo`) do *not* block creation,
   so the query deliberately omits `--all-remotes`.
+
 - New bookmarks are created by `execute_submission_plan`
   (`SubmissionPlan::bookmark_creations`, before the push loop),
   not at selection time — so `--dry-run` never mutates the repo
@@ -881,6 +935,7 @@ If you change any of the following, update `scripts/record-demo.py` in the same 
   Accepted limitation: nothing checks a new bookmark's name against the bookmarks revset (only against existing names).
   Under a custom `--bookmarks-revset` that excludes the new name,
   the submission succeeds but subsequent runs will not see or manage that bookmark's PR.
+
 - Stack reorder safety: bookmarks must be pushed one-at-a-time with immediate base/PR updates.
   If all bookmarks are pushed before bases are updated, a PR whose head moved down the stack will have an empty diff
   (head is ancestor of stale base), triggering GitHub auto-close.
