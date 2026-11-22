@@ -394,8 +394,7 @@ fn group_segments_into_stacks(
             fn leaf_change_id(s: &BranchStack) -> &str {
                 s.segments
                     .last()
-                    .map(|seg| seg.change_id.as_str())
-                    .unwrap_or_default()
+                    .map_or_default(|seg| seg.change_id.as_str())
             }
             leaf_change_id(a).cmp(leaf_change_id(b))
         })

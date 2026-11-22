@@ -293,9 +293,7 @@ fn render_pretty(data: &GraphData, colors: bool) -> String {
 
     let _ = writeln!(out, "Default branch: {}", data.default_branch);
     for remote in data.remotes {
-        let repo = parsed_remote(&remote.url)
-            .map(|r| format!(" ({r})"))
-            .unwrap_or_default();
+        let repo = parsed_remote(&remote.url).map_or_default(|r| format!(" ({r})"));
         let _ = writeln!(out, "Remote: {} {}{}", remote.name, remote.url, repo);
     }
     out.push('\n');

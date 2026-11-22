@@ -860,8 +860,7 @@ impl<'a> BookmarkWidget<'a> {
                 RowState::UseGenerated => row
                     .generated_name
                     .as_ref()
-                    .map(|n| format!("{n} (generated)"))
-                    .unwrap_or_default(),
+                    .map_or_default(|n| format!("{n} (generated)")),
                 RowState::UseTfidf(ts) => {
                     format!("{} (auto [{}])", ts.name, ts.variation)
                 }
@@ -869,8 +868,7 @@ impl<'a> BookmarkWidget<'a> {
                     let frame = SPINNER_FRAMES[self.spinner_tick % SPINNER_FRAMES.len()];
                     let label = self
                         .bookmark_command
-                        .map(|cmd| shorten_middle(cmd, COMMAND_LABEL_MAX))
-                        .unwrap_or_default();
+                        .map_or_default(|cmd| shorten_middle(cmd, COMMAND_LABEL_MAX));
                     format!("{frame}{label}{frame}")
                 }
                 RowState::UseCustom(CustomNameState::Ready(name)) => {

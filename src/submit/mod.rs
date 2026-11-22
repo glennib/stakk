@@ -680,16 +680,9 @@ pub async fn create_submission_plan<F: Forge>(
         let needs_body_sync = wants_body
             && !needs_create
             && existing_pr.as_ref().is_some_and(|pr| {
-                let existing_user_body = pr
-                    .body
-                    .as_deref()
-                    .map(strip_stack_from_body)
-                    .unwrap_or_default();
+                let existing_user_body = pr.body.as_deref().map_or_default(strip_stack_from_body);
                 let normalized_existing = unwrap_markdown(existing_user_body.trim());
-                let normalized_new = body
-                    .as_deref()
-                    .map(|b| b.trim().to_string())
-                    .unwrap_or_default();
+                let normalized_new = body.as_deref().map_or_default(|b| b.trim().to_string());
                 normalized_new != normalized_existing
             });
 
@@ -2049,8 +2042,7 @@ mod tests {
                         .existing_stacks
                         .iter()
                         .find(|s| s.number == stack_number)
-                        .map(|s| s.open_pr_numbers.clone())
-                        .unwrap_or_default();
+                        .map_or_default(|s| s.open_pr_numbers.clone());
                     open_pr_numbers.extend_from_slice(pr_numbers);
                     Ok(ForgeStack {
                         number: stack_number,
@@ -2178,13 +2170,11 @@ mod tests {
                 let bookmark = args
                     .iter()
                     .position(|a| *a == "--bookmark")
-                    .map(|i| args[i + 1].to_string())
-                    .unwrap_or_default();
+                    .map_or_default(|i| args[i + 1].to_string());
                 let remote = args
                     .iter()
                     .position(|a| *a == "--remote")
-                    .map(|i| args[i + 1].to_string())
-                    .unwrap_or_default();
+                    .map_or_default(|i| args[i + 1].to_string());
                 if let Some(ops) = &self.ops {
                     ops.lock().unwrap().push(Op::Push(bookmark.clone()));
                 }

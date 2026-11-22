@@ -212,7 +212,7 @@ impl Forge for GitHubForge {
 fn convert_pr(pr: octocrab::models::pulls::PullRequest) -> PullRequest {
     PullRequest {
         number: pr.number,
-        html_url: pr.html_url.map(|u| u.to_string()).unwrap_or_default(),
+        html_url: pr.html_url.map_or_default(|u| u.to_string()),
         title: pr.title.unwrap_or_default(),
         base_ref: pr.base.ref_field,
         body: pr.body,
