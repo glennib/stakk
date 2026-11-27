@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.11](https://github.com/glennib/stakk/compare/v3.0.10...v3.0.11) - 2026-11-27
+
+### Other
+
+- *(deps)* update dependency rumdl to v0.3.7 ([#413](https://github.com/glennib/stakk/pull/413))
+- *(deps)* update rust crate toml to v1.2.3 ([#407](https://github.com/glennib/stakk/pull/407))
+- *(deps)* update rust crate clap to v4.6.10 ([#403](https://github.com/glennib/stakk/pull/403))
+- *(deps)* update dependency rumdl to v0.3.6 ([#399](https://github.com/glennib/stakk/pull/399))
+- *(deps)* update dependency uv to v0.13.10 ([#412](https://github.com/glennib/stakk/pull/412))
+- *(deps)* update rust crate jiff to v1.0.3 ([#411](https://github.com/glennib/stakk/pull/411))
+- *(deps)* lock file maintenance ([#409](https://github.com/glennib/stakk/pull/409))
+
 ## [3.0.10](https://github.com/glennib/stakk/compare/v3.0.9...v3.0.10) - 2026-11-22
 
 ### Fixed
